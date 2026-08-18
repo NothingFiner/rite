@@ -19,62 +19,7 @@ pub fn apply_delta(delta: Delta, state: State<AppState>) -> Result<Document, Str
     let mut doc = state.document.lock().map_err(|e| e.to_string())?;
     let mut modified = state.is_modified.lock().map_err(|e| e.to_string())?;
 
-    match delta {
-        Delta::TextInsert { paragraph_id, pos, text } => {
-            if let Some(para) = doc.body.content.iter_mut().find(|p| p.id == paragraph_id) {
-                if let Some(first) = para.elements.first_mut() {
-                    let content = &mut first.text_run.content;
-                    if pos <= content.len() {
-                        content.insert_str(pos, &text);
-                    }
-                }
-            }
-        }
-        Delta::TextDelete { paragraph_id, pos, len } => {
-            if let Some(para) = doc.body.content.iter_mut().find(|p| p.id == paragraph_id) {
-                if let Some(first) = para.elements.first_mut() {
-                    let content = &mut first.text_run.content;
-                    let end = (pos + len).min(content.len());
-                    content.replace_range(pos..end, "");
-                }
-            }
-        }
-        Delta::ParagraphInsert { after_id, new_id, style } => {
-            if let Some(idx) = doc.body.content.iter().position(|p| p.id == after_id) {
-                let new_para = Paragraph {
-                    id: new_id,
-                    paragraph_style: style,
-                    elements: vec![Element { text_run: TextRun { content: String::new(), text_style: Default::default() } }],
-                    left_indent: None,
-                    right_indent: None,
-                    first_line_indent: None,
-                };
-                doc.body.content.insert(idx + 1, new_para);
-            }
-        }
-        Delta::ParagraphDelete { id } => {
-            if let Some(idx) = doc.body.content.iter().position(|p| p.id == id) {
-                doc.body.content.remove(idx);
-            }
-        }
-        Delta::StyleChange { paragraph_id, text_style } => {
-            if let Some(para) = doc.body.content.iter_mut().find(|p| p.id == paragraph_id) {
-                if let Some(first) = para.elements.first_mut() {
-                    first.text_run.text_style = text_style;
-                }
-            }
-        }
-        Delta::RenameSection { id, title } => {
-            if let Some(para) = doc.body.content.iter_mut().find(|p| p.id == id) {
-                para.elements = vec![Element { text_run: TextRun { content: title, text_style: Default::default() } }];
-            }
-        }
-        Delta::ParagraphUpdate { id, elements } => {
-            if let Some(para) = doc.body.content.iter_mut().find(|p| p.id == id) {
-                para.elements = elements;
-            }
-        }
-    }
+    apply_delta_to_document(&mut doc, delta);
 
     *modified = true;
     drop(doc);
@@ -463,6 +408,199 @@ fn apply_format_to_paragraph(
     Ok(())
 }
 
+/// Apply one legacy `Delta` edit to a document in place. Best-effort: a delta
+/// that references an unknown paragraph id is silently ignored, matching the
+/// original command behaviour. Extracted from `apply_delta` so the logic can be
+/// tested without a Tauri runtime.
+fn apply_delta_to_document(doc: &mut Document, delta: Delta) {
+    match delta {
+        Delta::TextInsert { paragraph_id, pos, text } => {
+            if let Some(para) = doc.body.content.iter_mut().find(|p| p.id == paragraph_id) {
+                if let Some(first) = para.elements.first_mut() {
+                    let content = &mut first.text_run.content;
+                    if pos <= content.len() {
+                        content.insert_str(pos, &text);
+                    }
+                }
+            }
+        }
+        Delta::TextDelete { paragraph_id, pos, len } => {
+            if let Some(para) = doc.body.content.iter_mut().find(|p| p.id == paragraph_id) {
+                if let Some(first) = para.elements.first_mut() {
+                    let content = &mut first.text_run.content;
+                    let end = (pos + len).min(content.len());
+                    content.replace_range(pos..end, "");
+                }
+            }
+        }
+        Delta::ParagraphInsert { after_id, new_id, style } => {
+            if let Some(idx) = doc.body.content.iter().position(|p| p.id == after_id) {
+                let new_para = Paragraph {
+                    id: new_id,
+                    paragraph_style: style,
+                    elements: vec![Element { text_run: TextRun { content: String::new(), text_style: Default::default() } }],
+                    left_indent: None,
+                    right_indent: None,
+                    first_line_indent: None,
+                };
+                doc.body.content.insert(idx + 1, new_para);
+            }
+        }
+        Delta::ParagraphDelete { id } => {
+            if let Some(idx) = doc.body.content.iter().position(|p| p.id == id) {
+                doc.body.content.remove(idx);
+            }
+        }
+        Delta::StyleChange { paragraph_id, text_style } => {
+            if let Some(para) = doc.body.content.iter_mut().find(|p| p.id == paragraph_id) {
+                if let Some(first) = para.elements.first_mut() {
+                    first.text_run.text_style = text_style;
+                }
+            }
+        }
+        Delta::RenameSection { id, title } => {
+            if let Some(para) = doc.body.content.iter_mut().find(|p| p.id == id) {
+                para.elements = vec![Element { text_run: TextRun { content: title, text_style: Default::default() } }];
+            }
+        }
+        Delta::ParagraphUpdate { id, elements } => {
+            if let Some(para) = doc.body.content.iter_mut().find(|p| p.id == id) {
+                para.elements = elements;
+            }
+        }
+    }
+}
+
+/// Split the paragraph identified by `paragraph_id` at `offset` characters.
+/// Splitting at a boundary (0 or end-of-text) inserts an empty paragraph
+/// before/after it instead of cutting a run. The original paragraph keeps its
+/// id and style; the new paragraph gets a fresh id and `Normal` style.
+/// Returns false if no paragraph has that id. Extracted from `split_paragraph`.
+fn split_paragraph_in_document(doc: &mut Document, paragraph_id: &str, offset: usize) -> bool {
+    let Some(idx) = doc.body.content.iter().position(|p| p.id == paragraph_id) else {
+        return false;
+    };
+    let para = &doc.body.content[idx];
+    let full_text: String = para.elements.iter().map(|e| e.text_run.content.clone()).collect();
+    let char_count = full_text.chars().count();
+    let offset = offset.min(char_count);
+
+    if offset == 0 || offset == char_count {
+        let new_para = Paragraph {
+            id: format!("p-{}", uuid::Uuid::new_v4()),
+            paragraph_style: ParagraphStyle::Normal,
+            elements: vec![Element {
+                text_run: TextRun {
+                    content: String::new(),
+                    text_style: Default::default(),
+                },
+            }],
+            left_indent: None,
+            right_indent: None,
+            first_line_indent: None,
+        };
+        let insert_idx = if offset == 0 { idx } else { idx + 1 };
+        doc.body.content.insert(insert_idx, new_para);
+    } else {
+        let mut before_elements = Vec::new();
+        let mut after_elements = Vec::new();
+        let mut current_offset = 0usize;
+
+        for el in para.elements.iter() {
+            let content = &el.text_run.content;
+            let len = content.chars().count();
+            let el_start = current_offset;
+
+            if el_start + len <= offset {
+                before_elements.push(el.clone());
+            } else if el_start >= offset {
+                after_elements.push(el.clone());
+            } else {
+                let split_at = offset - el_start;
+                let before_text: String = content.chars().take(split_at).collect();
+                let after_text: String = content.chars().skip(split_at).collect();
+
+                if !before_text.is_empty() {
+                    before_elements.push(Element {
+                        text_run: TextRun {
+                            content: before_text,
+                            text_style: el.text_run.text_style.clone(),
+                        },
+                    });
+                }
+                if !after_text.is_empty() {
+                    after_elements.push(Element {
+                        text_run: TextRun {
+                            content: after_text,
+                            text_style: el.text_run.text_style.clone(),
+                        },
+                    });
+                }
+            }
+
+            current_offset += len;
+        }
+
+        let style = para.paragraph_style.clone();
+        let left_indent = para.left_indent;
+        let right_indent = para.right_indent;
+        let first_line_indent = para.first_line_indent;
+
+        let before_para = Paragraph {
+            id: para.id.clone(),
+            paragraph_style: style,
+            elements: before_elements,
+            left_indent,
+            right_indent,
+            first_line_indent,
+        };
+
+        let after_para = Paragraph {
+            id: format!("p-{}", uuid::Uuid::new_v4()),
+            paragraph_style: ParagraphStyle::Normal,
+            elements: after_elements,
+            left_indent: None,
+            right_indent: None,
+            first_line_indent: None,
+        };
+
+        doc.body.content[idx] = before_para;
+        doc.body.content.insert(idx + 1, after_para);
+    }
+    true
+}
+
+/// Merge paragraph `second_id` into the preceding paragraph `first_id`. Only
+/// merges when the two paragraphs are adjacent (second immediately follows
+/// first). Elements with identical text styles are concatenated into one run;
+/// otherwise the second paragraph's elements are appended unchanged. Returns
+/// false if either id is missing or they are not adjacent. Extracted from
+/// `merge_paragraphs`.
+fn merge_paragraphs_in_document(doc: &mut Document, first_id: &str, second_id: &str) -> bool {
+    let Some(first_idx) = doc.body.content.iter().position(|p| p.id == first_id) else {
+        return false;
+    };
+    let Some(second_idx) = doc.body.content.iter().position(|p| p.id == second_id) else {
+        return false;
+    };
+    if second_idx != first_idx + 1 {
+        return false;
+    }
+
+    let second = doc.body.content.remove(second_idx);
+    let first = &mut doc.body.content[first_idx];
+    for el in second.elements {
+        if let Some(last) = first.elements.last_mut() {
+            if last.text_run.text_style == el.text_run.text_style {
+                last.text_run.content.push_str(&el.text_run.content);
+                continue;
+            }
+        }
+        first.elements.push(el);
+    }
+    true
+}
+
 #[tauri::command]
 pub fn apply_format(
     paragraph_id: String,
@@ -496,95 +634,7 @@ pub fn split_paragraph(
     let mut doc = state.document.lock().map_err(|e| e.to_string())?;
     let mut modified = state.is_modified.lock().map_err(|e| e.to_string())?;
 
-    if let Some(idx) = doc.body.content.iter().position(|p| p.id == paragraph_id) {
-        let para = &doc.body.content[idx];
-        let full_text: String = para.elements.iter().map(|e| e.text_run.content.clone()).collect();
-        let char_count = full_text.chars().count();
-        let offset = offset.min(char_count);
-
-        if offset == 0 || offset == char_count {
-            let new_para = Paragraph {
-                id: format!("p-{}", uuid::Uuid::new_v4()),
-                paragraph_style: ParagraphStyle::Normal,
-                elements: vec![Element {
-                    text_run: TextRun {
-                        content: String::new(),
-                        text_style: Default::default(),
-                    },
-                }],
-                left_indent: None,
-                right_indent: None,
-                first_line_indent: None,
-            };
-            let insert_idx = if offset == 0 { idx } else { idx + 1 };
-            doc.body.content.insert(insert_idx, new_para);
-        } else {
-            let mut before_elements = Vec::new();
-            let mut after_elements = Vec::new();
-            let mut current_offset = 0usize;
-
-            for el in para.elements.iter() {
-                let content = &el.text_run.content;
-                let len = content.chars().count();
-                let el_start = current_offset;
-
-                if el_start + len <= offset {
-                    before_elements.push(el.clone());
-                } else if el_start >= offset {
-                    after_elements.push(el.clone());
-                } else {
-                    let split_at = offset - el_start;
-                    let before_text: String = content.chars().take(split_at).collect();
-                    let after_text: String = content.chars().skip(split_at).collect();
-
-                    if !before_text.is_empty() {
-                        before_elements.push(Element {
-                            text_run: TextRun {
-                                content: before_text,
-                                text_style: el.text_run.text_style.clone(),
-                            },
-                        });
-                    }
-                    if !after_text.is_empty() {
-                        after_elements.push(Element {
-                            text_run: TextRun {
-                                content: after_text,
-                                text_style: el.text_run.text_style.clone(),
-                            },
-                        });
-                    }
-                }
-
-                current_offset += len;
-            }
-
-            let style = para.paragraph_style.clone();
-            let left_indent = para.left_indent;
-            let right_indent = para.right_indent;
-            let first_line_indent = para.first_line_indent;
-
-            let before_para = Paragraph {
-                id: para.id.clone(),
-                paragraph_style: style.clone(),
-                elements: before_elements,
-                left_indent,
-                right_indent,
-                first_line_indent,
-            };
-
-            let after_para = Paragraph {
-                id: format!("p-{}", uuid::Uuid::new_v4()),
-                paragraph_style: ParagraphStyle::Normal,
-                elements: after_elements,
-                left_indent: None,
-                right_indent: None,
-                first_line_indent: None,
-            };
-
-            doc.body.content[idx] = before_para;
-            doc.body.content.insert(idx + 1, after_para);
-        }
-    }
+    split_paragraph_in_document(&mut doc, &paragraph_id, offset);
 
     *modified = true;
     drop(doc);
@@ -603,25 +653,7 @@ pub fn merge_paragraphs(
     let mut doc = state.document.lock().map_err(|e| e.to_string())?;
     let mut modified = state.is_modified.lock().map_err(|e| e.to_string())?;
 
-    let first_idx = doc.body.content.iter().position(|p| p.id == first_id);
-    let second_idx = doc.body.content.iter().position(|p| p.id == second_id);
-
-    if let (Some(first_idx), Some(second_idx)) = (first_idx, second_idx) {
-        if second_idx == first_idx + 1 {
-            let second = doc.body.content.remove(second_idx);
-            let first = &mut doc.body.content[first_idx];
-
-            for el in second.elements {
-                if let Some(last) = first.elements.last_mut() {
-                    if last.text_run.text_style == el.text_run.text_style {
-                        last.text_run.content.push_str(&el.text_run.content);
-                        continue;
-                    }
-                }
-                first.elements.push(el);
-            }
-        }
-    }
+    merge_paragraphs_in_document(&mut doc, &first_id, &second_id);
 
     *modified = true;
     drop(doc);
@@ -674,5 +706,381 @@ pub fn redo(state: State<AppState>) -> Result<Document, String> {
     } else {
         let doc = state.document.lock().map_err(|e| e.to_string())?;
         Ok(doc.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::document::{Body, ParagraphStyle, TextStyle};
+
+    /// Build a normal paragraph with a single unstyled run of `text`.
+    fn make_para(id: &str, text: &str) -> Paragraph {
+        Paragraph {
+            id: id.to_string(),
+            paragraph_style: ParagraphStyle::Normal,
+            elements: vec![Element {
+                text_run: TextRun {
+                    content: text.to_string(),
+                    text_style: TextStyle::default(),
+                },
+            }],
+            left_indent: None,
+            right_indent: None,
+            first_line_indent: None,
+        }
+    }
+
+    /// Build a normal paragraph with a single run carrying an explicit style.
+    fn make_styled_para(id: &str, text: &str, style: TextStyle) -> Paragraph {
+        Paragraph {
+            id: id.to_string(),
+            paragraph_style: ParagraphStyle::Normal,
+            elements: vec![Element {
+                text_run: TextRun {
+                    content: text.to_string(),
+                    text_style: style,
+                },
+            }],
+            left_indent: None,
+            right_indent: None,
+            first_line_indent: None,
+        }
+    }
+
+    fn make_doc(content: Vec<Paragraph>) -> Document {
+        Document {
+            title: "T".to_string(),
+            author: "A".to_string(),
+            author_contact: "C".to_string(),
+            has_toc: false,
+            has_epigram: false,
+            epigram_text: String::new(),
+            body: Body { content },
+        }
+    }
+
+    fn para_text(p: &Paragraph) -> String {
+        p.elements
+            .iter()
+            .map(|e| e.text_run.content.as_str())
+            .collect()
+    }
+
+    fn bold() -> TextStyleDelta {
+        TextStyleDelta {
+            bold: Some(true),
+            italic: None,
+            underline: None,
+            font_size: None,
+        }
+    }
+
+    // --- apply_format_to_paragraph -----------------------------------------
+
+    #[test]
+    fn format_bold_middle_splits_into_three_runs() {
+        let mut para = make_para("p1", "hello");
+        apply_format_to_paragraph(&mut para, 1, 4, &bold()).unwrap();
+        // prefix "h" (normal) | middle "ell" (bold) | suffix "o" (normal)
+        assert_eq!(para.elements.len(), 3);
+        assert_eq!(para.elements[0].text_run.content, "h");
+        assert!(!para.elements[0].text_run.text_style.bold);
+        assert_eq!(para.elements[1].text_run.content, "ell");
+        assert!(para.elements[1].text_run.text_style.bold);
+        assert_eq!(para.elements[2].text_run.content, "o");
+        assert!(!para.elements[2].text_run.text_style.bold);
+    }
+
+    #[test]
+    fn format_bold_whole_run_stays_single() {
+        let mut para = make_para("p1", "hello");
+        apply_format_to_paragraph(&mut para, 0, 5, &bold()).unwrap();
+        assert_eq!(para.elements.len(), 1);
+        assert_eq!(para.elements[0].text_run.content, "hello");
+        assert!(para.elements[0].text_run.text_style.bold);
+    }
+
+    #[test]
+    fn format_merges_adjacent_runs_of_same_style() {
+        // Two elements with the *same* (normal) style abutting each other.
+        let mut para = Paragraph {
+            id: "p1".to_string(),
+            paragraph_style: ParagraphStyle::Normal,
+            elements: vec![
+                Element {
+                    text_run: TextRun {
+                        content: "ab".to_string(),
+                        text_style: TextStyle::default(),
+                    },
+                },
+                Element {
+                    text_run: TextRun {
+                        content: "cd".to_string(),
+                        text_style: TextStyle::default(),
+                    },
+                },
+            ],
+            left_indent: None,
+            right_indent: None,
+            first_line_indent: None,
+        };
+        // Bold the "bc" range that straddles the element boundary.
+        apply_format_to_paragraph(&mut para, 1, 3, &bold()).unwrap();
+        // The trailing empty middle fragment and its bold neighbour collapse
+        // back together in the merge pass, leaving clean a | bc | d.
+        assert_eq!(para_text(&para), "abcd");
+        assert_eq!(para.elements.len(), 3);
+        assert_eq!(para.elements[1].text_run.content, "bc");
+        assert!(para.elements[1].text_run.text_style.bold);
+    }
+
+    #[test]
+    fn format_empty_range_is_noop() {
+        let mut para = make_para("p1", "hello");
+        // start == end (also start > end after clamping) must do nothing.
+        apply_format_to_paragraph(&mut para, 3, 3, &bold()).unwrap();
+        assert_eq!(para.elements.len(), 1);
+        assert_eq!(para.elements[0].text_run.content, "hello");
+        assert!(!para.elements[0].text_run.text_style.bold);
+    }
+
+    #[test]
+    fn format_offsets_clamp_to_text_length() {
+        let mut para = make_para("p1", "hi");
+        // end far beyond the 2-char text clamps to the end; nothing panics.
+        apply_format_to_paragraph(&mut para, 1, 999, &bold()).unwrap();
+        assert_eq!(para_text(&para), "hi");
+        assert_eq!(para.elements.len(), 2);
+        assert_eq!(para.elements[0].text_run.content, "h");
+        assert!(!para.elements[0].text_run.text_style.bold);
+        assert_eq!(para.elements[1].text_run.content, "i");
+        assert!(para.elements[1].text_run.text_style.bold);
+    }
+
+    // --- split_paragraph_in_document ---------------------------------------
+
+    #[test]
+    fn split_in_middle_preserves_id_on_before() {
+        let mut doc = make_doc(vec![make_para("p1", "hello")]);
+        assert!(split_paragraph_in_document(&mut doc, "p1", 2));
+        assert_eq!(doc.body.content.len(), 2);
+        assert_eq!(para_text(&doc.body.content[0]), "he");
+        assert_eq!(doc.body.content[0].id, "p1"); // original keeps its id
+        assert_eq!(para_text(&doc.body.content[1]), "llo");
+        assert_ne!(doc.body.content[1].id, "p1"); // new paragraph, fresh id
+    }
+
+    #[test]
+    fn split_at_start_inserts_empty_before() {
+        let mut doc = make_doc(vec![make_para("p1", "hello")]);
+        split_paragraph_in_document(&mut doc, "p1", 0);
+        assert_eq!(doc.body.content.len(), 2);
+        assert_eq!(para_text(&doc.body.content[0]), "");
+        assert_eq!(para_text(&doc.body.content[1]), "hello");
+    }
+
+    #[test]
+    fn split_at_end_inserts_empty_after() {
+        let mut doc = make_doc(vec![make_para("p1", "hello")]);
+        split_paragraph_in_document(&mut doc, "p1", 5);
+        assert_eq!(doc.body.content.len(), 2);
+        assert_eq!(para_text(&doc.body.content[0]), "hello");
+        assert_eq!(para_text(&doc.body.content[1]), "");
+    }
+
+    #[test]
+    fn split_clamps_oversized_offset_to_end() {
+        let mut doc = make_doc(vec![make_para("p1", "hi")]);
+        // offset 999 is longer than the text; treated like end-of-text.
+        split_paragraph_in_document(&mut doc, "p1", 999);
+        assert_eq!(doc.body.content.len(), 2);
+        assert_eq!(para_text(&doc.body.content[0]), "hi");
+        assert_eq!(para_text(&doc.body.content[1]), "");
+    }
+
+    #[test]
+    fn split_unknown_id_is_noop_and_returns_false() {
+        let mut doc = make_doc(vec![make_para("p1", "hello")]);
+        assert!(!split_paragraph_in_document(&mut doc, "nope", 1));
+        assert_eq!(doc.body.content.len(), 1);
+    }
+
+    // --- merge_paragraphs_in_document --------------------------------------
+
+    #[test]
+    fn merge_adjacent_same_style_concatenates() {
+        let mut doc = make_doc(vec![make_para("p1", "ab"), make_para("p2", "cd")]);
+        assert!(merge_paragraphs_in_document(&mut doc, "p1", "p2"));
+        assert_eq!(doc.body.content.len(), 1);
+        assert_eq!(para_text(&doc.body.content[0]), "abcd");
+        // Same style -> one merged run.
+        assert_eq!(doc.body.content[0].elements.len(), 1);
+    }
+
+    #[test]
+    fn merge_adjacent_different_style_keeps_both_runs() {
+        let mut doc = make_doc(vec![
+            make_styled_para("p1", "ab", TextStyle::default()),
+            make_styled_para(
+                "p2",
+                "cd",
+                TextStyle {
+                    bold: true,
+                    italic: false,
+                    underline: false,
+                    font_size: None,
+                },
+            ),
+        ]);
+        assert!(merge_paragraphs_in_document(&mut doc, "p1", "p2"));
+        assert_eq!(doc.body.content.len(), 1);
+        assert_eq!(para_text(&doc.body.content[0]), "abcd");
+        // Different styles -> two distinct runs, not concatenated into one.
+        assert_eq!(doc.body.content[0].elements.len(), 2);
+        assert!(!doc.body.content[0].elements[0].text_run.text_style.bold);
+        assert!(doc.body.content[0].elements[1].text_run.text_style.bold);
+    }
+
+    #[test]
+    fn merge_non_adjacent_returns_false() {
+        let mut doc = make_doc(vec![
+            make_para("p1", "a"),
+            make_para("p2", "b"),
+            make_para("p3", "c"),
+        ]);
+        // p1 and p3 are not neighbours; nothing happens.
+        assert!(!merge_paragraphs_in_document(&mut doc, "p1", "p3"));
+        assert_eq!(doc.body.content.len(), 3);
+    }
+
+    #[test]
+    fn merge_unknown_id_returns_false() {
+        let mut doc = make_doc(vec![make_para("p1", "a"), make_para("p2", "b")]);
+        assert!(!merge_paragraphs_in_document(&mut doc, "p1", "nope"));
+        assert_eq!(doc.body.content.len(), 2);
+    }
+
+    // --- apply_delta_to_document -------------------------------------------
+
+    #[test]
+    fn delta_text_insert_into_middle() {
+        let mut doc = make_doc(vec![make_para("p1", "hi")]);
+        apply_delta_to_document(
+            &mut doc,
+            Delta::TextInsert {
+                paragraph_id: "p1".to_string(),
+                pos: 1,
+                text: "X".to_string(),
+            },
+        );
+        assert_eq!(para_text(&doc.body.content[0]), "hXi");
+    }
+
+    #[test]
+    fn delta_text_insert_beyond_length_is_ignored() {
+        let mut doc = make_doc(vec![make_para("p1", "hi")]);
+        apply_delta_to_document(
+            &mut doc,
+            Delta::TextInsert {
+                paragraph_id: "p1".to_string(),
+                pos: 99,
+                text: "X".to_string(),
+            },
+        );
+        // pos beyond the string length is a no-op (guarded by `pos <= len`).
+        assert_eq!(para_text(&doc.body.content[0]), "hi");
+    }
+
+    #[test]
+    fn delta_text_delete_removes_range() {
+        let mut doc = make_doc(vec![make_para("p1", "hello")]);
+        apply_delta_to_document(
+            &mut doc,
+            Delta::TextDelete {
+                paragraph_id: "p1".to_string(),
+                pos: 1,
+                len: 2,
+            },
+        );
+        assert_eq!(para_text(&doc.body.content[0]), "hlo");
+    }
+
+    #[test]
+    fn delta_paragraph_insert_after_target() {
+        let mut doc = make_doc(vec![make_para("p1", "a")]);
+        apply_delta_to_document(
+            &mut doc,
+            Delta::ParagraphInsert {
+                after_id: "p1".to_string(),
+                new_id: "p2".to_string(),
+                style: ParagraphStyle::Normal,
+            },
+        );
+        assert_eq!(doc.body.content.len(), 2);
+        assert_eq!(doc.body.content[1].id, "p2");
+        assert_eq!(para_text(&doc.body.content[1]), "");
+    }
+
+    #[test]
+    fn delta_paragraph_delete_removes_target() {
+        let mut doc = make_doc(vec![make_para("p1", "a"), make_para("p2", "b")]);
+        apply_delta_to_document(
+            &mut doc,
+            Delta::ParagraphDelete {
+                id: "p2".to_string(),
+            },
+        );
+        assert_eq!(doc.body.content.len(), 1);
+        assert_eq!(doc.body.content[0].id, "p1");
+    }
+
+    #[test]
+    fn delta_paragraph_update_replaces_elements() {
+        let mut doc = make_doc(vec![make_para("p1", "old")]);
+        apply_delta_to_document(
+            &mut doc,
+            Delta::ParagraphUpdate {
+                id: "p1".to_string(),
+                elements: vec![Element {
+                    text_run: TextRun {
+                        content: "new".to_string(),
+                        text_style: TextStyle::default(),
+                    },
+                }],
+            },
+        );
+        assert_eq!(para_text(&doc.body.content[0]), "new");
+    }
+
+    #[test]
+    fn delta_style_change_sets_first_run_style() {
+        let mut doc = make_doc(vec![make_para("p1", "hi")]);
+        apply_delta_to_document(
+            &mut doc,
+            Delta::StyleChange {
+                paragraph_id: "p1".to_string(),
+                text_style: TextStyle {
+                    bold: true,
+                    italic: false,
+                    underline: false,
+                    font_size: None,
+                },
+            },
+        );
+        assert!(doc.body.content[0].elements[0].text_run.text_style.bold);
+    }
+
+    #[test]
+    fn delta_rename_section_replaces_text() {
+        let mut doc = make_doc(vec![make_para("p1", "Old Title")]);
+        apply_delta_to_document(
+            &mut doc,
+            Delta::RenameSection {
+                id: "p1".to_string(),
+                title: "New Title".to_string(),
+            },
+        );
+        assert_eq!(para_text(&doc.body.content[0]), "New Title");
     }
 }

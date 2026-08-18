@@ -103,3 +103,181 @@ impl AppState {
         Ok(true)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::document::{Body, Element, Paragraph, ParagraphStyle, TextStyle, TextRun};
+
+    /// A one-paragraph document whose single run contains `text`. Used as the
+    /// thing we mutate between history pushes — each distinct `text` is a
+    /// distinct document state, so `compute_doc_ops` emits a real change.
+    fn doc_text(text: &str) -> Document {
+        Document {
+            title: "T".to_string(),
+            author: "A".to_string(),
+            author_contact: "C".to_string(),
+            has_toc: false,
+            has_epigram: false,
+            epigram_text: String::new(),
+            body: Body {
+                content: vec![Paragraph {
+                    id: "p1".to_string(),
+                    paragraph_style: ParagraphStyle::Normal,
+                    elements: vec![Element {
+                        text_run: TextRun {
+                            content: text.to_string(),
+                            text_style: TextStyle::default(),
+                        },
+                    }],
+                    left_indent: None,
+                    right_indent: None,
+                    first_line_indent: None,
+                }],
+            },
+        }
+    }
+
+    fn current_text(state: &AppState) -> String {
+        let doc = state.document.lock().unwrap().clone();
+        doc.body.content[0]
+            .elements
+            .iter()
+            .map(|e| e.text_run.content.as_str())
+            .collect()
+    }
+
+    /// Move the live document to `text` and record the transition in history.
+    /// Mirrors what the command wrappers do: snapshot the old state, mutate,
+    /// then `push_history_delta(&old)`.
+    fn change_to(state: &AppState, text: &str) {
+        let old = state.document.lock().unwrap().clone();
+        *state.document.lock().unwrap() = doc_text(text);
+        state.push_history_delta(&old);
+    }
+
+    #[test]
+    fn push_history_records_a_change() {
+        let state = AppState::new();
+        change_to(&state, "v1");
+        let history = state.history.lock().unwrap();
+        let index = state.history_index.lock().unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(*index, 1);
+    }
+
+    #[test]
+    fn push_history_noop_when_unchanged() {
+        let state = AppState::new();
+        // Snapshot the current doc, then "change" to an identical doc: the
+        // computed delta is empty, so nothing is recorded.
+        let old = state.document.lock().unwrap().clone();
+        state.push_history_delta(&old);
+        assert!(state.history.lock().unwrap().is_empty());
+        assert_eq!(*state.history_index.lock().unwrap(), 0);
+    }
+
+    #[test]
+    fn undo_reverts_last_change() {
+        let state = AppState::new();
+        change_to(&state, "v1");
+        assert_eq!(current_text(&state), "v1");
+
+        assert!(state.undo().unwrap());
+        assert_eq!(current_text(&state), ""); // back to the default empty doc
+    }
+
+    #[test]
+    fn undo_when_history_empty_is_noop() {
+        let state = AppState::new();
+        // Nothing has been recorded, so undo must report no change and leave
+        // the document untouched.
+        let before = current_text(&state);
+        let did = state.undo().unwrap();
+        assert!(!did);
+        assert_eq!(current_text(&state), before);
+    }
+
+    #[test]
+    fn redo_reapplies_undone_change() {
+        let state = AppState::new();
+        change_to(&state, "v1");
+        state.undo().unwrap();
+        assert_eq!(current_text(&state), "");
+
+        assert!(state.redo().unwrap());
+        assert_eq!(current_text(&state), "v1");
+    }
+
+    #[test]
+    fn redo_at_top_of_history_is_noop() {
+        let state = AppState::new();
+        change_to(&state, "v1");
+        // We are already at the newest state; there is nothing to redo.
+        let did = state.redo().unwrap();
+        assert!(!did);
+        assert_eq!(current_text(&state), "v1");
+    }
+
+    #[test]
+    fn new_edit_after_undo_truncates_redo_branch() {
+        let state = AppState::new();
+        change_to(&state, "v1");
+        change_to(&state, "v2");
+        state.undo().unwrap(); // back to v1
+        assert_eq!(current_text(&state), "v1");
+
+        // Branching off a new edit must discard the redo path to v2.
+        change_to(&state, "v3");
+        assert_eq!(state.history.lock().unwrap().len(), 2); // v0->v1, v1->v3
+        assert_eq!(*state.history_index.lock().unwrap(), 2);
+
+        // v2 is gone: redo can no longer reach it.
+        assert!(!state.redo().unwrap());
+        assert_eq!(current_text(&state), "v3");
+
+        // Undo walks the new branch, not the old one.
+        state.undo().unwrap();
+        assert_eq!(current_text(&state), "v1");
+    }
+
+    #[test]
+    fn max_history_cap_evicts_oldest_entries() {
+        let mut state = AppState::new();
+        state.max_history = 3;
+        change_to(&state, "v1");
+        change_to(&state, "v2");
+        change_to(&state, "v3");
+        change_to(&state, "v4");
+        change_to(&state, "v5");
+
+        // Only the 3 most recent transitions are retained; the index points at
+        // the newest.
+        assert_eq!(state.history.lock().unwrap().len(), 3);
+        assert_eq!(*state.history_index.lock().unwrap(), 3);
+
+        // We can undo back to v2 (the oldest surviving state), but no further —
+        // v0 and v1's transition were evicted.
+        assert!(state.undo().unwrap());
+        assert_eq!(current_text(&state), "v4");
+        assert!(state.undo().unwrap());
+        assert_eq!(current_text(&state), "v3");
+        assert!(state.undo().unwrap());
+        assert_eq!(current_text(&state), "v2");
+        assert!(!state.undo().unwrap()); // nothing older to undo to
+    }
+
+    #[test]
+    fn reset_history_clears_everything() {
+        let state = AppState::new();
+        change_to(&state, "v1");
+        change_to(&state, "v2");
+        assert_eq!(state.history.lock().unwrap().len(), 2);
+
+        state.reset_history();
+        assert!(state.history.lock().unwrap().is_empty());
+        assert_eq!(*state.history_index.lock().unwrap(), 0);
+        // After reset, undo has nothing to do.
+        assert!(!state.undo().unwrap());
+    }
+}
