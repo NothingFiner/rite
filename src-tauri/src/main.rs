@@ -2,6 +2,8 @@
 
 mod commands;
 mod document;
+#[allow(dead_code)] // wired into commands/state in the next Phase 2 step
+mod history;
 mod state;
 
 use commands::{
