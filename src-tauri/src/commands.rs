@@ -1,5 +1,5 @@
 use crate::document::{
-    Delta, Document, Element, Paragraph, ParagraphStyle, ReplaceResult, SearchMatch, TextRun,
+    Document, Element, Paragraph, ParagraphStyle, ReplaceResult, SearchMatch, TextRun,
     TextStyleDelta,
 };
 use crate::state::AppState;
@@ -9,21 +9,6 @@ use tauri::State;
 
 #[tauri::command]
 pub fn get_document(state: State<AppState>) -> Result<Document, String> {
-    let doc = state.document.lock().map_err(|e| e.to_string())?;
-    Ok(doc.clone())
-}
-
-#[tauri::command]
-pub fn apply_delta(delta: Delta, state: State<AppState>) -> Result<Document, String> {
-    let old_doc = state.document.lock().map_err(|e| e.to_string())?.clone();
-    let mut doc = state.document.lock().map_err(|e| e.to_string())?;
-    let mut modified = state.is_modified.lock().map_err(|e| e.to_string())?;
-
-    apply_delta_to_document(&mut doc, delta);
-
-    *modified = true;
-    drop(doc);
-    state.push_history_delta(&old_doc);
     let doc = state.document.lock().map_err(|e| e.to_string())?;
     Ok(doc.clone())
 }
@@ -52,7 +37,12 @@ pub fn insert_heading(
     let new_para = Paragraph {
         id: new_id.clone(),
         paragraph_style: style,
-        elements: vec![Element { text_run: TextRun { content: String::new(), text_style: Default::default() } }],
+        elements: vec![Element {
+            text_run: TextRun {
+                content: String::new(),
+                text_style: Default::default(),
+            },
+        }],
         left_indent: None,
         right_indent: None,
         first_line_indent: None,
@@ -93,13 +83,22 @@ pub fn delete_heading(id: String, state: State<AppState>) -> Result<Document, St
 }
 
 #[tauri::command]
-pub fn rename_section(id: String, title: String, state: State<AppState>) -> Result<Document, String> {
+pub fn rename_section(
+    id: String,
+    title: String,
+    state: State<AppState>,
+) -> Result<Document, String> {
     let old_doc = state.document.lock().map_err(|e| e.to_string())?.clone();
     let mut doc = state.document.lock().map_err(|e| e.to_string())?;
     let mut modified = state.is_modified.lock().map_err(|e| e.to_string())?;
 
     if let Some(para) = doc.body.content.iter_mut().find(|p| p.id == id) {
-        para.elements = vec![Element { text_run: TextRun { content: title, text_style: Default::default() } }];
+        para.elements = vec![Element {
+            text_run: TextRun {
+                content: title,
+                text_style: Default::default(),
+            },
+        }];
     }
 
     *modified = true;
@@ -117,7 +116,11 @@ pub fn search_document(query: String, state: State<AppState>) -> Result<Vec<Sear
     let mut matches = Vec::new();
 
     for para in &doc.body.content {
-        let text: String = para.elements.iter().map(|e| e.text_run.content.as_str()).collect();
+        let text: String = para
+            .elements
+            .iter()
+            .map(|e| e.text_run.content.as_str())
+            .collect();
         for m in re.find_iter(&text) {
             let start_offset = text[..m.start()].chars().count();
             let end_offset = text[..m.end()].chars().count();
@@ -150,7 +153,11 @@ pub fn replace_current(
     // Find all matches with char offsets
     let mut matches = Vec::new();
     for para in &doc.body.content {
-        let text: String = para.elements.iter().map(|e| e.text_run.content.as_str()).collect();
+        let text: String = para
+            .elements
+            .iter()
+            .map(|e| e.text_run.content.as_str())
+            .collect();
         for m in re.find_iter(&text) {
             let start_offset = text[..m.start()].chars().count();
             let end_offset = text[..m.end()].chars().count();
@@ -167,7 +174,11 @@ pub fn replace_current(
 
     let (para_id, m_start, m_end) = &matches[match_index];
     if let Some(para) = doc.body.content.iter_mut().find(|p| p.id == *para_id) {
-        let full_text: String = para.elements.iter().map(|e| e.text_run.content.clone()).collect();
+        let full_text: String = para
+            .elements
+            .iter()
+            .map(|e| e.text_run.content.clone())
+            .collect();
         let start_byte = full_text
             .char_indices()
             .nth(*m_start)
@@ -194,7 +205,11 @@ pub fn replace_current(
     // Re-search
     let mut new_matches = Vec::new();
     for para in &doc.body.content {
-        let text: String = para.elements.iter().map(|e| e.text_run.content.as_str()).collect();
+        let text: String = para
+            .elements
+            .iter()
+            .map(|e| e.text_run.content.as_str())
+            .collect();
         for m in re.find_iter(&text) {
             let start_offset = text[..m.start()].chars().count();
             let end_offset = text[..m.end()].chars().count();
@@ -222,7 +237,11 @@ pub fn replace_current(
 }
 
 #[tauri::command]
-pub fn replace_all(query: String, replacement: String, state: State<AppState>) -> Result<u32, String> {
+pub fn replace_all(
+    query: String,
+    replacement: String,
+    state: State<AppState>,
+) -> Result<u32, String> {
     let old_doc = state.document.lock().map_err(|e| e.to_string())?.clone();
     let mut doc = state.document.lock().map_err(|e| e.to_string())?;
     let mut modified = state.is_modified.lock().map_err(|e| e.to_string())?;
@@ -297,7 +316,7 @@ pub fn sync_document(data: Document, state: State<AppState>) -> Result<(), Strin
 }
 
 #[tauri::command]
-pub fn autosave(state: State<AppState>) -> Result<(), String> {
+pub fn autosave_document(state: State<AppState>) -> Result<(), String> {
     let modified = state.is_modified.lock().map_err(|e| e.to_string())?;
     if !*modified {
         return Ok(());
@@ -312,13 +331,17 @@ pub fn autosave(state: State<AppState>) -> Result<(), String> {
     Ok(())
 }
 
-fn apply_format_to_paragraph(
+fn apply_text_style_to_paragraph(
     para: &mut Paragraph,
     start: usize,
     end: usize,
-    format: &TextStyleDelta,
+    style_delta: &TextStyleDelta,
 ) -> Result<(), String> {
-    let full_text: String = para.elements.iter().map(|e| e.text_run.content.clone()).collect();
+    let full_text: String = para
+        .elements
+        .iter()
+        .map(|e| e.text_run.content.clone())
+        .collect();
     let char_count = full_text.chars().count();
     let start = start.min(char_count);
     let end = end.min(char_count);
@@ -359,16 +382,16 @@ fn apply_format_to_paragraph(
             }
 
             let mut middle_style = el.text_run.text_style.clone();
-            if let Some(bold) = format.bold {
+            if let Some(bold) = style_delta.bold {
                 middle_style.bold = bold;
             }
-            if let Some(italic) = format.italic {
+            if let Some(italic) = style_delta.italic {
                 middle_style.italic = italic;
             }
-            if let Some(underline) = format.underline {
+            if let Some(underline) = style_delta.underline {
                 middle_style.underline = underline;
             }
-            if let Some(font_size) = format.font_size {
+            if let Some(font_size) = style_delta.font_size {
                 middle_style.font_size = Some(font_size);
             }
 
@@ -408,69 +431,6 @@ fn apply_format_to_paragraph(
     Ok(())
 }
 
-/// Apply one legacy `Delta` edit to a document in place. Best-effort: a delta
-/// that references an unknown paragraph id is silently ignored, matching the
-/// original command behaviour. Extracted from `apply_delta` so the logic can be
-/// tested without a Tauri runtime.
-fn apply_delta_to_document(doc: &mut Document, delta: Delta) {
-    match delta {
-        Delta::TextInsert { paragraph_id, pos, text } => {
-            if let Some(para) = doc.body.content.iter_mut().find(|p| p.id == paragraph_id) {
-                if let Some(first) = para.elements.first_mut() {
-                    let content = &mut first.text_run.content;
-                    if pos <= content.len() {
-                        content.insert_str(pos, &text);
-                    }
-                }
-            }
-        }
-        Delta::TextDelete { paragraph_id, pos, len } => {
-            if let Some(para) = doc.body.content.iter_mut().find(|p| p.id == paragraph_id) {
-                if let Some(first) = para.elements.first_mut() {
-                    let content = &mut first.text_run.content;
-                    let end = (pos + len).min(content.len());
-                    content.replace_range(pos..end, "");
-                }
-            }
-        }
-        Delta::ParagraphInsert { after_id, new_id, style } => {
-            if let Some(idx) = doc.body.content.iter().position(|p| p.id == after_id) {
-                let new_para = Paragraph {
-                    id: new_id,
-                    paragraph_style: style,
-                    elements: vec![Element { text_run: TextRun { content: String::new(), text_style: Default::default() } }],
-                    left_indent: None,
-                    right_indent: None,
-                    first_line_indent: None,
-                };
-                doc.body.content.insert(idx + 1, new_para);
-            }
-        }
-        Delta::ParagraphDelete { id } => {
-            if let Some(idx) = doc.body.content.iter().position(|p| p.id == id) {
-                doc.body.content.remove(idx);
-            }
-        }
-        Delta::StyleChange { paragraph_id, text_style } => {
-            if let Some(para) = doc.body.content.iter_mut().find(|p| p.id == paragraph_id) {
-                if let Some(first) = para.elements.first_mut() {
-                    first.text_run.text_style = text_style;
-                }
-            }
-        }
-        Delta::RenameSection { id, title } => {
-            if let Some(para) = doc.body.content.iter_mut().find(|p| p.id == id) {
-                para.elements = vec![Element { text_run: TextRun { content: title, text_style: Default::default() } }];
-            }
-        }
-        Delta::ParagraphUpdate { id, elements } => {
-            if let Some(para) = doc.body.content.iter_mut().find(|p| p.id == id) {
-                para.elements = elements;
-            }
-        }
-    }
-}
-
 /// Split the paragraph identified by `paragraph_id` at `offset` characters.
 /// Splitting at a boundary (0 or end-of-text) inserts an empty paragraph
 /// before/after it instead of cutting a run. The original paragraph keeps its
@@ -481,7 +441,11 @@ fn split_paragraph_in_document(doc: &mut Document, paragraph_id: &str, offset: u
         return false;
     };
     let para = &doc.body.content[idx];
-    let full_text: String = para.elements.iter().map(|e| e.text_run.content.clone()).collect();
+    let full_text: String = para
+        .elements
+        .iter()
+        .map(|e| e.text_run.content.clone())
+        .collect();
     let char_count = full_text.chars().count();
     let offset = offset.min(char_count);
 
@@ -602,11 +566,11 @@ fn merge_paragraphs_in_document(doc: &mut Document, first_id: &str, second_id: &
 }
 
 #[tauri::command]
-pub fn apply_format(
+pub fn apply_text_style(
     paragraph_id: String,
     start_offset: usize,
     end_offset: usize,
-    format: TextStyleDelta,
+    style_delta: TextStyleDelta,
     state: State<AppState>,
 ) -> Result<Document, String> {
     let old_doc = state.document.lock().map_err(|e| e.to_string())?.clone();
@@ -614,7 +578,7 @@ pub fn apply_format(
     let mut modified = state.is_modified.lock().map_err(|e| e.to_string())?;
 
     if let Some(para) = doc.body.content.iter_mut().find(|p| p.id == paragraph_id) {
-        apply_format_to_paragraph(para, start_offset, end_offset, &format)?;
+        apply_text_style_to_paragraph(para, start_offset, end_offset, &style_delta)?;
     }
 
     *modified = true;
@@ -663,7 +627,7 @@ pub fn merge_paragraphs(
 }
 
 #[tauri::command]
-pub fn set_paragraph_style(
+pub fn apply_paragraph_style(
     paragraph_id: String,
     style: ParagraphStyle,
     state: State<AppState>,
@@ -714,8 +678,8 @@ mod tests {
     use super::*;
     use crate::document::{Body, ParagraphStyle, TextStyle};
 
-    /// Build a normal paragraph with a single unstyled run of `text`.
-    fn make_para(id: &str, text: &str) -> Paragraph {
+    /// Create a normal paragraph with a single unstyled run of `text`.
+    fn create_paragraph(id: &str, text: &str) -> Paragraph {
         Paragraph {
             id: id.to_string(),
             paragraph_style: ParagraphStyle::Normal,
@@ -731,8 +695,8 @@ mod tests {
         }
     }
 
-    /// Build a normal paragraph with a single run carrying an explicit style.
-    fn make_styled_para(id: &str, text: &str, style: TextStyle) -> Paragraph {
+    /// Create a normal paragraph with a single run carrying an explicit style.
+    fn create_styled_paragraph(id: &str, text: &str, style: TextStyle) -> Paragraph {
         Paragraph {
             id: id.to_string(),
             paragraph_style: ParagraphStyle::Normal,
@@ -748,7 +712,7 @@ mod tests {
         }
     }
 
-    fn make_doc(content: Vec<Paragraph>) -> Document {
+    fn create_document(content: Vec<Paragraph>) -> Document {
         Document {
             title: "T".to_string(),
             author: "A".to_string(),
@@ -776,12 +740,12 @@ mod tests {
         }
     }
 
-    // --- apply_format_to_paragraph -----------------------------------------
+    // --- apply_text_style_to_paragraph -----------------------------------------
 
     #[test]
     fn format_bold_middle_splits_into_three_runs() {
-        let mut para = make_para("p1", "hello");
-        apply_format_to_paragraph(&mut para, 1, 4, &bold()).unwrap();
+        let mut para = create_paragraph("p1", "hello");
+        apply_text_style_to_paragraph(&mut para, 1, 4, &bold()).unwrap();
         // prefix "h" (normal) | middle "ell" (bold) | suffix "o" (normal)
         assert_eq!(para.elements.len(), 3);
         assert_eq!(para.elements[0].text_run.content, "h");
@@ -794,8 +758,8 @@ mod tests {
 
     #[test]
     fn format_bold_whole_run_stays_single() {
-        let mut para = make_para("p1", "hello");
-        apply_format_to_paragraph(&mut para, 0, 5, &bold()).unwrap();
+        let mut para = create_paragraph("p1", "hello");
+        apply_text_style_to_paragraph(&mut para, 0, 5, &bold()).unwrap();
         assert_eq!(para.elements.len(), 1);
         assert_eq!(para.elements[0].text_run.content, "hello");
         assert!(para.elements[0].text_run.text_style.bold);
@@ -826,7 +790,7 @@ mod tests {
             first_line_indent: None,
         };
         // Bold the "bc" range that straddles the element boundary.
-        apply_format_to_paragraph(&mut para, 1, 3, &bold()).unwrap();
+        apply_text_style_to_paragraph(&mut para, 1, 3, &bold()).unwrap();
         // The trailing empty middle fragment and its bold neighbour collapse
         // back together in the merge pass, leaving clean a | bc | d.
         assert_eq!(para_text(&para), "abcd");
@@ -837,9 +801,9 @@ mod tests {
 
     #[test]
     fn format_empty_range_is_noop() {
-        let mut para = make_para("p1", "hello");
+        let mut para = create_paragraph("p1", "hello");
         // start == end (also start > end after clamping) must do nothing.
-        apply_format_to_paragraph(&mut para, 3, 3, &bold()).unwrap();
+        apply_text_style_to_paragraph(&mut para, 3, 3, &bold()).unwrap();
         assert_eq!(para.elements.len(), 1);
         assert_eq!(para.elements[0].text_run.content, "hello");
         assert!(!para.elements[0].text_run.text_style.bold);
@@ -847,9 +811,9 @@ mod tests {
 
     #[test]
     fn format_offsets_clamp_to_text_length() {
-        let mut para = make_para("p1", "hi");
+        let mut para = create_paragraph("p1", "hi");
         // end far beyond the 2-char text clamps to the end; nothing panics.
-        apply_format_to_paragraph(&mut para, 1, 999, &bold()).unwrap();
+        apply_text_style_to_paragraph(&mut para, 1, 999, &bold()).unwrap();
         assert_eq!(para_text(&para), "hi");
         assert_eq!(para.elements.len(), 2);
         assert_eq!(para.elements[0].text_run.content, "h");
@@ -862,7 +826,7 @@ mod tests {
 
     #[test]
     fn split_in_middle_preserves_id_on_before() {
-        let mut doc = make_doc(vec![make_para("p1", "hello")]);
+        let mut doc = create_document(vec![create_paragraph("p1", "hello")]);
         assert!(split_paragraph_in_document(&mut doc, "p1", 2));
         assert_eq!(doc.body.content.len(), 2);
         assert_eq!(para_text(&doc.body.content[0]), "he");
@@ -873,7 +837,7 @@ mod tests {
 
     #[test]
     fn split_at_start_inserts_empty_before() {
-        let mut doc = make_doc(vec![make_para("p1", "hello")]);
+        let mut doc = create_document(vec![create_paragraph("p1", "hello")]);
         split_paragraph_in_document(&mut doc, "p1", 0);
         assert_eq!(doc.body.content.len(), 2);
         assert_eq!(para_text(&doc.body.content[0]), "");
@@ -882,7 +846,7 @@ mod tests {
 
     #[test]
     fn split_at_end_inserts_empty_after() {
-        let mut doc = make_doc(vec![make_para("p1", "hello")]);
+        let mut doc = create_document(vec![create_paragraph("p1", "hello")]);
         split_paragraph_in_document(&mut doc, "p1", 5);
         assert_eq!(doc.body.content.len(), 2);
         assert_eq!(para_text(&doc.body.content[0]), "hello");
@@ -891,7 +855,7 @@ mod tests {
 
     #[test]
     fn split_clamps_oversized_offset_to_end() {
-        let mut doc = make_doc(vec![make_para("p1", "hi")]);
+        let mut doc = create_document(vec![create_paragraph("p1", "hi")]);
         // offset 999 is longer than the text; treated like end-of-text.
         split_paragraph_in_document(&mut doc, "p1", 999);
         assert_eq!(doc.body.content.len(), 2);
@@ -901,7 +865,7 @@ mod tests {
 
     #[test]
     fn split_unknown_id_is_noop_and_returns_false() {
-        let mut doc = make_doc(vec![make_para("p1", "hello")]);
+        let mut doc = create_document(vec![create_paragraph("p1", "hello")]);
         assert!(!split_paragraph_in_document(&mut doc, "nope", 1));
         assert_eq!(doc.body.content.len(), 1);
     }
@@ -910,7 +874,10 @@ mod tests {
 
     #[test]
     fn merge_adjacent_same_style_concatenates() {
-        let mut doc = make_doc(vec![make_para("p1", "ab"), make_para("p2", "cd")]);
+        let mut doc = create_document(vec![
+            create_paragraph("p1", "ab"),
+            create_paragraph("p2", "cd"),
+        ]);
         assert!(merge_paragraphs_in_document(&mut doc, "p1", "p2"));
         assert_eq!(doc.body.content.len(), 1);
         assert_eq!(para_text(&doc.body.content[0]), "abcd");
@@ -920,9 +887,9 @@ mod tests {
 
     #[test]
     fn merge_adjacent_different_style_keeps_both_runs() {
-        let mut doc = make_doc(vec![
-            make_styled_para("p1", "ab", TextStyle::default()),
-            make_styled_para(
+        let mut doc = create_document(vec![
+            create_styled_paragraph("p1", "ab", TextStyle::default()),
+            create_styled_paragraph(
                 "p2",
                 "cd",
                 TextStyle {
@@ -944,10 +911,10 @@ mod tests {
 
     #[test]
     fn merge_non_adjacent_returns_false() {
-        let mut doc = make_doc(vec![
-            make_para("p1", "a"),
-            make_para("p2", "b"),
-            make_para("p3", "c"),
+        let mut doc = create_document(vec![
+            create_paragraph("p1", "a"),
+            create_paragraph("p2", "b"),
+            create_paragraph("p3", "c"),
         ]);
         // p1 and p3 are not neighbours; nothing happens.
         assert!(!merge_paragraphs_in_document(&mut doc, "p1", "p3"));
@@ -956,131 +923,11 @@ mod tests {
 
     #[test]
     fn merge_unknown_id_returns_false() {
-        let mut doc = make_doc(vec![make_para("p1", "a"), make_para("p2", "b")]);
+        let mut doc = create_document(vec![
+            create_paragraph("p1", "a"),
+            create_paragraph("p2", "b"),
+        ]);
         assert!(!merge_paragraphs_in_document(&mut doc, "p1", "nope"));
         assert_eq!(doc.body.content.len(), 2);
-    }
-
-    // --- apply_delta_to_document -------------------------------------------
-
-    #[test]
-    fn delta_text_insert_into_middle() {
-        let mut doc = make_doc(vec![make_para("p1", "hi")]);
-        apply_delta_to_document(
-            &mut doc,
-            Delta::TextInsert {
-                paragraph_id: "p1".to_string(),
-                pos: 1,
-                text: "X".to_string(),
-            },
-        );
-        assert_eq!(para_text(&doc.body.content[0]), "hXi");
-    }
-
-    #[test]
-    fn delta_text_insert_beyond_length_is_ignored() {
-        let mut doc = make_doc(vec![make_para("p1", "hi")]);
-        apply_delta_to_document(
-            &mut doc,
-            Delta::TextInsert {
-                paragraph_id: "p1".to_string(),
-                pos: 99,
-                text: "X".to_string(),
-            },
-        );
-        // pos beyond the string length is a no-op (guarded by `pos <= len`).
-        assert_eq!(para_text(&doc.body.content[0]), "hi");
-    }
-
-    #[test]
-    fn delta_text_delete_removes_range() {
-        let mut doc = make_doc(vec![make_para("p1", "hello")]);
-        apply_delta_to_document(
-            &mut doc,
-            Delta::TextDelete {
-                paragraph_id: "p1".to_string(),
-                pos: 1,
-                len: 2,
-            },
-        );
-        assert_eq!(para_text(&doc.body.content[0]), "hlo");
-    }
-
-    #[test]
-    fn delta_paragraph_insert_after_target() {
-        let mut doc = make_doc(vec![make_para("p1", "a")]);
-        apply_delta_to_document(
-            &mut doc,
-            Delta::ParagraphInsert {
-                after_id: "p1".to_string(),
-                new_id: "p2".to_string(),
-                style: ParagraphStyle::Normal,
-            },
-        );
-        assert_eq!(doc.body.content.len(), 2);
-        assert_eq!(doc.body.content[1].id, "p2");
-        assert_eq!(para_text(&doc.body.content[1]), "");
-    }
-
-    #[test]
-    fn delta_paragraph_delete_removes_target() {
-        let mut doc = make_doc(vec![make_para("p1", "a"), make_para("p2", "b")]);
-        apply_delta_to_document(
-            &mut doc,
-            Delta::ParagraphDelete {
-                id: "p2".to_string(),
-            },
-        );
-        assert_eq!(doc.body.content.len(), 1);
-        assert_eq!(doc.body.content[0].id, "p1");
-    }
-
-    #[test]
-    fn delta_paragraph_update_replaces_elements() {
-        let mut doc = make_doc(vec![make_para("p1", "old")]);
-        apply_delta_to_document(
-            &mut doc,
-            Delta::ParagraphUpdate {
-                id: "p1".to_string(),
-                elements: vec![Element {
-                    text_run: TextRun {
-                        content: "new".to_string(),
-                        text_style: TextStyle::default(),
-                    },
-                }],
-            },
-        );
-        assert_eq!(para_text(&doc.body.content[0]), "new");
-    }
-
-    #[test]
-    fn delta_style_change_sets_first_run_style() {
-        let mut doc = make_doc(vec![make_para("p1", "hi")]);
-        apply_delta_to_document(
-            &mut doc,
-            Delta::StyleChange {
-                paragraph_id: "p1".to_string(),
-                text_style: TextStyle {
-                    bold: true,
-                    italic: false,
-                    underline: false,
-                    font_size: None,
-                },
-            },
-        );
-        assert!(doc.body.content[0].elements[0].text_run.text_style.bold);
-    }
-
-    #[test]
-    fn delta_rename_section_replaces_text() {
-        let mut doc = make_doc(vec![make_para("p1", "Old Title")]);
-        apply_delta_to_document(
-            &mut doc,
-            Delta::RenameSection {
-                id: "p1".to_string(),
-                title: "New Title".to_string(),
-            },
-        );
-        assert_eq!(para_text(&doc.body.content[0]), "New Title");
     }
 }

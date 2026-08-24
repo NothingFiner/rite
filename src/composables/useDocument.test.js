@@ -36,19 +36,6 @@ describe('useDocumentStore', () => {
     expect(store.isModified).toBe(false)
   })
 
-  it('applies delta and marks modified', async () => {
-    const initialDoc = { title: 'Initial', body: { content: [] } }
-    const updatedDoc = { title: 'Updated', body: { content: [] } }
-    invoke.mockResolvedValue(updatedDoc)
-
-    const store = useDocumentStore()
-    store.doc = initialDoc
-    await store.applyDelta({ type: 'text_insert', paragraph_id: 'p1', pos: 0, text: 'hello' })
-    expect(invoke).toHaveBeenCalledWith('apply_delta', expect.any(Object))
-    expect(store.doc.title).toBe('Updated')
-    expect(store.isModified).toBe(true)
-  })
-
   it('saves document via Rust', async () => {
     invoke.mockResolvedValue(undefined)
 
@@ -132,8 +119,8 @@ describe('useDocumentStore', () => {
     const store = useDocumentStore()
     store.lastPath = '/test.fwd'
     store.isModified = true
-    await store.autosave()
-    expect(invoke).toHaveBeenCalledWith('autosave')
+    await store.autosaveDocument()
+    expect(invoke).toHaveBeenCalledWith('autosave_document')
     expect(store.isModified).toBe(false)
   })
 
@@ -141,7 +128,7 @@ describe('useDocumentStore', () => {
     const store = useDocumentStore()
     store.lastPath = null
     store.isModified = true
-    await store.autosave()
+    await store.autosaveDocument()
     expect(invoke).not.toHaveBeenCalled()
   })
 
@@ -149,7 +136,7 @@ describe('useDocumentStore', () => {
     const store = useDocumentStore()
     store.lastPath = '/test.fwd'
     store.isModified = false
-    await store.autosave()
+    await store.autosaveDocument()
     expect(invoke).not.toHaveBeenCalled()
   })
 

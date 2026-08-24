@@ -7,9 +7,9 @@ mod history;
 mod state;
 
 use commands::{
-    apply_delta, apply_format, autosave, delete_heading, get_document, insert_heading,
-    merge_paragraphs, open_document, redo, rename_section, replace_all, replace_current,
-    save_document, search_document, set_paragraph_style, split_paragraph, sync_document, undo,
+    apply_paragraph_style, apply_text_style, autosave_document, delete_heading, get_document,
+    insert_heading, merge_paragraphs, open_document, redo, rename_section, replace_all,
+    replace_current, save_document, search_document, split_paragraph, sync_document, undo,
 };
 use state::AppState;
 
@@ -18,20 +18,19 @@ fn main() {
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
             get_document,
-            apply_delta,
             insert_heading,
             delete_heading,
             rename_section,
-            apply_format,
+            apply_text_style,
             split_paragraph,
             merge_paragraphs,
-            set_paragraph_style,
+            apply_paragraph_style,
             search_document,
             replace_current,
             replace_all,
             save_document,
             open_document,
-            autosave,
+            autosave_document,
             sync_document,
             undo,
             redo,

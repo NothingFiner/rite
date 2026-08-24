@@ -17,7 +17,8 @@ impl Default for Document {
         Self {
             title: "Untitled".into(),
             author: "Author Name".into(),
-            author_contact: "123 Writer's Lane\nNew York, NY 10001\n(555) 123-4567\nauthor@example.com".into(),
+            author_contact:
+                "123 Writer's Lane\nNew York, NY 10001\n(555) 123-4567\nauthor@example.com".into(),
             has_toc: false,
             has_epigram: false,
             epigram_text: String::new(),
@@ -142,41 +143,6 @@ pub struct TextStyleDelta {
     pub font_size: Option<u16>,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(rename_all = "snake_case", tag = "type")]
-pub enum Delta {
-    TextInsert {
-        paragraph_id: String,
-        pos: usize,
-        text: String,
-    },
-    TextDelete {
-        paragraph_id: String,
-        pos: usize,
-        len: usize,
-    },
-    ParagraphInsert {
-        after_id: String,
-        new_id: String,
-        style: ParagraphStyle,
-    },
-    ParagraphDelete {
-        id: String,
-    },
-    StyleChange {
-        paragraph_id: String,
-        text_style: TextStyle,
-    },
-    RenameSection {
-        id: String,
-        title: String,
-    },
-    ParagraphUpdate {
-        id: String,
-        elements: Vec<Element>,
-    },
-}
-
 /// Stable, invertible operation describing a change between two Document snapshots.
 /// Used for version history deltas and side-by-side diff rendering.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -273,10 +239,7 @@ pub fn compute_doc_ops(old: &Document, new: &Document) -> Vec<DocOp> {
     let new_len = new.body.content.len();
 
     while i < old_len || j < new_len {
-        if i < old_len
-            && j < new_len
-            && old.body.content[i].id == new.body.content[j].id
-        {
+        if i < old_len && j < new_len && old.body.content[i].id == new.body.content[j].id {
             if old.body.content[i] != new.body.content[j] {
                 ops.push(DocOp::UpdateParagraph {
                     id: old.body.content[i].id.clone(),
@@ -288,7 +251,12 @@ pub fn compute_doc_ops(old: &Document, new: &Document) -> Vec<DocOp> {
             j += 1;
         } else if j < new_len
             && (i >= old_len
-                || !old.body.content.iter().skip(i).any(|p| p.id == new.body.content[j].id))
+                || !old
+                    .body
+                    .content
+                    .iter()
+                    .skip(i)
+                    .any(|p| p.id == new.body.content[j].id))
         {
             let after_id = if j == 0 {
                 None
@@ -302,7 +270,12 @@ pub fn compute_doc_ops(old: &Document, new: &Document) -> Vec<DocOp> {
             j += 1;
         } else if i < old_len
             && (j >= new_len
-                || !new.body.content.iter().skip(j).any(|p| p.id == old.body.content[i].id))
+                || !new
+                    .body
+                    .content
+                    .iter()
+                    .skip(j)
+                    .any(|p| p.id == old.body.content[i].id))
         {
             ops.push(DocOp::DeleteParagraph {
                 id: old.body.content[i].id.clone(),
@@ -338,7 +311,10 @@ pub fn compute_doc_ops(old: &Document, new: &Document) -> Vec<DocOp> {
 impl DocOp {
     pub fn invert(&self) -> Self {
         match self {
-            DocOp::InsertParagraph { after_id: _, paragraph } => DocOp::DeleteParagraph {
+            DocOp::InsertParagraph {
+                after_id: _,
+                paragraph,
+            } => DocOp::DeleteParagraph {
                 id: paragraph.id.clone(),
                 old: paragraph.clone(),
             },
@@ -388,15 +364,15 @@ impl DocOp {
 pub fn apply_doc_ops(doc: &mut Document, ops: &[DocOp]) -> Result<(), String> {
     for op in ops {
         match op {
-            DocOp::InsertParagraph { after_id, paragraph } => {
+            DocOp::InsertParagraph {
+                after_id,
+                paragraph,
+            } => {
                 if let Some(after_id) = after_id {
                     if let Some(idx) = doc.body.content.iter().position(|p| p.id == *after_id) {
                         doc.body.content.insert(idx + 1, paragraph.clone());
                     } else {
-                        return Err(format!(
-                            "InsertParagraph: after_id {} not found",
-                            after_id
-                        ));
+                        return Err(format!("InsertParagraph: after_id {} not found", after_id));
                     }
                 } else {
                     doc.body.content.insert(0, paragraph.clone());
@@ -463,9 +439,7 @@ pub fn apply_doc_ops(doc: &mut Document, ops: &[DocOp]) -> Result<(), String> {
                 }
                 MetadataField::EpigramText { old, new } => {
                     if doc.epigram_text != *old {
-                        return Err(
-                            "UpdateMetadata: epigram_text does not match old value".into()
-                        );
+                        return Err("UpdateMetadata: epigram_text does not match old value".into());
                     }
                     doc.epigram_text = new.clone();
                 }
@@ -495,7 +469,7 @@ pub struct ReplaceResult {
 mod tests {
     use super::*;
 
-    fn make_para(id: &str, text: &str) -> Paragraph {
+    fn create_paragraph(id: &str, text: &str) -> Paragraph {
         Paragraph {
             id: id.to_string(),
             paragraph_style: ParagraphStyle::Normal,
@@ -511,7 +485,7 @@ mod tests {
         }
     }
 
-    fn make_doc(content: Vec<Paragraph>) -> Document {
+    fn create_document(content: Vec<Paragraph>) -> Document {
         Document {
             title: "T".to_string(),
             author: "A".to_string(),
@@ -525,17 +499,17 @@ mod tests {
 
     #[test]
     fn test_compute_doc_ops_no_changes() {
-        let doc = make_doc(vec![make_para("p1", "hello")]);
+        let doc = create_document(vec![create_paragraph("p1", "hello")]);
         let ops = compute_doc_ops(&doc, &doc);
         assert!(ops.is_empty());
     }
 
     #[test]
     fn test_compute_doc_ops_insert_paragraph() {
-        let old = make_doc(vec![make_para("p1", "hello")]);
-        let new = make_doc(vec![
-            make_para("p1", "hello"),
-            make_para("p2", "world"),
+        let old = create_document(vec![create_paragraph("p1", "hello")]);
+        let new = create_document(vec![
+            create_paragraph("p1", "hello"),
+            create_paragraph("p2", "world"),
         ]);
         let ops = compute_doc_ops(&old, &new);
         assert_eq!(ops.len(), 1);
@@ -554,11 +528,11 @@ mod tests {
 
     #[test]
     fn test_compute_doc_ops_delete_paragraph() {
-        let old = make_doc(vec![
-            make_para("p1", "hello"),
-            make_para("p2", "world"),
+        let old = create_document(vec![
+            create_paragraph("p1", "hello"),
+            create_paragraph("p2", "world"),
         ]);
-        let new = make_doc(vec![make_para("p1", "hello")]);
+        let new = create_document(vec![create_paragraph("p1", "hello")]);
         let ops = compute_doc_ops(&old, &new);
         assert_eq!(ops.len(), 1);
         assert!(matches!(&ops[0], DocOp::DeleteParagraph { id, .. } if id == "p2"));
@@ -570,8 +544,8 @@ mod tests {
 
     #[test]
     fn test_compute_doc_ops_update_paragraph() {
-        let old = make_doc(vec![make_para("p1", "hello")]);
-        let new = make_doc(vec![make_para("p1", "hello world")]);
+        let old = create_document(vec![create_paragraph("p1", "hello")]);
+        let new = create_document(vec![create_paragraph("p1", "hello world")]);
         let ops = compute_doc_ops(&old, &new);
         assert_eq!(ops.len(), 1);
         assert!(matches!(&ops[0], DocOp::UpdateParagraph { id, .. } if id == "p1"));
@@ -583,7 +557,7 @@ mod tests {
 
     #[test]
     fn test_compute_doc_ops_update_metadata() {
-        let mut old = make_doc(vec![make_para("p1", "hello")]);
+        let mut old = create_document(vec![create_paragraph("p1", "hello")]);
         old.title = "Old Title".to_string();
         let mut new = old.clone();
         new.title = "New Title".to_string();
@@ -603,12 +577,12 @@ mod tests {
 
     #[test]
     fn test_apply_doc_ops_validation_fails_on_mismatch() {
-        let mut doc = make_doc(vec![make_para("p1", "hello")]);
-        let wrong_old = make_para("p1", "goodbye");
+        let mut doc = create_document(vec![create_paragraph("p1", "hello")]);
+        let wrong_old = create_paragraph("p1", "goodbye");
         let ops = vec![DocOp::UpdateParagraph {
             id: "p1".to_string(),
             old: wrong_old,
-            new: make_para("p1", "hello world"),
+            new: create_paragraph("p1", "hello world"),
         }];
         assert!(apply_doc_ops(&mut doc, &ops).is_err());
     }

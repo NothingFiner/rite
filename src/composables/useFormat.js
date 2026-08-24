@@ -161,16 +161,16 @@ export function useFormat(editorRef, markModified) {
 
     const store = useDocumentStore()
     const active = formats[command] || false
-    const format = {}
-    if (command === 'bold') format.bold = !active
-    if (command === 'italic') format.italic = !active
-    if (command === 'underline') format.underline = !active
+    const styleDelta = {}
+    if (command === 'bold') styleDelta.bold = !active
+    if (command === 'italic') styleDelta.italic = !active
+    if (command === 'underline') styleDelta.underline = !active
 
-    await store.applyFormat({
+    await store.applyTextStyle({
       paragraphId: selection.paragraphId,
       startOffset: selection.startOffset,
       endOffset: selection.endOffset,
-      ...format,
+      ...styleDelta,
     })
 
     syncFormatState()

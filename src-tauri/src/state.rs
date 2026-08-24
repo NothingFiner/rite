@@ -1,5 +1,5 @@
+use crate::document::{apply_doc_ops, compute_doc_ops, DocOp, Document};
 use std::sync::Mutex;
-use crate::document::{apply_doc_ops, compute_doc_ops, Document, DocOp};
 
 pub struct AppState {
     pub document: Mutex<Document>,
@@ -107,7 +107,7 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::document::{Body, Element, Paragraph, ParagraphStyle, TextStyle, TextRun};
+    use crate::document::{Body, Element, Paragraph, ParagraphStyle, TextRun, TextStyle};
 
     /// A one-paragraph document whose single run contains `text`. Used as the
     /// thing we mutate between history pushes — each distinct `text` is a

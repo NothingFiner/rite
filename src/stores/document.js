@@ -43,16 +43,6 @@ export const useDocumentStore = defineStore('document', {
       }
     },
 
-    async applyDelta(delta) {
-      try {
-        const updated = await invoke('apply_delta', { delta })
-        this.doc = updated
-        this.isModified = true
-      } catch (e) {
-        console.error('Failed to apply delta:', e)
-      }
-    },
-
     async insertHeading(level, afterId = null) {
       try {
         const updated = await invoke('insert_heading', { level, afterId })
@@ -83,28 +73,28 @@ export const useDocumentStore = defineStore('document', {
       }
     },
 
-    async applyFormat({ paragraphId, startOffset, endOffset, bold, italic, underline, fontSize }) {
+    async applyTextStyle({ paragraphId, startOffset, endOffset, bold, italic, underline, fontSize }) {
       try {
-        const updated = await invoke('apply_format', {
+        const updated = await invoke('apply_text_style', {
           paragraphId,
           startOffset,
           endOffset,
-          format: { bold, italic, underline, fontSize },
+          styleDelta: { bold, italic, underline, fontSize },
         })
         this.doc = updated
         this.isModified = true
       } catch (e) {
-        console.error('Failed to apply format:', e)
+        console.error('Failed to apply text style:', e)
       }
     },
 
-    async setParagraphStyle({ paragraphId, style }) {
+    async applyParagraphStyle({ paragraphId, style }) {
       try {
-        const updated = await invoke('set_paragraph_style', { paragraphId, style })
+        const updated = await invoke('apply_paragraph_style', { paragraphId, style })
         this.doc = updated
         this.isModified = true
       } catch (e) {
-        console.error('Failed to set paragraph style:', e)
+        console.error('Failed to apply paragraph style:', e)
       }
     },
 
@@ -141,10 +131,10 @@ export const useDocumentStore = defineStore('document', {
       }
     },
 
-    async autosave() {
+    async autosaveDocument() {
       if (!this.lastPath || !this.isModified) return
       try {
-        await invoke('autosave')
+        await invoke('autosave_document')
         this.isModified = false
       } catch (e) {
         console.error('Auto-save failed:', e)
