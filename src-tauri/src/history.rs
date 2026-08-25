@@ -102,7 +102,7 @@ fn is_stem_in_use(history: &Path, stem: &str) -> bool {
 /// sequential in-process, so counter order matches the order the transitions
 /// actually happened — reconstruction stays correct.
 fn reserve_entry(history: &Path, dir: &Path, ts: &str, ext: &str) -> (String, PathBuf) {
-    let mut candidates =
+    let candidates =
         std::iter::once(ts.to_string()).chain((1u32..).map(|n| format!("{}-{}", ts, n)));
     for stem in candidates {
         if !is_stem_in_use(history, &stem) {

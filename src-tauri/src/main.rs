@@ -2,14 +2,14 @@
 
 mod commands;
 mod document;
-#[allow(dead_code)] // wired into commands/state in the next Phase 2 step
 mod history;
 mod state;
 
 use commands::{
     apply_paragraph_style, apply_text_style, autosave_document, delete_heading, get_document,
-    insert_heading, merge_paragraphs, open_document, redo, rename_section, replace_all,
-    replace_current, save_document, search_document, split_paragraph, sync_document, undo,
+    insert_heading, list_history, merge_paragraphs, open_document, reconstruct_version, redo,
+    rename_section, replace_all, replace_current, save_document, save_snapshot, search_document,
+    split_paragraph, sync_document, undo,
 };
 use state::AppState;
 
@@ -31,6 +31,9 @@ fn main() {
             save_document,
             open_document,
             autosave_document,
+            save_snapshot,
+            list_history,
+            reconstruct_version,
             sync_document,
             undo,
             redo,

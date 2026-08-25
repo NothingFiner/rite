@@ -2,9 +2,11 @@ use crate::document::{
     Document, Element, Paragraph, ParagraphStyle, ReplaceResult, SearchMatch, TextRun,
     TextStyleDelta,
 };
+use crate::history::{self, HistoryEntry};
 use crate::state::AppState;
 use regex::Regex;
 use std::fs;
+use std::path::Path;
 use tauri::State;
 
 #[tauri::command]
@@ -276,6 +278,11 @@ pub fn save_document(path: String, state: State<AppState>) -> Result<(), String>
     let tmp_path = format!("{}.tmp", path);
     fs::write(&tmp_path, json).map_err(|e| e.to_string())?;
     fs::rename(&tmp_path, &path).map_err(|e| e.to_string())?;
+    drop(doc);
+
+    // Write a full snapshot to the history sidecar and advance the history
+    // baseline, so subsequent autosaves journal deltas from this saved state.
+    state.write_history_snapshot(Path::new(&path))?;
 
     let mut last_path = state.last_path.lock().map_err(|e| e.to_string())?;
     *last_path = Some(path);
@@ -296,6 +303,10 @@ pub fn open_document(path: String, state: State<AppState>) -> Result<Document, S
     drop(state_doc);
 
     state.reset_history();
+    // The loaded document is the baseline the first autosave delta computes
+    // against (the sidecar already holds a snapshot from the document's last
+    // explicit save, so that delta will reconstruct correctly).
+    state.set_history_baseline(&doc);
 
     let mut last_path = state.last_path.lock().map_err(|e| e.to_string())?;
     *last_path = Some(path);
@@ -317,18 +328,64 @@ pub fn sync_document(data: Document, state: State<AppState>) -> Result<(), Strin
 
 #[tauri::command]
 pub fn autosave_document(state: State<AppState>) -> Result<(), String> {
-    let modified = state.is_modified.lock().map_err(|e| e.to_string())?;
-    if !*modified {
+    let modified = *state.is_modified.lock().map_err(|e| e.to_string())?;
+    if !modified {
         return Ok(());
     }
 
-    let last_path = state.last_path.lock().map_err(|e| e.to_string())?;
-    if let Some(path) = last_path.clone() {
-        drop(modified);
-        drop(last_path);
-        save_document(path, state)?;
-    }
+    // Autosave journals a delta to the history sidecar; it does not rewrite the
+    // .fwd (that happens only on explicit save). A document with no last_path
+    // has never been saved, so there is no sidecar location to journal to.
+    let base_path = state.last_path.lock().map_err(|e| e.to_string())?.clone();
+    let Some(base_path) = base_path else {
+        return Ok(());
+    };
+
+    state.write_history_delta(Path::new(&base_path))?;
+
+    *state.is_modified.lock().map_err(|e| e.to_string())? = false;
     Ok(())
+}
+
+/// Manually write a full snapshot of the current document to the history
+/// sidecar, without touching the .fwd. A checkpoint records progress without
+/// overwriting the named file. Returns the snapshot's timestamp stem. Requires
+/// the document to have been saved at least once (a last_path to journal to).
+#[tauri::command]
+pub fn save_snapshot(state: State<AppState>) -> Result<String, String> {
+    let base_path = require_last_path(&state)?;
+    state.write_history_snapshot(Path::new(&base_path))
+}
+
+/// List every snapshot and delta in the open document's history sidecar, oldest
+/// first. Returns an empty list when no document is open or it has no history.
+#[tauri::command]
+pub fn list_history(state: State<AppState>) -> Result<Vec<HistoryEntry>, String> {
+    let Some(base_path) = state.last_path.lock().map_err(|e| e.to_string())?.clone() else {
+        return Ok(Vec::new());
+    };
+    history::list_history(Path::new(&base_path))
+}
+
+/// Reconstruct the document as it was at `timestamp`: load the newest snapshot
+/// at or before it, then replay intervening deltas forward. A read-only query
+/// — it does not load the result into the live document (restoring a version is
+/// a separate action).
+#[tauri::command]
+pub fn reconstruct_version(timestamp: String, state: State<AppState>) -> Result<Document, String> {
+    let base_path = require_last_path(&state)?;
+    history::reconstruct_version(&timestamp, Path::new(&base_path))
+}
+
+/// Clone the current last_path, or error if the document has never been saved
+/// (no sidecar location to read from or write to).
+fn require_last_path(state: &State<AppState>) -> Result<String, String> {
+    state
+        .last_path
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone()
+        .ok_or_else(|| "no document path — save the document first".to_string())
 }
 
 fn apply_text_style_to_paragraph(

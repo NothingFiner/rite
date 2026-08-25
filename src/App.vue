@@ -261,6 +261,13 @@ const rightDrawerOpen = ref(false)
 const addExpanded = ref(false)
 const expandedSections = ref({ 'heading-options': true, 'document-info': false })
 
+// How often autosave journals a delta to the on-disk history sidecar. The
+// store's autosaveDocument bails when there's no lastPath or nothing modified,
+// so this fires harmlessly while idle. Explicit save writes the .fwd; this
+// interval only feeds the crash-recovery history between saves.
+const AUTOSAVE_INTERVAL_MS = 30_000
+let autosaveTimer = null
+
 const theme = reactive(useTheme(viewMode))
 const search = reactive(useSearchPanel(editorRef, viewMode))
 const nav = reactive(useNavigation(doc, editorRef))
@@ -519,11 +526,14 @@ onMounted(async () => {
   document.addEventListener('selectionchange', onSelectionChange)
   document.addEventListener('keydown', onKeydown)
   await store.loadInitialDocument()
+
+  autosaveTimer = setInterval(() => { store.autosaveDocument() }, AUTOSAVE_INTERVAL_MS)
 })
 
 onUnmounted(() => {
   document.removeEventListener('selectionchange', onSelectionChange)
   document.removeEventListener('keydown', onKeydown)
+  if (autosaveTimer) clearInterval(autosaveTimer)
 })
 </script>
 

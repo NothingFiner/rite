@@ -1,4 +1,6 @@
 use crate::document::{apply_doc_ops, compute_doc_ops, DocOp, Document};
+use crate::history;
+use std::path::Path;
 use std::sync::Mutex;
 
 pub struct AppState {
@@ -11,6 +13,11 @@ pub struct AppState {
     pub max_history: usize,
     pub is_modified: Mutex<bool>,
     pub last_path: Mutex<Option<String>>,
+    /// The document state the on-disk history was last advanced from. Explicit save
+    /// sets this to the saved document (after writing a snapshot); autosave computes
+    /// the delta from this to the current document, then advances it. Opening a file
+    /// sets it to the loaded document so the first autosave delta has a baseline.
+    pub last_history_state: Mutex<Document>,
 }
 
 impl AppState {
@@ -22,6 +29,7 @@ impl AppState {
             max_history: 30,
             is_modified: Mutex::default(),
             last_path: Mutex::default(),
+            last_history_state: Mutex::new(Document::default()),
         }
     }
 
@@ -57,6 +65,40 @@ impl AppState {
         let mut index = self.history_index.lock().unwrap();
         history.clear();
         *index = 0;
+    }
+
+    /// Set the on-disk history baseline to `doc`. Used on open so the first
+    /// autosave delta is computed against the loaded document rather than the
+    /// default empty document.
+    pub fn set_history_baseline(&self, doc: &Document) {
+        *self.last_history_state.lock().unwrap() = doc.clone();
+    }
+
+    /// Write a full snapshot of the current document to the history sidecar at
+    /// `base_path` and advance `last_history_state` to it. Used by explicit save
+    /// and the manual-checkpoint command. Returns the snapshot's timestamp stem.
+    /// No lock is held across the disk write.
+    pub fn write_history_snapshot(&self, base_path: &Path) -> Result<String, String> {
+        let doc = self.document.lock().map_err(|e| e.to_string())?.clone();
+        let stem = history::save_snapshot(&doc, base_path)?;
+        *self.last_history_state.lock().map_err(|e| e.to_string())? = doc;
+        Ok(stem)
+    }
+
+    /// Compute and persist the delta from `last_history_state` to the current
+    /// document, then advance `last_history_state` to the current document.
+    /// Returns true if a delta file was written, false if nothing changed. Used
+    /// by autosave. No lock is held across the disk write.
+    pub fn write_history_delta(&self, base_path: &Path) -> Result<bool, String> {
+        let current = self.document.lock().map_err(|e| e.to_string())?.clone();
+        let old = self
+            .last_history_state
+            .lock()
+            .map_err(|e| e.to_string())?
+            .clone();
+        let wrote = history::write_delta_since(&old, &current, base_path)?;
+        *self.last_history_state.lock().map_err(|e| e.to_string())? = current;
+        Ok(wrote)
     }
 
     /// Undo the most recent change batch by inverting and applying its
@@ -108,6 +150,9 @@ impl AppState {
 mod tests {
     use super::*;
     use crate::document::{Body, Element, Paragraph, ParagraphStyle, TextRun, TextStyle};
+    use crate::history::{self, HistoryKind};
+    use std::fs;
+    use std::path::PathBuf;
 
     /// A one-paragraph document whose single run contains `text`. Used as the
     /// thing we mutate between history pushes — each distinct `text` is a
@@ -279,5 +324,127 @@ mod tests {
         assert_eq!(*state.history_index.lock().unwrap(), 0);
         // After reset, undo has nothing to do.
         assert!(!state.undo().unwrap());
+    }
+
+    // --- on-disk history wiring (write_history_snapshot / write_history_delta) ---
+    //
+    // These exercise the AppState methods that thread the on-disk history engine
+    // (crate::history) through the live document and the last_history_state baseline.
+
+    /// A self-cleaning temp directory. `new` creates a fresh, unique dir; `Drop`
+    /// removes it, even if the test panics. Mirrors history.rs's TempDir without
+    /// sharing test-only code across modules.
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(name: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!(
+                "rite-state-test-{}-{}",
+                std::process::id(),
+                name
+            ));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).unwrap();
+            Self(dir)
+        }
+        /// A pretend document path inside the temp dir.
+        fn base(&self) -> PathBuf {
+            self.0.join("MyNovel.fwd")
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn history_entries(tmp: &TempDir) -> Vec<crate::history::HistoryEntry> {
+        history::list_history(&tmp.base()).unwrap()
+    }
+
+    #[test]
+    fn set_history_baseline_sets_state() {
+        let state = AppState::new();
+        state.set_history_baseline(&doc_text("hello"));
+        let baseline = state.last_history_state.lock().unwrap().clone();
+        assert_eq!(current_text_from(&baseline), "hello");
+    }
+
+    #[test]
+    fn write_history_snapshot_writes_snapshot_and_advances_baseline() {
+        let tmp = TempDir::new("snapshot_baseline");
+        let state = AppState::new();
+        *state.document.lock().unwrap() = doc_text("a");
+
+        let stem = state.write_history_snapshot(&tmp.base()).unwrap();
+
+        let entries = history_entries(&tmp);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].kind, HistoryKind::Snapshot);
+        assert_eq!(entries[0].timestamp, stem);
+
+        // The baseline advanced to the saved document.
+        let baseline = state.last_history_state.lock().unwrap().clone();
+        assert_eq!(current_text_from(&baseline), "a");
+    }
+
+    #[test]
+    fn write_history_delta_journals_delta_and_advances_baseline() {
+        let tmp = TempDir::new("delta_journal");
+        let state = AppState::new();
+        *state.document.lock().unwrap() = doc_text("a");
+        // Establish a base snapshot (and set the baseline to "a").
+        state.write_history_snapshot(&tmp.base()).unwrap();
+
+        // Edit, then journal a delta from the "a" baseline.
+        *state.document.lock().unwrap() = doc_text("ab");
+        let wrote = state.write_history_delta(&tmp.base()).unwrap();
+        assert!(wrote);
+
+        let entries = history_entries(&tmp);
+        assert_eq!(entries.len(), 2); // one snapshot + one delta
+        let delta_ts = entries
+            .iter()
+            .find(|e| e.kind == HistoryKind::Delta)
+            .unwrap()
+            .timestamp
+            .clone();
+
+        // Reconstructing at the delta's timestamp yields the edited document,
+        // proving the delta was written against the snapshot baseline.
+        let reconstructed = history::reconstruct_version(&delta_ts, &tmp.base()).unwrap();
+        assert_eq!(current_text_from(&reconstructed), "ab");
+
+        // The baseline advanced to the edited document.
+        let baseline = state.last_history_state.lock().unwrap().clone();
+        assert_eq!(current_text_from(&baseline), "ab");
+    }
+
+    #[test]
+    fn write_history_delta_noop_when_unchanged() {
+        let tmp = TempDir::new("delta_noop");
+        let state = AppState::new();
+        *state.document.lock().unwrap() = doc_text("a");
+        state.write_history_snapshot(&tmp.base()).unwrap(); // baseline == "a"
+
+        // Document still equals the baseline → no delta to write.
+        let wrote = state.write_history_delta(&tmp.base()).unwrap();
+        assert!(!wrote);
+
+        // Only the snapshot from above is on disk.
+        let entries = history_entries(&tmp);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].kind, HistoryKind::Snapshot);
+    }
+
+    /// Read the text of the first paragraph's first run from any document. Used
+    /// to compare reconstructed/baseline documents against `doc_text` inputs.
+    fn current_text_from(doc: &Document) -> String {
+        doc.body.content[0]
+            .elements
+            .iter()
+            .map(|e| e.text_run.content.as_str())
+            .collect()
     }
 }
