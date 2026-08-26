@@ -53,6 +53,11 @@ const editorStyles = computed(() => {
     background: t.bg,
     color: t.text,
     padding: pad,
+    // Drives the trailing page-break <hr> color (set in layoutPageBreaks) via
+    // var(--page-break-color). Keeping it here — inside the reactive computed
+    // bound to :style — means a theme change updates the <hr> color live without
+    // the full innerHTML rebuild the old watch(props.theme) performed.
+    '--page-break-color': t.text,
   }
 })
 
@@ -206,8 +211,6 @@ function layoutPageBreaks() {
 
   const breaks = pageBreaks.value
 
-  const t = THEMES[props.theme] || THEMES[0]
-
   // Walk the live DOM and mark the first paragraph of each page
   let pageNum = 1
   let paraIndex = 0
@@ -242,7 +245,7 @@ function layoutPageBreaks() {
     const hr = document.createElement('hr')
     hr.className = 'page-break-line'
     hr.setAttribute('contenteditable', 'false')
-    hr.style.cssText = `border:none;border-top:1px dashed ${t.text};opacity:0.25;margin:1.2em 0;`
+    hr.style.cssText = `border:none;border-top:1px dashed var(--page-break-color);opacity:0.25;margin:1.2em 0;`
     root.insertBefore(hr, lastParagraphNode.nextSibling)
 
     // Sentinel block absorbs cursor placement attempts below the last page break.
@@ -821,13 +824,15 @@ watch(pageBreaks, () => {
   layoutPageBreaks()
 })
 
-watch(() => props.theme, () => {
-  renderEditor()
-})
-
-watch(() => props.zoom, () => {
-  renderEditor()
-})
+// NOTE: there is deliberately no watch(props.theme) or watch(props.zoom).
+// Previously both triggered a full renderEditor() (innerHTML rebuild), which
+// discarded the caret every time the user changed theme or zoom. That rebuild
+// was unnecessary: editorStyles (the reactive computed bound via :style)
+// already updates background/text-color/font-size live, and page breaks are
+// laid out by usePagination against fixed manuscript metrics, so zoom does not
+// shift them. The only theme-dependent thing the rebuild bought was the
+// page-break <hr> border color, which now flows through the --page-break-color
+// CSS variable set in editorStyles — so it updates live too, no rebuild needed.
 
 onMounted(() => {
   renderEditor()
