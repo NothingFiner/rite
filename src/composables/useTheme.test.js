@@ -67,20 +67,20 @@ describe('useTheme', () => {
   it('saves theme and zoom to localStorage', () => {
     const theme = createTheme()
     theme.selectTheme(2)
-    expect(localStorageMock.setItem).toHaveBeenCalledWith('finewrite-theme', '2')
+    expect(localStorageMock.setItem).toHaveBeenCalledWith('rite-theme', '2')
   })
 
   it('saves margin to localStorage', () => {
     const theme = createTheme()
     theme.setMargin('manuscript')
-    expect(localStorageMock.setItem).toHaveBeenCalledWith('finewrite-margin', 'manuscript')
+    expect(localStorageMock.setItem).toHaveBeenCalledWith('rite-margin', 'manuscript')
   })
 
   it('loads saved preferences', () => {
     localStorageMock.getItem.mockImplementation((key) => {
-      if (key === 'finewrite-theme') return '3'
-      if (key === 'finewrite-zoom') return '20'
-      if (key === 'finewrite-margin') return 'manuscript'
+      if (key === 'rite-theme') return '3'
+      if (key === 'rite-zoom') return '20'
+      if (key === 'rite-margin') return 'manuscript'
       return null
     })
     const theme = createTheme()
@@ -142,12 +142,12 @@ describe('useTheme', () => {
     const theme = createTheme()
     theme.setZoom(20)
     expect(theme.editorZoom.value).toBe(20)
-    expect(localStorageMock.setItem).toHaveBeenCalledWith('finewrite-zoom', '20')
+    expect(localStorageMock.setItem).toHaveBeenCalledWith('rite-zoom', '20')
   })
 
   it('clamps loaded theme index to valid range', () => {
     localStorageMock.getItem.mockImplementation((key) => {
-      if (key === 'finewrite-theme') return '999'
+      if (key === 'rite-theme') return '999'
       return null
     })
     const theme = createTheme()
@@ -157,7 +157,7 @@ describe('useTheme', () => {
 
   it('parses malformed zoom values from localStorage as NaN', () => {
     localStorageMock.getItem.mockImplementation((key) => {
-      if (key === 'finewrite-zoom') return 'NaN'
+      if (key === 'rite-zoom') return 'NaN'
       return null
     })
     const theme = createTheme()
@@ -167,7 +167,7 @@ describe('useTheme', () => {
 
   it('ignores invalid margin values from localStorage', () => {
     localStorageMock.getItem.mockImplementation((key) => {
-      if (key === 'finewrite-margin') return 'invalid'
+      if (key === 'rite-margin') return 'invalid'
       return null
     })
     const theme = createTheme()

@@ -46,7 +46,7 @@ export function useHeadingFormat() {
 
   function loadPrefs() {
     try {
-      const raw = localStorage.getItem('finewrite-heading-formats')
+      const raw = localStorage.getItem('rite-heading-formats')
       if (raw) {
         const parsed = JSON.parse(raw)
         headingFormats.value = { ...defaultFormats(), ...parsed }
@@ -56,7 +56,7 @@ export function useHeadingFormat() {
 
   function savePrefs() {
     try {
-      localStorage.setItem('finewrite-heading-formats', JSON.stringify(headingFormats.value))
+      localStorage.setItem('rite-heading-formats', JSON.stringify(headingFormats.value))
     } catch {}
   }
 

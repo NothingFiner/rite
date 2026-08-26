@@ -60,7 +60,7 @@ describe('useHeadingFormat', () => {
     const hf = useHeadingFormat()
     hf.setFormat(1, { prefix: 'Section' })
     expect(localStorageMock.setItem).toHaveBeenCalledWith(
-      'finewrite-heading-formats',
+      'rite-heading-formats',
       expect.stringContaining('Section')
     )
   })

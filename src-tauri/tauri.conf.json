@@ -34,7 +34,7 @@
     "bundle": {
       "active": true,
       "targets": "all",
-      "identifier": "com.finewrite.app"
+      "identifier": "com.rite.app"
     },
     "macOSPrivateApi": true,
     "security": {

@@ -68,23 +68,23 @@ export function useTheme(viewModeRef) {
 
   function loadPrefs() {
     try {
-      const t = localStorage.getItem('finewrite-theme')
+      const t = localStorage.getItem('rite-theme')
       if (t !== null) {
         const idx = parseInt(t, 10)
         editorTheme.value = clampThemeIndex(idx)
       }
-      const z = localStorage.getItem('finewrite-zoom')
+      const z = localStorage.getItem('rite-zoom')
       if (z !== null) editorZoom.value = parseInt(z, 10)
-      const m = localStorage.getItem('finewrite-margin')
+      const m = localStorage.getItem('rite-margin')
       if (m === 'manuscript' || m === 'compact') editorMargin.value = m
     } catch {}
   }
 
   function savePrefs() {
     try {
-      localStorage.setItem('finewrite-theme', String(editorTheme.value))
-      localStorage.setItem('finewrite-zoom', String(editorZoom.value))
-      localStorage.setItem('finewrite-margin', editorMargin.value)
+      localStorage.setItem('rite-theme', String(editorTheme.value))
+      localStorage.setItem('rite-zoom', String(editorZoom.value))
+      localStorage.setItem('rite-margin', editorMargin.value)
     } catch {}
   }
 

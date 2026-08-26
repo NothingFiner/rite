@@ -19,7 +19,7 @@ function genId() {
 }
 
 /**
- * Convert a parsed HTML Element tree into fineWrite paragraphs.
+ * Convert a parsed HTML Element tree into Rite paragraphs.
  */
 function htmlToParagraphs(root) {
   const paragraphs = []
