@@ -1,9 +1,7 @@
 import { ref, computed, watch } from 'vue'
 import { paragraphToHTML } from './useParagraphHTML.js'
 import { isHeading } from '../constants/ParagraphStyle.js'
-
-const CONTENT_WIDTH = 720 - 96 * 2  // PAGE_WIDTH - MARGIN * 2
-const CONTENT_HEIGHT = 960 - 96 * 2 // PAGE_HEIGHT - MARGIN * 2
+import { CONTENT_WIDTH, CONTENT_HEIGHT } from '../constants/page.js'
 
 export function calculateBreaksFromHeights(heights, paragraphs, contentHeight) {
   const breaks = []

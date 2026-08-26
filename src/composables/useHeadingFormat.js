@@ -27,8 +27,26 @@ function defaultFormats() {
   }
 }
 
+// Module-level shared ref so every caller of useHeadingFormat sees the same
+// heading formats. Without this, the editor (editorDisplay.vue) and the General
+// Options drawer (App.vue) each held an independent ref — the editor's never
+// had loadPrefs() called on it, so it always generated default labels and
+// ignored the user's customizations. One shared ref fixes that: the drawer's
+// loadPrefs/setFormat now reach the editor too.
+let headingFormatsRef = null
+function sharedHeadingFormats() {
+  if (!headingFormatsRef) headingFormatsRef = ref(defaultFormats())
+  return headingFormatsRef
+}
+
+// Test-only: reset the shared ref so mutations in one test don't leak into the
+// next. Not called in production.
+export function resetHeadingFormatsForTests() {
+  headingFormatsRef = ref(defaultFormats())
+}
+
 export function useHeadingFormat() {
-  const headingFormats = ref(defaultFormats())
+  const headingFormats = sharedHeadingFormats()
 
   function formatNumber(numbering, index) {
     if (numbering === 'roman') return toRoman(index)

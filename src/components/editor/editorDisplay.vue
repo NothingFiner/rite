@@ -18,6 +18,8 @@ import { paragraphToHTML, paragraphsToHTML, escapeHtml } from '../../composables
 import { usePagination } from '../../composables/usePagination.js'
 import { applySearchHighlights, clearSearchHighlights } from '../../composables/useSearchHighlights.js'
 import { ParagraphStyle, isHeading, getHeadingLevel, shouldHaveFirstLineIndent, isEmptyParagraph } from '../../constants/ParagraphStyle.js'
+import { THEMES } from '../../constants/themes.js'
+import { generateParagraphId, defaultTextStyle } from '../../constants/DocumentModel.js'
 import { useHeadingFormat } from '../../composables/useHeadingFormat.js'
 
 const props = defineProps({
@@ -43,23 +45,8 @@ function editorClearSearchHighlights() {
   clearSearchHighlights(sheetRef.value)
 }
 
-const themes = [
-  { bg: '#D8D3D6', text: '#515359' },
-  { bg: '#EDD1B0', text: '#664B47' },
-  { bg: '#475841', text: '#FFE2D6' },
-  { bg: '#DBE1F1', text: '#61177C' },
-  { bg: '#FFFFE3', text: '#667A72' },
-  { bg: '#030027', text: '#9CB184' },
-  { bg: '#322E18', text: '#B5CC9A' },
-  { bg: '#353535', text: '#D0E37F' },
-  { bg: '#B3DABE', text: '#69120A' },
-  { bg: '#D3BBCF', text: '#171717' },
-]
-
-const EDITOR_PAGE_HEIGHT = 768
-
 const editorStyles = computed(() => {
-  const t = themes[props.theme] || themes[0]
+  const t = THEMES[props.theme] || THEMES[0]
   const pad = props.margin === 'manuscript' ? '96px' : '24px 32px'
   return {
     fontSize: props.zoom + 'px',
@@ -68,20 +55,6 @@ const editorStyles = computed(() => {
     padding: pad,
   }
 })
-
-function genId() {
-  return 'p-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6)
-}
-
-function defaultTextStyle(overrides = {}) {
-  return {
-    bold: false,
-    italic: false,
-    underline: false,
-    fontSize: null,
-    ...overrides,
-  }
-}
 
 function applyHeadingLocks() {
   const root = sheetRef.value
@@ -150,7 +123,7 @@ function domToParagraphs(root) {
       }
 
       paragraphs.push({
-        id: child.dataset.paraId || genId(),
+        id: child.dataset.paraId || generateParagraphId(),
         paragraphStyle: child.dataset.paraStyle || ParagraphStyle.Normal,
         leftIndent: leftIndentPx > 0 ? Math.round(leftIndentPx / 96 * 10) / 10 : undefined,
         rightIndent: rightIndentPx > 0 ? Math.round(rightIndentPx / 96 * 10) / 10 : undefined,
@@ -161,7 +134,7 @@ function domToParagraphs(root) {
   }
 
   if (paragraphs.length === 0) {
-    paragraphs.push({ id: genId(), paragraphStyle: ParagraphStyle.Normal, elements: [{ textRun: { content: '', textStyle: defaultTextStyle() } }] })
+    paragraphs.push({ id: generateParagraphId(), paragraphStyle: ParagraphStyle.Normal, elements: [{ textRun: { content: '', textStyle: defaultTextStyle() } }] })
   }
 
   return paragraphs
@@ -233,7 +206,7 @@ function layoutPageBreaks() {
 
   const breaks = pageBreaks.value
 
-  const t = themes[props.theme] || themes[0]
+  const t = THEMES[props.theme] || THEMES[0]
 
   // Walk the live DOM and mark the first paragraph of each page
   let pageNum = 1
@@ -318,7 +291,7 @@ function renderEditor() {
   const paragraphs = (props.modelValue?.body?.content || []).map(p => ({ ...p }))
   // Ensure every paragraph has a stable id so DOM reads can map back to the correct paragraph.
   for (const p of paragraphs) {
-    if (!p.id) p.id = genId()
+    if (!p.id) p.id = generateParagraphId()
   }
   ensureHeadingText(paragraphs)
 
@@ -446,7 +419,7 @@ function onKeydown(e) {
       }
       const newPara = document.createElement('div')
       newPara.className = 'paragraph'
-      newPara.dataset.paraId = genId()
+      newPara.dataset.paraId = generateParagraphId()
       newPara.innerHTML = '<br>'
       heading.parentNode.insertBefore(newPara, heading.nextSibling)
       const range = document.createRange()
@@ -613,7 +586,7 @@ function insertHeading(type, title) {
   }
 
   const newPara = {
-    id: genId(),
+    id: generateParagraphId(),
     paragraphStyle: type,
     elements: [{ textRun: { content: initialTitle, textStyle: defaultTextStyle() } }],
   }
@@ -770,7 +743,7 @@ function insertHeadingAtPageTop(type, title, afterId = null) {
   }
 
   const newPara = {
-    id: genId(),
+    id: generateParagraphId(),
     paragraphStyle: type,
     elements: [{ textRun: { content: initialTitle, textStyle: defaultTextStyle() } }],
   }
@@ -781,7 +754,7 @@ function insertHeadingAtPageTop(type, title, afterId = null) {
   const next = paragraphs[idx + 1]
   if (!next || isHeading(next.paragraphStyle)) {
     const emptyPara = {
-      id: genId(),
+      id: generateParagraphId(),
       paragraphStyle: ParagraphStyle.Normal,
       elements: [{ textRun: { content: '', textStyle: defaultTextStyle() } }],
     }

@@ -1,4 +1,5 @@
 import { ParagraphStyle } from '../constants/ParagraphStyle.js'
+import { generateParagraphId, defaultTextStyle } from '../constants/DocumentModel.js'
 
 async function loadMammoth() {
   const { default: mammoth } = await import('mammoth')
@@ -8,14 +9,6 @@ async function loadMammoth() {
 async function loadJSZip() {
   const { default: JSZip } = await import('jszip')
   return JSZip
-}
-
-function defaultTextStyle(overrides = {}) {
-  return { bold: false, italic: false, underline: false, fontSize: undefined, ...overrides }
-}
-
-function genId() {
-  return 'p-' + Math.random().toString(36).slice(2, 9)
 }
 
 /**
@@ -50,7 +43,7 @@ function htmlToParagraphs(root) {
 
 function makeHeading(el, level) {
   return {
-    id: genId(),
+    id: generateParagraphId(),
     paragraphStyle: `heading${level}`,
     elements: inlineElements(el),
   }
@@ -58,14 +51,14 @@ function makeHeading(el, level) {
 
 function makeParagraph(el) {
   return {
-    id: genId(),
+    id: generateParagraphId(),
     paragraphStyle: ParagraphStyle.Normal,
     elements: inlineElements(el),
   }
 }
 
 function emptyParagraph() {
-  return { id: genId(), paragraphStyle: ParagraphStyle.Normal, elements: [{ textRun: { content: '', textStyle: defaultTextStyle() } }] }
+  return { id: generateParagraphId(), paragraphStyle: ParagraphStyle.Normal, elements: [{ textRun: { content: '', textStyle: defaultTextStyle() } }] }
 }
 
 function inlineElements(el) {
@@ -219,9 +212,9 @@ export async function importOdt(arrayBuffer) {
     }
 
     if (isHeading) {
-      paragraphs.push({ id: genId(), paragraphStyle: `heading${Math.min(level, 6)}`, elements })
+      paragraphs.push({ id: generateParagraphId(), paragraphStyle: `heading${Math.min(level, 6)}`, elements })
     } else {
-      paragraphs.push({ id: genId(), paragraphStyle: ParagraphStyle.Normal, elements })
+      paragraphs.push({ id: generateParagraphId(), paragraphStyle: ParagraphStyle.Normal, elements })
     }
   }
 

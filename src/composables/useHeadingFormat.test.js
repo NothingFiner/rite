@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { useHeadingFormat } from './useHeadingFormat.js'
+import { useHeadingFormat, resetHeadingFormatsForTests } from './useHeadingFormat.js'
 
 const localStorageMock = (() => {
   let store = {}
@@ -15,6 +15,7 @@ Object.defineProperty(window, 'localStorage', { value: localStorageMock })
 beforeEach(() => {
   localStorageMock.clear()
   vi.clearAllMocks()
+  resetHeadingFormatsForTests()
 })
 
 describe('useHeadingFormat', () => {

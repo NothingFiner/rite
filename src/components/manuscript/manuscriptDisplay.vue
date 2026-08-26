@@ -35,12 +35,6 @@ function msClearSearchHighlights() {
   clearSearchHighlights(viewportRef.value)
 }
 
-const PAGE_WIDTH = 720
-const PAGE_HEIGHT = 960
-const MARGIN = 96
-const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2
-const CONTENT_HEIGHT = PAGE_HEIGHT - MARGIN * 2
-
 const title = computed(() => (props.modelValue.title || '').toUpperCase())
 const author = computed(() => props.modelValue.author || 'Author Name')
 const authorContact = computed(() => props.modelValue.authorContact || '')
