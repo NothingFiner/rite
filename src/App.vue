@@ -263,7 +263,7 @@ const expandedSections = ref({ 'heading-options': true, 'document-info': false }
 
 // How often autosave journals a delta to the on-disk history sidecar. The
 // store's autosaveDocument bails when there's no lastPath or nothing modified,
-// so this fires harmlessly while idle. Explicit save writes the .fwd; this
+// so this fires harmlessly while idle. Explicit save writes the .rite; this
 // interval only feeds the crash-recovery history between saves.
 const AUTOSAVE_INTERVAL_MS = 30_000
 let autosaveTimer = null

@@ -334,7 +334,7 @@ pub fn autosave_document(state: State<AppState>) -> Result<(), String> {
     }
 
     // Autosave journals a delta to the history sidecar; it does not rewrite the
-    // .fwd (that happens only on explicit save). A document with no last_path
+    // .rite (that happens only on explicit save). A document with no last_path
     // has never been saved, so there is no sidecar location to journal to.
     let base_path = state.last_path.lock().map_err(|e| e.to_string())?.clone();
     let Some(base_path) = base_path else {
@@ -348,7 +348,7 @@ pub fn autosave_document(state: State<AppState>) -> Result<(), String> {
 }
 
 /// Manually write a full snapshot of the current document to the history
-/// sidecar, without touching the .fwd. A checkpoint records progress without
+/// sidecar, without touching the .rite. A checkpoint records progress without
 /// overwriting the named file. Returns the snapshot's timestamp stem. Requires
 /// the document to have been saved at least once (a last_path to journal to).
 #[tauri::command]

@@ -17,8 +17,8 @@ export function useFileIO() {
     }
 
     const filePath = await save({
-      filters: [{ name: 'rite', extensions: ['fwd'] }],
-      defaultPath: (store.doc?.title || 'Untitled') + '.fwd',
+      filters: [{ name: 'Rite Document', extensions: ['rite'] }],
+      defaultPath: (store.doc?.title || 'Untitled') + '.rite',
     })
     if (!filePath) return
     try {
@@ -30,7 +30,7 @@ export function useFileIO() {
 
   async function openFile() {
     const filePath = await open({
-      filters: [{ name: 'rite', extensions: ['fwd'] }],
+      filters: [{ name: 'Rite Document', extensions: ['rite', 'fwd'] }],
       multiple: false,
     })
     if (!filePath) return

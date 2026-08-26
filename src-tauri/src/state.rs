@@ -349,7 +349,7 @@ mod tests {
         }
         /// A pretend document path inside the temp dir.
         fn base(&self) -> PathBuf {
-            self.0.join("MyNovel.fwd")
+            self.0.join("MyNovel.rite")
         }
     }
 

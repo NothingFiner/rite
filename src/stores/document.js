@@ -122,7 +122,7 @@ export const useDocumentStore = defineStore('document', {
       try {
         await invoke('save_document', { path })
         if (this.doc) {
-          this.doc.title = path.split(/[\\/]/).pop().replace(/\.fwd$/, '')
+          this.doc.title = path.split(/[\\/]/).pop().replace(/\.(fwd|rite)$/, '')
         }
         this.lastPath = path
         this.isModified = false

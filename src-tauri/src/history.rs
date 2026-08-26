@@ -1,12 +1,12 @@
 //! On-disk version history: full snapshots plus a sequence of deltas.
 //!
-//! For a document at `<base>` (e.g. `/novels/MyNovel.fwd`), history lives in a
+//! For a document at `<base>` (e.g. `/novels/MyNovel.rite`), history lives in a
 //! sidecar directory laid out as:
 //!
 //! ```text
-//! /novels/MyNovel.fwd.history/
+//! /novels/MyNovel.rite.history/
 //!   snapshots/
-//!     2026-07-19T10-00-00-123.fwd      <- full Document JSON
+//!     2026-07-19T10-00-00-123.rite     <- full Document JSON
 //!   deltas/
 //!     2026-07-19T10-05-00-456.delta    <- Vec<DocOp> (forward ops)
 //!     2026-07-19T10-11-00-789.delta
@@ -31,7 +31,7 @@ use std::path::{Path, PathBuf};
 const HISTORY_SUFFIX: &str = ".history";
 const SNAPSHOTS_DIR: &str = "snapshots";
 const DELTAS_DIR: &str = "deltas";
-const SNAPSHOT_EXT: &str = "fwd";
+const SNAPSHOT_EXT: &str = "rite";
 const DELTA_EXT: &str = "delta";
 
 /// A single row in the version-history listing, returned to the frontend.
@@ -271,7 +271,7 @@ mod tests {
         }
         fn base(&self) -> PathBuf {
             // A pretend document path inside the temp dir.
-            self.0.join("MyNovel.fwd")
+            self.0.join("MyNovel.rite")
         }
     }
 

@@ -29,8 +29,8 @@ describe('useDocumentStore', () => {
     invoke.mockResolvedValue(mockDoc)
 
     const store = useDocumentStore()
-    await store.loadDocument('/test.fwd')
-    expect(invoke).toHaveBeenCalledWith('open_document', { path: '/test.fwd' })
+    await store.loadDocument('/test.rite')
+    expect(invoke).toHaveBeenCalledWith('open_document', { path: '/test.rite' })
     expect(store.doc.title).toBe('Test Novel')
     expect(store.doc.body.content).toHaveLength(1)
     expect(store.isModified).toBe(false)
@@ -43,8 +43,8 @@ describe('useDocumentStore', () => {
     store.doc = { title: 'Save Me', body: { content: [] } }
     store.isModified = true
 
-    await store.saveDocument('/save.fwd')
-    expect(invoke).toHaveBeenCalledWith('save_document', { path: '/save.fwd' })
+    await store.saveDocument('/save.rite')
+    expect(invoke).toHaveBeenCalledWith('save_document', { path: '/save.rite' })
     expect(store.isModified).toBe(false)
   })
 
@@ -117,7 +117,7 @@ describe('useDocumentStore', () => {
   it('autosaves when lastPath and isModified are set', async () => {
     invoke.mockResolvedValue(undefined)
     const store = useDocumentStore()
-    store.lastPath = '/test.fwd'
+    store.lastPath = '/test.rite'
     store.isModified = true
     await store.autosaveDocument()
     expect(invoke).toHaveBeenCalledWith('autosave_document')
@@ -134,7 +134,7 @@ describe('useDocumentStore', () => {
 
   it('skips autosave when not modified', async () => {
     const store = useDocumentStore()
-    store.lastPath = '/test.fwd'
+    store.lastPath = '/test.rite'
     store.isModified = false
     await store.autosaveDocument()
     expect(invoke).not.toHaveBeenCalled()
