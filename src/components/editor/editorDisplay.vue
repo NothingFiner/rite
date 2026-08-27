@@ -411,12 +411,7 @@ function onKeydown(e) {
         nextPara = nextPara.nextElementSibling
       }
       if (nextPara && !isHeading(nextPara.dataset.paraStyle)) {
-        const range = document.createRange()
-        range.setStart(nextPara, 0)
-        range.collapse(true)
-        const sel = window.getSelection()
-        sel.removeAllRanges()
-        sel.addRange(range)
+        placeCursorAtStart(nextPara)
         syncFromDOM()
         return
       }
@@ -425,12 +420,7 @@ function onKeydown(e) {
       newPara.dataset.paraId = generateParagraphId()
       newPara.innerHTML = '<br>'
       heading.parentNode.insertBefore(newPara, heading.nextSibling)
-      const range = document.createRange()
-      range.setStart(newPara, 0)
-      range.collapse(true)
-      const sel = window.getSelection()
-      sel.removeAllRanges()
-      sel.addRange(range)
+      placeCursorAtStart(newPara)
       syncFromDOM()
       return
     }
@@ -508,12 +498,7 @@ function onKeydown(e) {
         target = target.nextElementSibling
       }
       if (target) {
-        const range = document.createRange()
-        range.setStart(target, 0)
-        range.collapse(true)
-        const sel = window.getSelection()
-        sel.removeAllRanges()
-        sel.addRange(range)
+        placeCursorAtStart(target)
       }
       e.preventDefault()
       return
@@ -548,11 +533,59 @@ function onMousedown(e) {
   }
 }
 
-function insertHeading(type, title) {
-  syncFromDOM()
-  const root = sheetRef.value
-  if (!root) return
+// --- Heading-insert helpers -------------------------------------------------
+// These collapse what was previously two ~130-line functions (insertHeading +
+// insertHeadingAtPageTop) that duplicated the title-computation, cursor-placement,
+// and render-then-focus logic. The only real difference between the two was the
+// index strategy, so each gets its own helper and the shared work lives in one
+// insertHeading().
 
+// Primitive: collapse the selection to the start of `el`.
+function placeCursorAtStart(el) {
+  const range = document.createRange()
+  range.setStart(el, 0)
+  range.collapse(true)
+  const sel = window.getSelection()
+  sel.removeAllRanges()
+  sel.addRange(range)
+}
+
+// After inserting a heading, place the cursor in the first editable normal
+// paragraph below it so the user can immediately start writing body content.
+// If no such paragraph exists, just scroll the heading into view.
+function focusBelowHeading(headingEl) {
+  const nextPara = headingEl.nextElementSibling
+  if (nextPara && nextPara.classList?.contains('paragraph') && !isHeading(nextPara.dataset.paraStyle)) {
+    placeCursorAtStart(nextPara)
+    nextPara.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  } else {
+    headingEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
+}
+
+// Build the initial heading text. An explicit title is kept as-is; otherwise,
+// when autoGenerate is on for this level, count existing headings of that level
+// and format the next number (e.g. "Part II"). Returns the empty string when no
+// title and no auto-generation applies.
+function computeInitialTitle(type, title, paragraphs) {
+  const level = getHeadingLevel(type)
+  if (level <= 0 || title) return title
+  const counts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 }
+  for (const p of paragraphs) {
+    const l = getHeadingLevel(p.paragraphStyle)
+    if (l > 0) counts[l]++
+  }
+  counts[level]++
+  const fmt = headingFormat.headingFormats.value[level]
+  if (fmt && fmt.autoGenerate) {
+    return headingFormat.formatHeading(level, counts[level])
+  }
+  return title
+}
+
+// Index strategy A — insert immediately after the paragraph holding the cursor
+// (or at the end if there is no cursor). Used by the non-page-top insert mode.
+function computeCursorInsertIndex(paragraphs) {
   const sel = window.getSelection()
   let currentParaId = null
   if (sel.rangeCount) {
@@ -565,205 +598,149 @@ function insertHeading(type, title) {
       if (el) currentParaId = el.dataset.paraId
     }
   }
-
-  const paragraphs = [...(props.modelValue.body.content || [])]
-  let idx = paragraphs.length
   if (currentParaId) {
     const found = paragraphs.findIndex(p => p.id === currentParaId)
-    if (found !== -1) idx = found + 1
+    if (found !== -1) return found + 1
   }
-
-  const level = getHeadingLevel(type)
-  let initialTitle = title
-  if (level > 0 && !title) {
-    const counts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 }
-    for (const p of paragraphs) {
-      const l = getHeadingLevel(p.paragraphStyle)
-      if (l > 0) counts[l]++
-    }
-    counts[level]++
-    const fmt = headingFormat.headingFormats.value[level]
-    if (fmt && fmt.autoGenerate) {
-      initialTitle = headingFormat.formatHeading(level, counts[level])
-    }
-  }
-
-  const newPara = {
-    id: generateParagraphId(),
-    paragraphStyle: type,
-    elements: [{ textRun: { content: initialTitle, textStyle: defaultTextStyle() } }],
-  }
-
-  paragraphs.splice(idx, 0, newPara)
-  ensureHeadingText(paragraphs)
-  skipNextWatcher.value = true
-  emit('syncBody', paragraphs)
-
-  // Defer renderEditor until Vue's render cycle completes to avoid
-  // innerHTML clashing with Vue's DOM patching.
-  setTimeout(() => {
-    renderEditor()
-    nextTick(() => {
-      const el = root.querySelector(`[data-para-id="${newPara.id}"]`)
-      if (!el) return
-      // Place cursor in the paragraph below the heading so the user can start writing.
-      const nextPara = el.nextElementSibling
-      if (nextPara && nextPara.classList?.contains('paragraph') && !isHeading(nextPara.dataset.paraStyle)) {
-        const range = document.createRange()
-        range.setStart(nextPara, 0)
-        range.collapse(true)
-        const selNew = window.getSelection()
-        selNew.removeAllRanges()
-        selNew.addRange(range)
-        nextPara.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      } else {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      }
-    })
-  }, 0)
+  return paragraphs.length
 }
 
-function insertHeadingAtPageTop(type, title, afterId = null) {
-  syncFromDOM()
-  const root = sheetRef.value
-  if (!root) return
-
-  const paragraphs = [...(props.modelValue.body.content || [])]
-  let idx = paragraphs.length
-
+// Index strategy B — insert at the top of the current page. If `afterId` is
+// given (a section/chapter selected in the nav drawer), insert after the last
+// paragraph of that item's page. Otherwise walk back from the cursor to the
+// page start; if the page already begins with a heading, force a new page by
+// inserting after the last paragraph on the current page instead.
+function computePageTopInsertIndex(paragraphs, root, afterId) {
   if (afterId) {
-    // User selected a section/chapter in the drawer: insert after the
-    // last paragraph of that section/chapter's page.
     const targetIdx = paragraphs.findIndex(p => p.id === afterId)
     if (targetIdx !== -1) {
-      // Walk forward from target to find last paragraph before next heading
+      // Walk forward from target to find the last paragraph before the next heading.
       let lastIdx = targetIdx
       for (let i = targetIdx + 1; i < paragraphs.length; i++) {
-        if (isHeading(paragraphs[i].paragraphStyle)) {
-          break
-        }
+        if (isHeading(paragraphs[i].paragraphStyle)) break
         lastIdx = i
       }
-      idx = lastIdx + 1
+      return lastIdx + 1
     }
-  } else {
-    const sel = window.getSelection()
-    let cursorPara = null
-    if (sel.rangeCount) {
-      let node = sel.anchorNode
-      if (node) {
-        let el = node.nodeType === 3 ? node.parentElement : node
-        while (el && !el.classList?.contains('paragraph')) {
-          el = el.parentElement
+  }
+
+  const sel = window.getSelection()
+  let cursorPara = null
+  if (sel.rangeCount) {
+    let node = sel.anchorNode
+    if (node) {
+      let el = node.nodeType === 3 ? node.parentElement : node
+      while (el && !el.classList?.contains('paragraph')) {
+        el = el.parentElement
+      }
+      if (el) cursorPara = el
+    }
+  }
+
+  // Find the page start: walk backwards from the cursor to the preceding page-number-label.
+  let pageStartPara = null
+  if (cursorPara) {
+    let walk = cursorPara.previousElementSibling
+    while (walk) {
+      if (walk.classList?.contains('page-number-label')) {
+        pageStartPara = walk.nextElementSibling
+        while (pageStartPara && !pageStartPara.classList?.contains('paragraph')) {
+          pageStartPara = pageStartPara.nextElementSibling
         }
-        if (el) cursorPara = el
+        break
+      }
+      walk = walk.previousElementSibling
+    }
+  }
+
+  // If no page break was found, the first paragraph is the page start.
+  if (!pageStartPara) {
+    let first = root.firstElementChild
+    while (first && !first.classList?.contains('paragraph')) {
+      first = first.nextElementSibling
+    }
+    pageStartPara = first
+  }
+
+  const pageHasHeading = pageStartPara && isHeading(pageStartPara.dataset.paraStyle)
+
+  let targetParaId = null
+  if (pageHasHeading) {
+    // Page already has a heading — force a new page by inserting after the
+    // last paragraph on the current page.
+    let lastParaOnPage = null
+    if (cursorPara) {
+      let walk = cursorPara.nextElementSibling
+      while (walk) {
+        if (walk.classList?.contains('page-number-label')) break
+        if (walk.classList?.contains('paragraph')) lastParaOnPage = walk
+        walk = walk.nextElementSibling
       }
     }
-
-    // Find the page start: walk backwards from cursor to find preceding page-number-label
-    let pageStartPara = null
-    if (cursorPara) {
-      let walk = cursorPara.previousElementSibling
+    // If no next page-number-label was found, we are on the last page.
+    if (!lastParaOnPage) {
+      let walk = root.lastElementChild
       while (walk) {
-        if (walk.classList?.contains('page-number-label')) {
-          pageStartPara = walk.nextElementSibling
-          while (pageStartPara && !pageStartPara.classList?.contains('paragraph')) {
-            pageStartPara = pageStartPara.nextElementSibling
-          }
+        if (walk.classList?.contains('paragraph')) {
+          lastParaOnPage = walk
           break
         }
         walk = walk.previousElementSibling
       }
     }
-
-    // If no page break found, the first paragraph is the page start
-    if (!pageStartPara) {
-      let first = root.firstElementChild
-      while (first && !first.classList?.contains('paragraph')) {
-        first = first.nextElementSibling
-      }
-      pageStartPara = first
-    }
-
-    const pageHasHeading = pageStartPara && isHeading(pageStartPara.dataset.paraStyle)
-
-    let targetParaId = null
-    if (pageHasHeading) {
-      // Page already has a heading — force a new page by inserting after the
-      // last paragraph on the current page.
-      let lastParaOnPage = null
-      if (cursorPara) {
-        let walk = cursorPara.nextElementSibling
-        while (walk) {
-          if (walk.classList?.contains('page-number-label')) break
-          if (walk.classList?.contains('paragraph')) {
-            lastParaOnPage = walk
-          }
-          walk = walk.nextElementSibling
-        }
-      }
-      // If no next page-number-label found, we are on the last page.
-      if (!lastParaOnPage) {
-        let walk = root.lastElementChild
-        while (walk) {
-          if (walk.classList?.contains('paragraph')) {
-            lastParaOnPage = walk
-            break
-          }
-          walk = walk.previousElementSibling
-        }
-      }
-      targetParaId = lastParaOnPage?.dataset.paraId
-    } else {
-      targetParaId = pageStartPara?.dataset.paraId
-    }
-
-    if (targetParaId) {
-      const found = paragraphs.findIndex(p => p.id === targetParaId)
-      if (found !== -1) {
-        if (pageHasHeading) {
-          idx = found + 1
-        } else {
-          idx = found
-        }
-      }
-    }
+    targetParaId = lastParaOnPage?.dataset.paraId
+  } else {
+    targetParaId = pageStartPara?.dataset.paraId
   }
 
-  const level = getHeadingLevel(type)
-  let initialTitle = title
-  if (level > 0 && !title) {
-    const counts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 }
-    for (const p of paragraphs) {
-      const l = getHeadingLevel(p.paragraphStyle)
-      if (l > 0) counts[l]++
-    }
-    counts[level]++
-    const fmt = headingFormat.headingFormats.value[level]
-    if (fmt && fmt.autoGenerate) {
-      initialTitle = headingFormat.formatHeading(level, counts[level])
-    }
+  if (targetParaId) {
+    const found = paragraphs.findIndex(p => p.id === targetParaId)
+    if (found !== -1) return pageHasHeading ? found + 1 : found
   }
+  return paragraphs.length
+}
 
+// Insert a heading paragraph.
+//   atPageTop: false → place it right after the cursor paragraph.
+//   atPageTop: true  → place it at the top of the current page (or, if afterId is
+//                     given, after the last paragraph of that nav item's page).
+//                     Ensures an editable normal paragraph follows, and for a
+//                     new H1 marks it "fresh" so the user can type its title
+//                     inline before committing with Enter/Escape.
+function insertHeading(type, title, { atPageTop = false, afterId = null } = {}) {
+  syncFromDOM()
+  const root = sheetRef.value
+  if (!root) return
+
+  const paragraphs = [...(props.modelValue.body.content || [])]
+  const idx = atPageTop
+    ? computePageTopInsertIndex(paragraphs, root, afterId)
+    : computeCursorInsertIndex(paragraphs)
+
+  const initialTitle = computeInitialTitle(type, title, paragraphs)
   const newPara = {
     id: generateParagraphId(),
     paragraphStyle: type,
     elements: [{ textRun: { content: initialTitle, textStyle: defaultTextStyle() } }],
   }
-
   paragraphs.splice(idx, 0, newPara)
 
-  // Ensure there's an editable normal paragraph after the heading
-  const next = paragraphs[idx + 1]
-  if (!next || isHeading(next.paragraphStyle)) {
-    const emptyPara = {
-      id: generateParagraphId(),
-      paragraphStyle: ParagraphStyle.Normal,
-      elements: [{ textRun: { content: '', textStyle: defaultTextStyle() } }],
+  if (atPageTop) {
+    // Ensure there's an editable normal paragraph after the heading.
+    const next = paragraphs[idx + 1]
+    if (!next || isHeading(next.paragraphStyle)) {
+      const emptyPara = {
+        id: generateParagraphId(),
+        paragraphStyle: ParagraphStyle.Normal,
+        elements: [{ textRun: { content: '', textStyle: defaultTextStyle() } }],
+      }
+      paragraphs.splice(idx + 1, 0, emptyPara)
     }
-    paragraphs.splice(idx + 1, 0, emptyPara)
   }
 
+  // A freshly inserted H1 stays editable until the user commits it with Enter
+  // or Escape, or clicks away (see lockFreshHeading / onMousedown). Applied in
+  // both insert modes so behaviour is consistent regardless of entry path.
   if (type === ParagraphStyle.Heading1) {
     freshHeadingId.value = newPara.id
   }
@@ -778,21 +755,7 @@ function insertHeadingAtPageTop(type, title, afterId = null) {
     renderEditor()
     nextTick(() => {
       const el = root.querySelector(`[data-para-id="${newPara.id}"]`)
-      if (!el) return
-      // Place cursor in the paragraph *below* the new heading so the user can
-      // immediately start writing content.
-      const nextPara = el.nextElementSibling
-      if (nextPara && nextPara.classList?.contains('paragraph') && !isHeading(nextPara.dataset.paraStyle)) {
-        const range = document.createRange()
-        range.setStart(nextPara, 0)
-        range.collapse(true)
-        const selNew = window.getSelection()
-        selNew.removeAllRanges()
-        selNew.addRange(range)
-        nextPara.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      } else {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      }
+      if (el) focusBelowHeading(el)
     })
   }, 0)
 }
@@ -838,7 +801,7 @@ onMounted(() => {
   renderEditor()
 })
 
-defineExpose({ syncFromDOM, renderFromDoc, insertHeading, insertHeadingAtPageTop, scrollToParagraph, applySearchHighlights: editorApplySearchHighlights, clearSearchHighlights: editorClearSearchHighlights })
+defineExpose({ syncFromDOM, renderFromDoc, insertHeading, scrollToParagraph, applySearchHighlights: editorApplySearchHighlights, clearSearchHighlights: editorClearSearchHighlights })
 </script>
 
 <style scoped>

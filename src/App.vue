@@ -306,7 +306,7 @@ function onInsertHeading(level) {
   const style = styleMap[level] || 'heading1'
   viewMode.value = 'editor'
   nextTick(() => {
-    editorRef.value?.insertHeadingAtPageTop?.(style, '', nav.selectedNavId)
+    editorRef.value?.insertHeading?.(style, '', { atPageTop: true, afterId: nav.selectedNavId })
   })
   addExpanded.value = false
 }

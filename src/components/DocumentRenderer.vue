@@ -34,12 +34,8 @@ function renderFromDoc() {
   editorRef.value?.renderFromDoc()
 }
 
-function insertHeading(type, title) {
-  editorRef.value?.insertHeading?.(type, title)
-}
-
-function insertHeadingAtPageTop(type, title, afterId = null) {
-  editorRef.value?.insertHeadingAtPageTop?.(type, title, afterId)
+function insertHeading(...args) {
+  editorRef.value?.insertHeading?.(...args)
 }
 
 function scrollToParagraph(id) {
@@ -58,5 +54,5 @@ function clearSearchHighlights() {
 // ManuscriptDisplay re-renders automatically via computed props.
 // EditorDisplay calls renderEditor() in its onMounted hook.
 
-defineExpose({ syncFromDOM, renderFromDoc, insertHeading, insertHeadingAtPageTop, scrollToParagraph, applySearchHighlights, clearSearchHighlights })
+defineExpose({ syncFromDOM, renderFromDoc, insertHeading, scrollToParagraph, applySearchHighlights, clearSearchHighlights })
 </script>
