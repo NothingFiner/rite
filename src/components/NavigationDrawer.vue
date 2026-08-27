@@ -390,9 +390,6 @@ watch(groups, () => {
   gap: 8px;
 }
 
-.expanded svg {
-  transform: rotate(45deg);
-}
 
 .add-btn {
   width: 32px;
@@ -408,6 +405,14 @@ watch(groups, () => {
   justify-content: center;
   flex-shrink: 0;
   transition: transform 0.2s ease, background 0.15s;
+}
+
+.add-btn svg {
+  transition: transform 0.2s ease;
+}
+
+.expanded svg {
+  transform: rotate(45deg);
 }
 
 .add-btn:hover {
