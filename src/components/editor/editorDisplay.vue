@@ -14,13 +14,13 @@
 
 <script setup>
 import { ref, onMounted, nextTick, watch, computed, toRef } from 'vue'
-import { paragraphToHTML, paragraphsToHTML, escapeHtml } from '../../composables/useParagraphHTML.js'
+import { paragraphToHTML, sectionTitleToHTML, escapeHtml } from '../../composables/useParagraphHTML.js'
+import { flattenSections, groupBlocks, computeFirstLineIndent } from '../../composables/useSectionBlocks.js'
 import { usePagination } from '../../composables/usePagination.js'
 import { applySearchHighlights, clearSearchHighlights } from '../../composables/useSearchHighlights.js'
-import { ParagraphStyle, isHeading, getHeadingLevel, shouldHaveFirstLineIndent, isEmptyParagraph } from '../../constants/ParagraphStyle.js'
 import { THEMES } from '../../constants/themes.js'
-import { generateParagraphId, defaultTextStyle } from '../../constants/DocumentModel.js'
-import { useHeadingFormat } from '../../composables/useHeadingFormat.js'
+import { generateParagraphId, generateSectionId, createSection, createParagraph, defaultTextStyle } from '../../constants/DocumentModel.js'
+import { useSectionFormat } from '../../composables/useSectionFormat.js'
 
 const props = defineProps({
   modelValue: Object,
@@ -28,14 +28,18 @@ const props = defineProps({
   zoom: { type: Number, default: 16 },
   margin: { type: String, default: 'compact' },
 })
-const emit = defineEmits(['syncBody', 'update'])
+const emit = defineEmits(['syncSections', 'update', 'deleteSection'])
 
 const sheetRef = ref(null)
-const freshHeadingId = ref(null)
+// The id of a just-inserted section whose title the user is editing inline. While
+// set, that one .section-title stays contenteditable; every other section-title
+// is locked. Cleared by Enter/Escape/click-away (see lockFreshSection). This is the
+// old `freshHeadingId` mechanism retargeted at section titles.
+const freshSectionId = ref(null)
 const skipNextWatcher = ref(false)
 const docRef = toRef(props, 'modelValue')
 const { pageBreaks } = usePagination(docRef)
-const headingFormat = useHeadingFormat()
+const sectionFormat = useSectionFormat()
 
 function editorApplySearchHighlights(matches, currentIndex) {
   applySearchHighlights(sheetRef.value, matches, currentIndex)
@@ -61,205 +65,217 @@ const editorStyles = computed(() => {
   }
 })
 
-function applyHeadingLocks() {
+// --- Section-title locking ---------------------------------------------------
+// Section titles are structural markers, not body text: they are locked
+// (contenteditable=false) except for the one section currently being
+// inserted/renamed inline (freshSectionId). The derived "Chapter N: " prefix
+// is ALWAYS locked — the number is render-derived, never user-editable.
+
+function applySectionTitleLocks() {
   const root = sheetRef.value
   if (!root) return
-  const headings = root.querySelectorAll('.paragraph.heading-1, .paragraph.heading-2, .paragraph.heading-3, .paragraph.heading-4, .paragraph.heading-5, .paragraph.heading-6')
-  headings.forEach(el => {
-    if (el.dataset.paraId !== freshHeadingId.value) {
+  const titles = root.querySelectorAll('.section-title')
+  titles.forEach(el => {
+    if (el.dataset.sectionId !== freshSectionId.value) {
       el.setAttribute('contenteditable', 'false')
     } else {
-      el.removeAttribute('contenteditable')
+      el.setAttribute('contenteditable', 'true')
     }
   })
 }
 
-function lockFreshHeading() {
-  if (!freshHeadingId.value) return
+function lockFreshSection() {
+  if (!freshSectionId.value) return
   const root = sheetRef.value
-  if (!root) return
-  const el = root.querySelector(`[data-para-id="${freshHeadingId.value}"]`)
-  if (el) el.setAttribute('contenteditable', 'false')
-  freshHeadingId.value = null
+  if (root) {
+    const el = root.querySelector(`[data-section-id="${freshSectionId.value}"]`)
+    if (el) el.setAttribute('contenteditable', 'false')
+  }
+  freshSectionId.value = null
 }
 
-function domToParagraphs(root) {
-  const paragraphs = []
-  const targets = Array.from(root.children)
+// --- DOM → model -------------------------------------------------------------
+// The editor's contenteditable is a FLAT sibling list: .section-title markers
+// interleaved with .paragraph divs. domToBlocks walks that flat list into the
+// block shape groupBlocks understands; groupBlocks then rebuilds the nested
+// Section[] the store holds. Section-titles are read back from their editable
+// span only (the chapter-prefix span is derived and never read).
 
-  for (const child of targets) {
-    if (child.nodeName === 'DIV' || child.nodeName === 'P') {
-      if (
-        child.classList?.contains('page-number-label') ||
-        child.classList?.contains('page-break-line') ||
-        child.classList?.contains('epigram-block') ||
-        child.classList?.contains('editor-sentinel')
-      ) continue
+function isNonContentBlock(el) {
+  return el.classList?.contains('page-break-line') ||
+    el.classList?.contains('page-number-label') ||
+    el.classList?.contains('epigram-block') ||
+    el.classList?.contains('editor-sentinel')
+}
 
-      const style = window.getComputedStyle(child)
-      const leftIndentPx = parseInt(style.marginLeft, 10) || 0
-      const rightIndentPx = parseInt(style.marginRight, 10) || 0
-      const firstLinePx = parseInt(style.textIndent, 10) || 0
-
-      const elements = []
-      for (const run of child.childNodes) {
-        if (run.nodeType === Node.TEXT_NODE) {
-          if (run.textContent) {
-            elements.push({ textRun: { content: run.textContent, textStyle: defaultTextStyle() } })
-          }
-        } else if (run.nodeType === Node.ELEMENT_NODE) {
-          if (run.classList?.contains('search-highlight') || run.classList?.contains('search-current')) {
-            elements.push({ textRun: { content: run.textContent || '', textStyle: defaultTextStyle() } })
-            continue
-          }
-          const runStyle = window.getComputedStyle(run)
-          const textStyle = defaultTextStyle({
-            bold: runStyle.fontWeight === '700' || runStyle.fontWeight === 'bold',
-            italic: runStyle.fontStyle === 'italic',
-            underline: runStyle.textDecorationLine.includes('underline'),
-          })
-          const fs = parseInt(runStyle.fontSize, 10)
-          if (fs && fs !== 16 && fs !== props.zoom) textStyle.fontSize = fs
-          elements.push({ textRun: { content: run.innerText || '', textStyle } })
-        }
+function parseParagraphElement(child) {
+  const style = window.getComputedStyle(child)
+  const leftIndentPx = parseInt(style.marginLeft, 10) || 0
+  const rightIndentPx = parseInt(style.marginRight, 10) || 0
+  const elements = []
+  for (const run of child.childNodes) {
+    if (run.nodeType === Node.TEXT_NODE) {
+      if (run.textContent) {
+        elements.push({ textRun: { content: run.textContent, textStyle: defaultTextStyle() } })
       }
-      if (elements.length === 0) {
-        elements.push({ textRun: { content: '', textStyle: defaultTextStyle() } })
+    } else if (run.nodeType === Node.ELEMENT_NODE) {
+      if (run.classList?.contains('search-highlight') || run.classList?.contains('search-current')) {
+        elements.push({ textRun: { content: run.textContent || '', textStyle: defaultTextStyle() } })
+        continue
       }
+      const runStyle = window.getComputedStyle(run)
+      const textStyle = defaultTextStyle({
+        bold: runStyle.fontWeight === '700' || runStyle.fontWeight === 'bold',
+        italic: runStyle.fontStyle === 'italic',
+        underline: runStyle.textDecorationLine.includes('underline'),
+      })
+      const fs = parseInt(runStyle.fontSize, 10)
+      if (fs && fs !== 16 && fs !== props.zoom) textStyle.fontSize = fs
+      elements.push({ textRun: { content: run.innerText || '', textStyle } })
+    }
+  }
+  if (elements.length === 0) {
+    elements.push({ textRun: { content: '', textStyle: defaultTextStyle() } })
+  }
+  return {
+    id: child.dataset.paraId || generateParagraphId(),
+    leftIndent: leftIndentPx > 0 ? Math.round(leftIndentPx / 96 * 10) / 10 : null,
+    rightIndent: rightIndentPx > 0 ? Math.round(rightIndentPx / 96 * 10) / 10 : null,
+    firstLineIndent: null, // recomputed in syncFromDOM
+    elements,
+  }
+}
 
-      paragraphs.push({
-        id: child.dataset.paraId || generateParagraphId(),
-        paragraphStyle: child.dataset.paraStyle || ParagraphStyle.Normal,
-        leftIndent: leftIndentPx > 0 ? Math.round(leftIndentPx / 96 * 10) / 10 : undefined,
-        rightIndent: rightIndentPx > 0 ? Math.round(rightIndentPx / 96 * 10) / 10 : undefined,
-        firstLineIndent: firstLinePx > 0 ? Math.round(firstLinePx / 96 * 10) / 10 : undefined,
-        elements
+function readSectionTitleText(el) {
+  const sectionType = el.dataset.sectionType
+  const span = sectionType === 'chapter'
+    ? el.querySelector('.section-subtitle')
+    : el.querySelector('.section-title-text')
+  const text = span ? (span.textContent || '') : ''
+  return text.replace(/ /g, ' ').trim()
+}
+
+function domToBlocks(root) {
+  const blocks = []
+  for (const child of Array.from(root.children)) {
+    if (isNonContentBlock(child)) continue
+
+    if (child.classList?.contains('section-title')) {
+      blocks.push({
+        kind: 'section-title',
+        sectionId: child.dataset.sectionId || generateSectionId(),
+        sectionType: child.dataset.sectionType || 'section',
+        title: readSectionTitleText(child),
+      })
+    } else if (child.classList?.contains('paragraph')) {
+      blocks.push({
+        kind: 'paragraph',
+        sectionId: child.dataset.sectionId,
+        paragraphId: child.dataset.paraId,
+        paragraph: parseParagraphElement(child),
       })
     }
   }
-
-  if (paragraphs.length === 0) {
-    paragraphs.push({ id: generateParagraphId(), paragraphStyle: ParagraphStyle.Normal, elements: [{ textRun: { content: '', textStyle: defaultTextStyle() } }] })
-  }
-
-  return paragraphs
+  return blocks
 }
 
 function syncFromDOM() {
   const root = sheetRef.value
   if (!root || !props.modelValue) return
-  const paragraphs = domToParagraphs(root)
-  const domParas = Array.from(root.querySelectorAll('.paragraph'))
+  const blocks = domToBlocks(root)
 
-  // Recompute first-line indent considering page breaks so the first
-  // non-heading paragraph on each page gets indent even if it follows a
-  // heading or empty paragraph on the previous page.
-  for (let i = 0; i < paragraphs.length; i++) {
-    const dom = domParas[i]
-    if (isHeading(paragraphs[i].paragraphStyle)) {
-      paragraphs[i].firstLineIndent = 0
-    } else if (dom && dom.hasAttribute('data-page-first-content') && i > 0) {
-      const prev = paragraphs[i - 1]
-      const prev2 = paragraphs[i - 2]
-      if (prev && isHeading(prev.paragraphStyle)) {
-        paragraphs[i].firstLineIndent = 0
-      } else if (prev && isEmptyParagraph(prev) && prev2 && isEmptyParagraph(prev2)) {
-        paragraphs[i].firstLineIndent = 0
-      } else {
-        paragraphs[i].firstLineIndent = 0.5
-      }
-    } else if (shouldHaveFirstLineIndent(paragraphs, i)) {
-      paragraphs[i].firstLineIndent = 0.5
-    } else {
-      paragraphs[i].firstLineIndent = 0
-    }
+  // Compute and bake section-aware first-line indents.
+  for (let i = 0; i < blocks.length; i++) {
+    if (blocks[i].kind !== 'paragraph') continue
+    blocks[i].paragraph.firstLineIndent = computeFirstLineIndent(blocks, i)
   }
 
-  // Reflect computed first-line indents back into the live DOM so paragraphs
-  // created by the browser (which don't copy inline styles) show the right indent.
-  for (let i = 0; i < domParas.length && i < paragraphs.length; i++) {
-    const p = paragraphs[i]
-    const dom = domParas[i]
-    const level = getHeadingLevel(p.paragraphStyle)
-    if (level > 0) {
-      dom.style.textIndent = '0px'
-    } else if (typeof p.firstLineIndent === 'number') {
-      dom.style.textIndent = p.firstLineIndent > 0 ? `${Math.round(p.firstLineIndent * 96)}px` : '0px'
-    } else {
-      dom.style.textIndent = '48px'
-    }
+  // Reflect computed indents back into the live DOM so paragraphs created by
+  // the browser (which don't copy inline styles) show the right indent.
+  const domParas = Array.from(root.querySelectorAll('.paragraph'))
+  let pIdx = 0
+  for (const block of blocks) {
+    if (block.kind !== 'paragraph') continue
+    const dom = domParas[pIdx]
+    pIdx++
+    if (!dom) continue
+    const indent = block.paragraph.firstLineIndent
+    dom.style.textIndent = indent > 0 ? `${Math.round(indent * 96)}px` : '0px'
+  }
+
+  let sections = groupBlocks(blocks)
+  // Defensive: every section must have at least one paragraph to type into.
+  for (const s of sections) {
+    if (!s.paragraphs || s.paragraphs.length === 0) s.paragraphs.push(createParagraph())
   }
 
   skipNextWatcher.value = true
-  emit('syncBody', paragraphs)
+  emit('syncSections', sections)
 }
+
+// --- Page-break layout -------------------------------------------------------
+// pageBreaks (from usePagination) are indices into the flattened block
+// sequence (section-titles + paragraphs, no epigram). layoutPageBreaks walks
+// the live DOM content blocks in that same order and stamps data-page-start on
+// whichever block begins a page. CSS targets [data-page-start] generally, so a
+// page can begin on either a section-title or a paragraph.
 
 function layoutPageBreaks() {
   const root = sheetRef.value
   if (!root) return
 
-  // Remove any legacy inserted break elements (from previous renders)
   root.querySelectorAll('.page-break-line').forEach(el => el.remove())
-  root.querySelectorAll('.page-number-label').forEach(el => el.remove())
   root.querySelectorAll('.editor-sentinel').forEach(el => el.remove())
-  // Clear old page-start and page-first-content attributes before re-applying
-  root.querySelectorAll('.paragraph[data-page-start]').forEach(el => el.removeAttribute('data-page-start'))
-  root.querySelectorAll('.paragraph[data-page-first-content]').forEach(el => el.removeAttribute('data-page-first-content'))
+  root.querySelectorAll('[data-page-start]').forEach(el => el.removeAttribute('data-page-start'))
 
-  const paragraphs = props.modelValue?.body?.content || []
-  if (paragraphs.length === 0) return
+  const blocks = flattenSections(props.modelValue?.sections || [])
+  if (blocks.length === 0) return
 
   const breaks = pageBreaks.value
-
-  // Walk the live DOM and mark the first paragraph of each page
+  let blockIndex = 0
   let pageNum = 1
-  let paraIndex = 0
-  let currentNode = root.firstElementChild
+  let lastContentNode = null
   let lastParagraphNode = null
-  let firstContentMarked = false
+  let currentNode = root.firstElementChild
 
   while (currentNode) {
-    if (!currentNode.classList?.contains('paragraph')) {
+    const isContent = currentNode.classList?.contains('section-title') ||
+      currentNode.classList?.contains('paragraph')
+    if (!isContent) {
       currentNode = currentNode.nextElementSibling
       continue
     }
 
-    if (paraIndex === 0 || breaks.includes(paraIndex)) {
-      if (paraIndex !== 0) pageNum++
+    if (blockIndex === 0 || breaks.includes(blockIndex)) {
+      if (blockIndex !== 0) pageNum++
       currentNode.setAttribute('data-page-start', String(pageNum))
-      firstContentMarked = false
     }
 
-    if (!firstContentMarked && !isHeading(paragraphs[paraIndex]?.paragraphStyle) && !isEmptyParagraph(paragraphs[paraIndex])) {
-      currentNode.setAttribute('data-page-first-content', String(pageNum))
-      firstContentMarked = true
-    }
-
-    lastParagraphNode = currentNode
-    paraIndex++
+    lastContentNode = currentNode
+    if (currentNode.classList.contains('paragraph')) lastParagraphNode = currentNode
+    blockIndex++
     currentNode = currentNode.nextElementSibling
   }
 
-  // Trailing page-break line after the last paragraph for visual closure
-  if (lastParagraphNode) {
+  // Trailing page-break line + sentinel for visual closure and to absorb
+  // clicks below the last page break (same purpose as the old code).
+  if (lastContentNode) {
     const hr = document.createElement('hr')
     hr.className = 'page-break-line'
     hr.setAttribute('contenteditable', 'false')
     hr.style.cssText = `border:none;border-top:1px dashed var(--page-break-color);opacity:0.25;margin:1.2em 0;`
-    root.insertBefore(hr, lastParagraphNode.nextSibling)
+    root.insertBefore(hr, lastContentNode.nextSibling)
 
-    // Sentinel block absorbs cursor placement attempts below the last page break.
-    // It must NOT have pointer-events:none or clicks pass through to the editable parent.
     const sentinel = document.createElement('div')
     sentinel.className = 'editor-sentinel'
     sentinel.setAttribute('contenteditable', 'false')
     sentinel.style.cssText = 'height:48px;user-select:none;'
+    const focusTarget = lastParagraphNode || lastContentNode
     sentinel.addEventListener('click', (e) => {
       e.preventDefault()
-      // Focus the last paragraph instead of letting the cursor land in empty space.
-      if (lastParagraphNode) {
+      if (focusTarget) {
         const range = document.createRange()
-        range.selectNodeContents(lastParagraphNode)
+        range.selectNodeContents(focusTarget)
         range.collapse(false)
         const sel = window.getSelection()
         sel.removeAllRanges()
@@ -270,84 +286,54 @@ function layoutPageBreaks() {
   }
 }
 
-function ensureHeadingText(paragraphs) {
-  const counts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 }
-  for (const p of paragraphs) {
-    const level = getHeadingLevel(p.paragraphStyle)
-    if (level > 0) {
-      counts[level]++
-      const text = p.elements.map(el => el.textRun.content).join('').trim()
-      if (!text) {
-        // Empty heading: generate a default label so the user sees something
-        const fallback = headingFormat.formatHeading(level, counts[level]) || `HEADING ${counts[level]}`
-        p.elements = [{ textRun: { content: fallback, textStyle: defaultTextStyle() } }]
-      }
-      // If text is non-empty, we NEVER overwrite it here. Custom names are preserved.
-    }
-  }
-}
+// --- Render ------------------------------------------------------------------
 
 function renderEditor() {
   const root = sheetRef.value
   if (!root) return
-  // Work on a shallow copy so ensureHeadingText does not mutate the store's reactive array.
-  const paragraphs = (props.modelValue?.body?.content || []).map(p => ({ ...p }))
-  // Ensure every paragraph has a stable id so DOM reads can map back to the correct paragraph.
-  for (const p of paragraphs) {
-    if (!p.id) p.id = generateParagraphId()
-  }
-  ensureHeadingText(paragraphs)
 
-  // Compute first-line indent for every paragraph before generating HTML.
-  // Paragraphs that are the first non-heading text on a new page always get
-  // indent, unless they immediately follow a heading or a scene break.
-  const breaks = pageBreaks.value
-  let firstContentOnPage = -1
-  for (let i = 0; i < paragraphs.length; i++) {
-    if (breaks.includes(i) && i > 0) {
-      firstContentOnPage = -1
-    }
-    if (isHeading(paragraphs[i].paragraphStyle)) {
-      paragraphs[i].firstLineIndent = 0
-      continue
-    }
-    if (firstContentOnPage === -1 && !isEmptyParagraph(paragraphs[i])) {
-      firstContentOnPage = i
-      const prev = paragraphs[i - 1]
-      const prev2 = paragraphs[i - 2]
-      if (prev && isHeading(prev.paragraphStyle)) {
-        paragraphs[i].firstLineIndent = 0
-      } else if (prev && isEmptyParagraph(prev) && prev2 && isEmptyParagraph(prev2)) {
-        paragraphs[i].firstLineIndent = 0
-      } else {
-        paragraphs[i].firstLineIndent = i === 0 ? 0 : 0.5
-      }
-      continue
-    }
-    if (firstContentOnPage === -1) {
-      paragraphs[i].firstLineIndent = 0
-      continue
-    }
-    if (shouldHaveFirstLineIndent(paragraphs, i)) {
-      paragraphs[i].firstLineIndent = 0.5
-    } else {
-      paragraphs[i].firstLineIndent = 0
-    }
+  // Shallow-copy paragraph blocks so baking computed indents does not mutate
+  // the store's reactive paragraphs.
+  const blocks = flattenSections(props.modelValue?.sections || []).map(b => {
+    if (b.kind === 'paragraph') return { ...b, paragraph: { ...b.paragraph } }
+    return b
+  })
+
+  for (let i = 0; i < blocks.length; i++) {
+    if (blocks[i].kind !== 'paragraph') continue
+    blocks[i].paragraph.firstLineIndent = computeFirstLineIndent(blocks, i)
   }
 
-  let html = paragraphsToHTML(paragraphs)
+  let chapterIndex = 0
+  let html = blocks.map(b => {
+    if (b.kind === 'section-title') {
+      const idx = b.sectionType === 'chapter' ? ++chapterIndex : null
+      const chapterPrefix = idx != null ? sectionFormat.formatChapter(idx) : ''
+      return sectionTitleToHTML(
+        { id: b.sectionId, title: b.title, sectionType: b.sectionType },
+        idx,
+        chapterPrefix,
+        { fresh: b.sectionId === freshSectionId.value }
+      )
+    }
+    return paragraphToHTML(b.paragraph, { sectionId: b.sectionId })
+  }).join('')
+
   if (props.modelValue?.hasEpigram && props.modelValue?.epigramText) {
     const epigramHtml = `<div class="epigram-block">${escapeHtml(props.modelValue.epigramText).replace(/\n/g, '<br>')}</div>`
     html = epigramHtml + html
   }
+
   root.innerHTML = html
-  applyHeadingLocks()
+  applySectionTitleLocks()
   nextTick(() => layoutPageBreaks())
 }
 
 function onInput() {
   syncFromDOM()
 }
+
+// --- Cursor / block helpers --------------------------------------------------
 
 function getParagraphAtCursor() {
   const sel = window.getSelection()
@@ -361,12 +347,22 @@ function getParagraphAtCursor() {
   return el || null
 }
 
-function getHeadingParagraphAtCursor() {
-  const el = getParagraphAtCursor()
-  if (el && isHeading(el.dataset.paraStyle)) {
-    return el
+function getSectionTitleAtCursor() {
+  const sel = window.getSelection()
+  if (!sel.rangeCount) return null
+  let node = sel.anchorNode
+  if (!node) return null
+  let el = node.nodeType === 3 ? node.parentElement : node
+  while (el && !el.classList?.contains('section-title')) {
+    el = el.parentElement
   }
-  return null
+  return el || null
+}
+
+function getSectionIdAtCursor() {
+  const el = getParagraphAtCursor() || getSectionTitleAtCursor()
+  if (!el) return null
+  return el.dataset.sectionId || null
 }
 
 function isCaretAtStart(range, element) {
@@ -383,29 +379,25 @@ function isCaretAtEnd(range, element) {
   return range.compareBoundaryPoints(Range.END_TO_END, temp) === 0
 }
 
-function getPreviousParagraph(el) {
-  let prev = el.previousElementSibling
-  while (prev && !prev.classList?.contains('paragraph')) {
-    prev = prev.previousElementSibling
-  }
-  return prev || null
-}
-
-function getNextParagraph(el) {
-  let next = el.nextElementSibling
-  while (next && !next.classList?.contains('paragraph')) {
-    next = next.nextElementSibling
-  }
-  return next || null
+// The editable span inside a section-title: .section-subtitle for a Chapter
+// (the prefix is locked), .section-title-text for a Section (the whole title).
+function editableSpanOf(sectionEl) {
+  return sectionEl.querySelector('.section-subtitle') ||
+    sectionEl.querySelector('.section-title-text') ||
+    sectionEl
 }
 
 // --- Page/line navigation (exposed to the parent for keyboard shortcuts) -----
-// These operate on this component's own sheet DOM (sheetRef.value) and read the
-// data-page-start / data-para-style attributes set by layoutPageBreaks.
 
-// Extend the current selection to the end of the next sibling paragraph (a
-// "select line" action), or select the whole current paragraph if there is no
-// next paragraph.
+function placeCursorAtStart(el) {
+  const range = document.createRange()
+  range.setStart(el, 0)
+  range.collapse(true)
+  const sel = window.getSelection()
+  sel.removeAllRanges()
+  sel.addRange(range)
+}
+
 function selectLine() {
   const sel = window.getSelection()
   if (!sel.rangeCount) return
@@ -428,77 +420,97 @@ function selectLine() {
   }
 }
 
-// Jump the cursor to the first paragraph of the page `direction` pages away from
-// the cursor's current page. Each paragraph carries its page number in
-// data-page-start, set by layoutPageBreaks.
-function navigatePage(direction) {
+// Current page number at the cursor: walk back from the cursor's block to the
+// nearest [data-page-start] marker. (Mid-page blocks have no marker of their
+// own, so reading the cursor block's own data-page-start would wrongly default
+// to 1 — this walk finds the page-start block that owns the current page.)
+function currentPageAtCursor() {
   const sheet = sheetRef.value
-  if (!sheet) return
-  const paras = Array.from(sheet.querySelectorAll('.paragraph'))
-  const current = getParagraphAtCursor()
-  if (!current) return
-  const currentPage = parseInt(current.dataset.pageStart, 10) || 1
-  const targetPage = currentPage + direction
-  if (targetPage < 1) return
-  const target = paras.find(p => parseInt(p.dataset.pageStart, 10) === targetPage)
-  if (!target) return
+  if (!sheet) return 1
+  const current = getParagraphAtCursor() || getSectionTitleAtCursor()
+  if (!current) return 1
+  let walk = current
+  while (walk) {
+    if (walk.dataset?.pageStart) return parseInt(walk.dataset.pageStart, 10)
+    walk = walk.previousElementSibling
+  }
+  return 1
+}
+
+// Place the cursor on the first paragraph of the page whose start block is
+// `startEl` (a section-title or paragraph). If the page starts with a
+// section-title, drop into the first paragraph after it.
+function focusPageStart(startEl) {
+  let target = startEl
+  if (startEl.classList.contains('section-title')) {
+    let next = startEl.nextElementSibling
+    while (next && !next.classList.contains('paragraph') && !next.classList.contains('section-title')) {
+      next = next.nextElementSibling
+    }
+    if (next && next.classList.contains('paragraph')) target = next
+  }
   placeCursorAtStart(target)
   target.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
-// Jump the cursor to the first paragraph of the next/previous page that begins
-// with a heading.
-function navigateHeadingPage(direction) {
+function navigatePage(direction) {
   const sheet = sheetRef.value
   if (!sheet) return
-  const paras = Array.from(sheet.querySelectorAll('.paragraph'))
-  const current = getParagraphAtCursor()
-  if (!current) return
-  const currentPage = parseInt(current.dataset.pageStart, 10) || 1
-  const headings = paras.filter(p => /^heading[1-6]$/.test(p.dataset.paraStyle))
-  const headingPages = headings.map(h => parseInt(h.dataset.pageStart, 10) || 1)
+  const currentPage = currentPageAtCursor()
+  const targetPage = currentPage + direction
+  if (targetPage < 1) return
+  const startEl = sheet.querySelector(`[data-page-start="${targetPage}"]`)
+  if (!startEl) return
+  focusPageStart(startEl)
+}
+
+// Jump the cursor to the first paragraph of the next/previous page that begins
+// with a section-title (the section-aware replacement for navigateHeadingPage).
+function navigateSectionPage(direction) {
+  const sheet = sheetRef.value
+  if (!sheet) return
+  const currentPage = currentPageAtCursor()
+  const sectionTitles = Array.from(sheet.querySelectorAll('.section-title[data-page-start]'))
+  const sectionPages = sectionTitles.map(el => parseInt(el.dataset.pageStart, 10))
   let targetPage
   if (direction > 0) {
-    targetPage = headingPages.find(p => p > currentPage)
+    targetPage = sectionPages.find(p => p > currentPage)
   } else {
-    targetPage = [...headingPages].reverse().find(p => p < currentPage)
+    targetPage = [...sectionPages].reverse().find(p => p < currentPage)
   }
   if (!targetPage) return
-  const target = paras.find(p => parseInt(p.dataset.pageStart, 10) === targetPage)
-  if (!target) return
-  placeCursorAtStart(target)
-  target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  const startEl = sheet.querySelector(`.section-title[data-page-start="${targetPage}"]`)
+  if (!startEl) return
+  focusPageStart(startEl)
 }
+
+// --- Keyboard / input handling ----------------------------------------------
 
 function onKeydown(e) {
   if (e.key === 'Enter') {
     e.preventDefault()
-    const heading = getHeadingParagraphAtCursor()
-    const inFresh = heading && heading.dataset.paraId === freshHeadingId.value
+    const sectionEl = getSectionTitleAtCursor()
+    const inFresh = sectionEl && sectionEl.dataset.sectionId === freshSectionId.value
+
     if (inFresh) {
-      lockFreshHeading()
-      let nextPara = heading.nextElementSibling
-      while (nextPara && !nextPara.classList?.contains('paragraph')) {
-        nextPara = nextPara.nextElementSibling
+      // Commit the fresh title: lock it, focus the section's first paragraph,
+      // and sync the edited title back into the model (local — captured on the
+      // next autosave delta as a RenameSection, no in-memory undo entry).
+      const sectionId = sectionEl.dataset.sectionId
+      lockFreshSection()
+      let next = sectionEl.nextElementSibling
+      while (next && !next.classList?.contains('paragraph')) {
+        next = next.nextElementSibling
       }
-      if (nextPara && !isHeading(nextPara.dataset.paraStyle)) {
-        placeCursorAtStart(nextPara)
-        syncFromDOM()
-        return
-      }
-      const newPara = document.createElement('div')
-      newPara.className = 'paragraph'
-      newPara.dataset.paraId = generateParagraphId()
-      newPara.innerHTML = '<br>'
-      heading.parentNode.insertBefore(newPara, heading.nextSibling)
-      placeCursorAtStart(newPara)
+      if (next) placeCursorAtStart(next)
       syncFromDOM()
       return
     }
+
     document.execCommand('defaultParagraphSeparator', false, 'div')
     document.execCommand('insertParagraph', false, null)
-    // The browser often copies text-indent from the previous paragraph.
-    // New paragraphs should start flush so the user controls the indent explicitly.
+    // The browser often copies text-indent from the previous paragraph. New
+    // paragraphs start flush so the user controls the indent explicitly.
     const sel2 = window.getSelection()
     if (sel2.rangeCount) {
       let node = sel2.anchorNode
@@ -506,9 +518,7 @@ function onKeydown(e) {
       while (para && !para.classList?.contains('paragraph')) {
         para = para.parentElement
       }
-      if (para) {
-        para.style.textIndent = '0px'
-      }
+      if (para) para.style.textIndent = '0px'
     }
     syncFromDOM()
     return
@@ -519,57 +529,55 @@ function onKeydown(e) {
     if (!sel.rangeCount) return
     const range = sel.getRangeAt(0)
     const para = getParagraphAtCursor()
-    const heading = getHeadingParagraphAtCursor()
+    const sectionEl = getSectionTitleAtCursor()
 
-    if (heading) {
-      // Cursor is inside a heading.
-      if (heading.dataset.paraId === freshHeadingId.value) {
-        // Fresh heading: allow text editing, but prevent paragraph deletion.
-        if (e.key === 'Backspace' && isCaretAtStart(range, heading)) {
-          e.preventDefault()
-          return
-        }
-        if (e.key === 'Delete' && isCaretAtEnd(range, heading)) {
-          e.preventDefault()
-          return
-        }
-        // Otherwise allow normal text editing inside the fresh heading.
+    if (sectionEl) {
+      if (sectionEl.dataset.sectionId === freshSectionId.value) {
+        // Fresh section-title: allow text editing, but never let Backspace/Delete
+        // cross the editable span's boundaries (which would eat the locked
+        // chapter-prefix or merge into the previous block).
+        const span = editableSpanOf(sectionEl)
+        if (e.key === 'Backspace' && isCaretAtStart(range, span)) { e.preventDefault(); return }
+        if (e.key === 'Delete' && isCaretAtEnd(range, span)) { e.preventDefault(); return }
         return
       }
-      // Locked heading: never allow backspace/delete.
+      // Locked section-title: never allow backspace/delete.
       e.preventDefault()
       return
     }
 
     if (para) {
-      // Cursor is in a normal paragraph: block boundary merges into headings.
-      if (e.key === 'Backspace') {
-        const prev = getPreviousParagraph(para)
-        if (prev && isHeading(prev.dataset.paraStyle) && isCaretAtStart(range, para)) {
-          e.preventDefault()
-          return
-        }
+      // Prevent a paragraph from merging back across a section-title boundary.
+      if (e.key === 'Backspace' && isCaretAtStart(range, para)) {
+        let prev = para.previousElementSibling
+        while (prev && isNonContentBlock(prev)) prev = prev.previousElementSibling
+        if (prev && prev.classList?.contains('section-title')) { e.preventDefault(); return }
       }
-      if (e.key === 'Delete') {
-        const next = getNextParagraph(para)
-        if (next && isHeading(next.dataset.paraStyle) && isCaretAtEnd(range, para)) {
-          e.preventDefault()
-          return
-        }
+      if (e.key === 'Delete' && isCaretAtEnd(range, para)) {
+        let next = para.nextElementSibling
+        while (next && isNonContentBlock(next)) next = next.nextElementSibling
+        if (next && next.classList?.contains('section-title')) { e.preventDefault(); return }
       }
     }
   }
 
   if (e.key === 'Escape') {
-    const heading = getHeadingParagraphAtCursor()
-    if (heading && heading.dataset.paraId === freshHeadingId.value) {
-      lockFreshHeading()
-      let target = heading.nextElementSibling
-      while (target && !target.classList?.contains('paragraph')) {
-        target = target.nextElementSibling
-      }
-      if (target) {
-        placeCursorAtStart(target)
+    const sectionEl = getSectionTitleAtCursor()
+    if (sectionEl && sectionEl.dataset.sectionId === freshSectionId.value) {
+      const sectionId = sectionEl.dataset.sectionId
+      const title = readSectionTitleText(sectionEl)
+      lockFreshSection()
+      if (!title) {
+        // Empty fresh section: cancel by deleting it (round-trip, undoable).
+        // Emitted up to App, which calls store.deleteSection.
+        emit('deleteSection', sectionId)
+      } else {
+        let next = sectionEl.nextElementSibling
+        while (next && !next.classList?.contains('paragraph')) {
+          next = next.nextElementSibling
+        }
+        if (next) placeCursorAtStart(next)
+        syncFromDOM()
       }
       e.preventDefault()
       return
@@ -578,12 +586,24 @@ function onKeydown(e) {
 }
 
 function onBeforeinput(e) {
-  const heading = getHeadingParagraphAtCursor()
-  if (heading) {
-    if (heading.dataset.paraId === freshHeadingId.value) {
-      return
-    }
+  const sectionEl = getSectionTitleAtCursor()
+  if (!sectionEl) return
+  if (sectionEl.dataset.sectionId !== freshSectionId.value) {
+    // Locked section-title: block all input.
     e.preventDefault()
+    return
+  }
+  // Fresh section-title: block input that targets the locked chapter-prefix
+  // (the derived "Chapter N: " is never user-editable).
+  const sel = window.getSelection()
+  if (sel.rangeCount) {
+    let node = sel.anchorNode
+    if (node) {
+      let el = node.nodeType === 3 ? node.parentElement : node
+      if (el?.closest?.('.chapter-prefix')) {
+        e.preventDefault()
+      }
+    }
   }
 }
 
@@ -595,238 +615,65 @@ function onPaste(e) {
 }
 
 function onMousedown(e) {
-  if (!freshHeadingId.value) return
+  if (!freshSectionId.value) return
   const root = sheetRef.value
   if (!root) return
-  const freshEl = root.querySelector(`[data-para-id="${freshHeadingId.value}"]`)
+  const freshEl = root.querySelector(`[data-section-id="${freshSectionId.value}"]`)
   if (freshEl && !freshEl.contains(e.target)) {
-    lockFreshHeading()
+    lockFreshSection()
+    syncFromDOM()
   }
 }
 
-// --- Heading-insert helpers -------------------------------------------------
-// These collapse what was previously two ~130-line functions (insertHeading +
-// insertHeadingAtPageTop) that duplicated the title-computation, cursor-placement,
-// and render-then-focus logic. The only real difference between the two was the
-// index strategy, so each gets its own helper and the shared work lives in one
-// insertHeading().
+// --- Section insert ----------------------------------------------------------
+// Insert is LOCAL (decision 2): splice a new section into a copy of the
+// sections array, mark it fresh so its title renders editable, emit the new
+// array via syncSections, then re-render and focus the title for inline
+// editing. This mirrors the old insertHeading flow — synchronous, immediate
+// focus, no async round-trip. (Section inserts are not in in-memory undo
+// history; they are captured on-disk by the next autosave delta's
+// InsertSection op.)
 
-// Primitive: collapse the selection to the start of `el`.
-function placeCursorAtStart(el) {
-  const range = document.createRange()
-  range.setStart(el, 0)
-  range.collapse(true)
-  const sel = window.getSelection()
-  sel.removeAllRanges()
-  sel.addRange(range)
-}
-
-// After inserting a heading, place the cursor in the first editable normal
-// paragraph below it so the user can immediately start writing body content.
-// If no such paragraph exists, just scroll the heading into view.
-function focusBelowHeading(headingEl) {
-  const nextPara = headingEl.nextElementSibling
-  if (nextPara && nextPara.classList?.contains('paragraph') && !isHeading(nextPara.dataset.paraStyle)) {
-    placeCursorAtStart(nextPara)
-    nextPara.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  } else {
-    headingEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  }
-}
-
-// Build the initial heading text. An explicit title is kept as-is; otherwise,
-// when autoGenerate is on for this level, count existing headings of that level
-// and format the next number (e.g. "Part II"). Returns the empty string when no
-// title and no auto-generation applies.
-function computeInitialTitle(type, title, paragraphs) {
-  const level = getHeadingLevel(type)
-  if (level <= 0 || title) return title
-  const counts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 }
-  for (const p of paragraphs) {
-    const l = getHeadingLevel(p.paragraphStyle)
-    if (l > 0) counts[l]++
-  }
-  counts[level]++
-  const fmt = headingFormat.headingFormats.value[level]
-  if (fmt && fmt.autoGenerate) {
-    return headingFormat.formatHeading(level, counts[level])
-  }
-  return title
-}
-
-// Index strategy A — insert immediately after the paragraph holding the cursor
-// (or at the end if there is no cursor). Used by the non-page-top insert mode.
-function computeCursorInsertIndex(paragraphs) {
-  const sel = window.getSelection()
-  let currentParaId = null
-  if (sel.rangeCount) {
-    let node = sel.anchorNode
-    if (node) {
-      let el = node.nodeType === 3 ? node.parentElement : node
-      while (el && !el.classList?.contains('paragraph')) {
-        el = el.parentElement
-      }
-      if (el) currentParaId = el.dataset.paraId
-    }
-  }
-  if (currentParaId) {
-    const found = paragraphs.findIndex(p => p.id === currentParaId)
-    if (found !== -1) return found + 1
-  }
-  return paragraphs.length
-}
-
-// Index strategy B — insert at the top of the current page. If `afterId` is
-// given (a section/chapter selected in the nav drawer), insert after the last
-// paragraph of that item's page. Otherwise walk back from the cursor to the
-// page start; if the page already begins with a heading, force a new page by
-// inserting after the last paragraph on the current page instead.
-function computePageTopInsertIndex(paragraphs, root, afterId) {
-  if (afterId) {
-    const targetIdx = paragraphs.findIndex(p => p.id === afterId)
-    if (targetIdx !== -1) {
-      // Walk forward from target to find the last paragraph before the next heading.
-      let lastIdx = targetIdx
-      for (let i = targetIdx + 1; i < paragraphs.length; i++) {
-        if (isHeading(paragraphs[i].paragraphStyle)) break
-        lastIdx = i
-      }
-      return lastIdx + 1
-    }
-  }
-
-  const sel = window.getSelection()
-  let cursorPara = null
-  if (sel.rangeCount) {
-    let node = sel.anchorNode
-    if (node) {
-      let el = node.nodeType === 3 ? node.parentElement : node
-      while (el && !el.classList?.contains('paragraph')) {
-        el = el.parentElement
-      }
-      if (el) cursorPara = el
-    }
-  }
-
-  // Find the page start: walk backwards from the cursor to the preceding page-number-label.
-  let pageStartPara = null
-  if (cursorPara) {
-    let walk = cursorPara.previousElementSibling
-    while (walk) {
-      if (walk.classList?.contains('page-number-label')) {
-        pageStartPara = walk.nextElementSibling
-        while (pageStartPara && !pageStartPara.classList?.contains('paragraph')) {
-          pageStartPara = pageStartPara.nextElementSibling
-        }
-        break
-      }
-      walk = walk.previousElementSibling
-    }
-  }
-
-  // If no page break was found, the first paragraph is the page start.
-  if (!pageStartPara) {
-    let first = root.firstElementChild
-    while (first && !first.classList?.contains('paragraph')) {
-      first = first.nextElementSibling
-    }
-    pageStartPara = first
-  }
-
-  const pageHasHeading = pageStartPara && isHeading(pageStartPara.dataset.paraStyle)
-
-  let targetParaId = null
-  if (pageHasHeading) {
-    // Page already has a heading — force a new page by inserting after the
-    // last paragraph on the current page.
-    let lastParaOnPage = null
-    if (cursorPara) {
-      let walk = cursorPara.nextElementSibling
-      while (walk) {
-        if (walk.classList?.contains('page-number-label')) break
-        if (walk.classList?.contains('paragraph')) lastParaOnPage = walk
-        walk = walk.nextElementSibling
-      }
-    }
-    // If no next page-number-label was found, we are on the last page.
-    if (!lastParaOnPage) {
-      let walk = root.lastElementChild
-      while (walk) {
-        if (walk.classList?.contains('paragraph')) {
-          lastParaOnPage = walk
-          break
-        }
-        walk = walk.previousElementSibling
-      }
-    }
-    targetParaId = lastParaOnPage?.dataset.paraId
-  } else {
-    targetParaId = pageStartPara?.dataset.paraId
-  }
-
-  if (targetParaId) {
-    const found = paragraphs.findIndex(p => p.id === targetParaId)
-    if (found !== -1) return pageHasHeading ? found + 1 : found
-  }
-  return paragraphs.length
-}
-
-// Insert a heading paragraph.
-//   atPageTop: false → place it right after the cursor paragraph.
-//   atPageTop: true  → place it at the top of the current page (or, if afterId is
-//                     given, after the last paragraph of that nav item's page).
-//                     Ensures an editable normal paragraph follows, and for a
-//                     new H1 marks it "fresh" so the user can type its title
-//                     inline before committing with Enter/Escape.
-function insertHeading(type, title, { atPageTop = false, afterId = null } = {}) {
+function insertSection(sectionType, afterId = null) {
   syncFromDOM()
   const root = sheetRef.value
   if (!root) return
 
-  const paragraphs = [...(props.modelValue.body.content || [])]
-  const idx = atPageTop
-    ? computePageTopInsertIndex(paragraphs, root, afterId)
-    : computeCursorInsertIndex(paragraphs)
-
-  const initialTitle = computeInitialTitle(type, title, paragraphs)
-  const newPara = {
-    id: generateParagraphId(),
-    paragraphStyle: type,
-    elements: [{ textRun: { content: initialTitle, textStyle: defaultTextStyle() } }],
-  }
-  paragraphs.splice(idx, 0, newPara)
-
-  if (atPageTop) {
-    // Ensure there's an editable normal paragraph after the heading.
-    const next = paragraphs[idx + 1]
-    if (!next || isHeading(next.paragraphStyle)) {
-      const emptyPara = {
-        id: generateParagraphId(),
-        paragraphStyle: ParagraphStyle.Normal,
-        elements: [{ textRun: { content: '', textStyle: defaultTextStyle() } }],
-      }
-      paragraphs.splice(idx + 1, 0, emptyPara)
+  const sections = [...(props.modelValue.sections || [])]
+  let insertIndex
+  if (afterId) {
+    const found = sections.findIndex(s => s.id === afterId)
+    insertIndex = found === -1 ? sections.length : found + 1
+  } else {
+    const cursorSectionId = getSectionIdAtCursor()
+    if (cursorSectionId) {
+      const found = sections.findIndex(s => s.id === cursorSectionId)
+      insertIndex = found === -1 ? sections.length : found + 1
+    } else {
+      insertIndex = sections.length
     }
   }
 
-  // A freshly inserted H1 stays editable until the user commits it with Enter
-  // or Escape, or clicks away (see lockFreshHeading / onMousedown). Applied in
-  // both insert modes so behaviour is consistent regardless of entry path.
-  if (type === ParagraphStyle.Heading1) {
-    freshHeadingId.value = newPara.id
-  }
+  const newSection = createSection({ title: '', sectionType })
+  sections.splice(insertIndex, 0, newSection)
 
-  ensureHeadingText(paragraphs)
+  freshSectionId.value = newSection.id
   skipNextWatcher.value = true
-  emit('syncBody', paragraphs)
+  emit('syncSections', sections)
 
-  // Defer renderEditor until Vue's render cycle completes to avoid
-  // innerHTML clashing with Vue's DOM patching.
   setTimeout(() => {
     renderEditor()
     nextTick(() => {
-      const el = root.querySelector(`[data-para-id="${newPara.id}"]`)
-      if (el) focusBelowHeading(el)
+      const el = root.querySelector(`[data-section-id="${newSection.id}"]`)
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        const span = editableSpanOf(el)
+        const range = document.createRange()
+        range.selectNodeContents(span)
+        const sel = window.getSelection()
+        sel.removeAllRanges()
+        sel.addRange(range)
+      }
     })
   }, 0)
 }
@@ -835,22 +682,27 @@ function scrollToParagraph(id) {
   const root = sheetRef.value
   if (!root) return
   const el = root.querySelector(`[data-para-id="${id}"]`)
-  if (el) {
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  }
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
+
+function scrollToSection(id) {
+  const root = sheetRef.value
+  if (!root) return
+  const el = root.querySelector(`[data-section-id="${id}"]`)
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
 
 function renderFromDoc() {
   renderEditor()
 }
 
-watch(() => props.modelValue?.body?.content, () => {
+watch(() => props.modelValue?.sections, () => {
   if (skipNextWatcher.value) {
     skipNextWatcher.value = false
     return
   }
-  // Re-render when store doc changes externally (rename, delete, loadDocument).
-  // Skip if the change was initiated by the editor itself (syncFromDOM, insertHeading).
+  // Re-render when the store doc changes externally (rename, delete, load).
+  // Skipped when the change originated here (syncFromDOM, insertSection).
   renderEditor()
 }, { deep: true })
 
@@ -859,20 +711,27 @@ watch(pageBreaks, () => {
 })
 
 // NOTE: there is deliberately no watch(props.theme) or watch(props.zoom).
-// Previously both triggered a full renderEditor() (innerHTML rebuild), which
-// discarded the caret every time the user changed theme or zoom. That rebuild
-// was unnecessary: editorStyles (the reactive computed bound via :style)
-// already updates background/text-color/font-size live, and page breaks are
-// laid out by usePagination against fixed manuscript metrics, so zoom does not
-// shift them. The only theme-dependent thing the rebuild bought was the
-// page-break <hr> border color, which now flows through the --page-break-color
-// CSS variable set in editorStyles — so it updates live too, no rebuild needed.
+// editorStyles (the reactive computed bound via :style) updates background,
+// text-color, and font-size live; page breaks are laid out by usePagination
+// against fixed manuscript metrics, so zoom does not shift them; the
+// page-break <hr> color flows through the --page-break-color CSS variable.
 
 onMounted(() => {
   renderEditor()
 })
 
-defineExpose({ syncFromDOM, renderFromDoc, insertHeading, scrollToParagraph, selectLine, navigatePage, navigateHeadingPage, applySearchHighlights: editorApplySearchHighlights, clearSearchHighlights: editorClearSearchHighlights })
+defineExpose({
+  syncFromDOM,
+  renderFromDoc,
+  insertSection,
+  scrollToParagraph,
+  scrollToSection,
+  selectLine,
+  navigatePage,
+  navigateSectionPage,
+  applySearchHighlights: editorApplySearchHighlights,
+  clearSearchHighlights: editorClearSearchHighlights,
+})
 </script>
 
 <style scoped>
@@ -898,17 +757,10 @@ defineExpose({ syncFromDOM, renderFromDoc, insertHeading, scrollToParagraph, sel
   margin-bottom: 0;
 }
 
-.editor-sheet :deep(.paragraph.heading-1) {
-  font-size: 1.5em;
-  font-weight: 700;
-  text-align: left;
-  text-transform: uppercase;
-  margin-top: 2em;
-  margin-bottom: 1em;
-  text-indent: 0;
-}
-
-.editor-sheet :deep(.paragraph.heading-2) {
+/* Section titles are the structural headings now (one level, flat). A Chapter
+   is visually heavier than a freeform Section. The derived "Chapter N: " prefix
+   lives in .chapter-prefix; the editable subtitle in .section-subtitle. */
+.editor-sheet :deep(.section-title) {
   font-size: 1.2em;
   font-weight: 600;
   text-align: left;
@@ -918,26 +770,15 @@ defineExpose({ syncFromDOM, renderFromDoc, insertHeading, scrollToParagraph, sel
   text-indent: 0;
 }
 
-.editor-sheet :deep(.paragraph.heading-3) {
-  font-size: 1.1em;
-  font-weight: 600;
-  text-align: left;
-  text-transform: uppercase;
-  margin-top: 1.2em;
-  margin-bottom: 0.6em;
-  text-indent: 0;
+.editor-sheet :deep(.section-title.chapter) {
+  font-size: 1.3em;
+  font-weight: 700;
+  margin-top: 2em;
+  margin-bottom: 1em;
 }
 
-.editor-sheet :deep(.paragraph.heading-4),
-.editor-sheet :deep(.paragraph.heading-5),
-.editor-sheet :deep(.paragraph.heading-6) {
-  font-size: 1em;
-  font-weight: 600;
-  text-align: left;
-  text-transform: uppercase;
-  margin-top: 1em;
-  margin-bottom: 0.5em;
-  text-indent: 0;
+.editor-sheet :deep(.section-title .chapter-prefix) {
+  /* locked, derived — no special styling beyond inheriting the title's look */
 }
 
 .editor-sheet :deep(.epigram-block) {
@@ -948,23 +789,24 @@ defineExpose({ syncFromDOM, renderFromDoc, insertHeading, scrollToParagraph, sel
   opacity: 0.7;
 }
 
-/* Page break visuals are rendered via CSS pseudo-elements on the first
-   paragraph of each page so there are no interstitial DOM nodes that
-   the cursor can land in between. */
-.editor-sheet :deep(.paragraph[data-page-start]) {
+/* Page break visuals are rendered via CSS pseudo-elements on the first block of
+   each page so there are no interstitial DOM nodes the cursor can land in
+   between. Generalized from .paragraph[data-page-start] to [data-page-start] so
+   a page can begin on either a section-title or a paragraph. */
+.editor-sheet :deep([data-page-start]) {
   position: relative;
   border-top: 1px dashed rgba(128, 128, 128, 0.35);
   margin-top: 1.2em;
   padding-top: 24px;
 }
 
-.editor-sheet :deep(.paragraph[data-page-start="1"]) {
+.editor-sheet :deep([data-page-start="1"]) {
   border-top: none;
   margin-top: 0;
   padding-top: 0;
 }
 
-.editor-sheet :deep(.paragraph[data-page-start])::before {
+.editor-sheet :deep([data-page-start])::before {
   content: 'p. ' attr(data-page-start);
   position: absolute;
   top: 4px;

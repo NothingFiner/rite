@@ -11,11 +11,12 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, toRef } from 'vue'
-import { paragraphToHTML, escapeHtml } from '../../composables/useParagraphHTML.js'
+import { ref, computed, toRef } from 'vue'
+import { paragraphToHTML, sectionTitleToHTML, escapeHtml } from '../../composables/useParagraphHTML.js'
 import { usePagination } from '../../composables/usePagination.js'
+import { flattenSections, computeFirstLineIndent } from '../../composables/useSectionBlocks.js'
+import { useSectionFormat } from '../../composables/useSectionFormat.js'
 import { applySearchHighlights, clearSearchHighlights } from '../../composables/useSearchHighlights.js'
-import { isHeading } from '../../constants/ParagraphStyle.js'
 import ManuscriptPage from './manuscriptPage.vue'
 
 const props = defineProps({
@@ -26,6 +27,7 @@ const props = defineProps({
 const viewportRef = ref(null)
 const docRef = toRef(props, 'modelValue')
 const { pageBreaks } = usePagination(docRef)
+const sectionFormat = useSectionFormat()
 
 function msApplySearchHighlights(matches, currentIndex) {
   applySearchHighlights(viewportRef.value, matches, currentIndex)
@@ -41,10 +43,12 @@ const authorContact = computed(() => props.modelValue.authorContact || '')
 
 const wordCount = computed(() => {
   let count = 0
-  for (const p of props.modelValue?.body?.content || []) {
-    for (const el of p.elements) {
-      const text = el.textRun.content || ''
-      if (text.trim()) count += text.trim().split(/\s+/).length
+  for (const section of props.modelValue?.sections || []) {
+    for (const p of section.paragraphs || []) {
+      for (const el of p.elements || []) {
+        const text = el.textRun?.content || ''
+        if (text.trim()) count += text.trim().split(/\s+/).length
+      }
     }
   }
   return count
@@ -75,43 +79,17 @@ function buildTitlePage() {
   return { key: 'title', header: '', body, pageClass: 'title-page' }
 }
 
+// Flat TOC: one line per section (the nav already derives display titles with
+// chapter numbers). No Part/Chapter grouping.
 function buildTocPage() {
-  const groups = []
-  let currentGroup = null
   const tocItems = Array.isArray(props.tocItems) ? props.tocItems : []
-
-  for (const item of tocItems) {
-    const level = item.level || 1
-    if (level === 1) {
-      currentGroup = { section: item, chapters: [] }
-      groups.push(currentGroup)
-    } else if (level === 2 && currentGroup) {
-      currentGroup.chapters.push(item)
-    } else if (level === 2 && !currentGroup) {
-      currentGroup = { section: { title: 'Untitled Section', page: item.page }, chapters: [item] }
-      groups.push(currentGroup)
-    }
-  }
-
-  const renderGroup = (group) => {
-    const sectionHtml = `
-      <li class="toc-ms-item heading-1">
-        <span class="toc-ms-title">${escapeHtml(group.section.title)}</span>
-        <span class="toc-ms-dots"></span>
-        <span class="toc-ms-page">${group.section.page}</span>
-      </li>
-    `
-    const chaptersHtml = group.chapters.map(ch => `
-      <li class="toc-ms-item heading-2">
-        <span class="toc-ms-title">${escapeHtml(ch.title)}</span>
-        <span class="toc-ms-dots"></span>
-        <span class="toc-ms-page">${ch.page}</span>
-      </li>
-    `).join('')
-    return sectionHtml + chaptersHtml
-  }
-
-  const items = groups.map(renderGroup).join('')
+  const items = tocItems.map(item => `
+    <li class="toc-ms-item">
+      <span class="toc-ms-title">${escapeHtml(item.displayTitle)}</span>
+      <span class="toc-ms-dots"></span>
+      <span class="toc-ms-page">${item.page}</span>
+    </li>
+  `).join('')
   const body = `
     <h2 class="toc-heading">Contents</h2>
     <ul class="toc-ms-list">${items}</ul>
@@ -124,34 +102,54 @@ function buildEpigramPage() {
   return { key: 'epigram', header: '', body, pageClass: 'epigram-page' }
 }
 
+// Content pages are sliced from the flattened block sequence (section-titles +
+// paragraphs) at the block-index page breaks from usePagination. Section-title
+// blocks render as styled ms-para headings; paragraph blocks render as body
+// paragraphs with the shared section-aware first-line indent rule.
 function buildContentPages() {
-  const paragraphs = props.modelValue?.body?.content || []
-  if (paragraphs.length === 0) return []
+  const sections = props.modelValue?.sections || []
+  if (sections.length === 0) return []
+
+  const blocks = flattenSections(sections).map(b => {
+    if (b.kind === 'paragraph') return { ...b, paragraph: { ...b.paragraph } }
+    return b
+  })
+  for (let i = 0; i < blocks.length; i++) {
+    if (blocks[i].kind !== 'paragraph') continue
+    blocks[i].paragraph.firstLineIndent = computeFirstLineIndent(blocks, i)
+  }
 
   const breaks = pageBreaks.value
   const pages = []
-  let currentBatch = []
-
-  for (let i = 0; i < paragraphs.length; i++) {
-    if (breaks.includes(i) && currentBatch.length > 0) {
-      pages.push(currentBatch)
-      currentBatch = []
+  let batch = []
+  for (let i = 0; i < blocks.length; i++) {
+    if (breaks.includes(i) && batch.length > 0) {
+      pages.push(batch)
+      batch = []
     }
-    currentBatch.push(paragraphs[i])
+    batch.push(blocks[i])
   }
-  if (currentBatch.length > 0) pages.push(currentBatch)
+  if (batch.length > 0) pages.push(batch)
 
   const surname = getSurname(props.modelValue.author)
   const abbrevTitle = abbreviateTitle(props.modelValue.title)
+  // Chapter index is global across all pages (chapter 3 stays chapter 3), so it
+  // lives in the closure and increments as we render each page in order.
+  let chapterIndex = 0
 
   return pages.map((batch, i) => {
-    const body = batch.map((p, j) => {
-      // First paragraph on a new page should keep its indent even if it
-      // follows a heading or empty paragraph on the previous page.
-      if (j === 0 && i > 0 && !isHeading(p.paragraphStyle)) {
-        return paragraphToHTML({ ...p, firstLineIndent: 0.5 }, { manuscript: true })
+    const body = batch.map(b => {
+      if (b.kind === 'section-title') {
+        const idx = b.sectionType === 'chapter' ? ++chapterIndex : null
+        const chapterPrefix = idx != null ? sectionFormat.formatChapter(idx) : ''
+        return sectionTitleToHTML(
+          { id: b.sectionId, title: b.title, sectionType: b.sectionType },
+          idx,
+          chapterPrefix,
+          { manuscript: true }
+        )
       }
-      return paragraphToHTML(p, { manuscript: true })
+      return paragraphToHTML(b.paragraph, { manuscript: true })
     }).join('')
 
     return {

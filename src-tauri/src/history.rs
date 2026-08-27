@@ -36,7 +36,7 @@ const DELTA_EXT: &str = "delta";
 
 /// A single row in the version-history listing, returned to the frontend.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-#[serde(rename_all = "camelCase", tag = "kind")]
+#[serde(rename_all = "camelCase")]
 pub enum HistoryKind {
     Snapshot,
     Delta,
@@ -250,7 +250,7 @@ pub fn reconstruct_version(target_ts: &str, base_path: &Path) -> Result<Document
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::document::{Body, Element, Paragraph, ParagraphStyle, TextRun, TextStyle};
+    use crate::document::{Element, Paragraph, Section, SectionType, TextRun, TextStyle};
     use std::path::PathBuf;
 
     /// A self-cleaning temp directory. `new` creates a fresh, unique dir; `Drop`
@@ -284,7 +284,6 @@ mod tests {
     fn create_paragraph(id: &str, text: &str) -> Paragraph {
         Paragraph {
             id: id.to_string(),
-            paragraph_style: ParagraphStyle::Normal,
             elements: vec![Element {
                 text_run: TextRun {
                     content: text.to_string(),
@@ -305,14 +304,17 @@ mod tests {
             has_toc: false,
             has_epigram: false,
             epigram_text: String::new(),
-            body: Body {
-                content: vec![create_paragraph("p1", text)],
-            },
+            sections: vec![Section {
+                id: "s1".to_string(),
+                title: String::new(),
+                section_type: SectionType::Section,
+                paragraphs: vec![create_paragraph("p1", text)],
+            }],
         }
     }
 
     fn para_text(doc: &Document) -> String {
-        doc.body.content[0]
+        doc.sections[0].paragraphs[0]
             .elements
             .iter()
             .map(|e| e.text_run.content.as_str())

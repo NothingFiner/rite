@@ -12,7 +12,7 @@ import { onMounted, onUnmounted } from 'vue'
  * DOM reach-through.
  *
  * Page/line navigation delegates to methods exposed by the editor
- * (`editorRef.value?.selectLine` / `navigatePage` / `navigateHeadingPage`)
+ * (`editorRef.value?.selectLine` / `navigatePage` / `navigateSectionPage`)
  * rather than the parent reaching into the editor's private DOM.
  *
  * Refs are passed in as refs; the composable reads `.value` itself.
@@ -27,7 +27,7 @@ export function useKeyboardShortcuts({
   leftDrawerMode,
   addExpanded,
   editorRef,
-  onInsertHeading,
+  onInsertSection,
 }) {
   function onKeydown(e) {
     const cmd = e.metaKey || e.ctrlKey
@@ -83,12 +83,12 @@ export function useKeyboardShortcuts({
       }
       if (e.key === 'ArrowRight') {
         e.preventDefault()
-        editorRef.value?.navigateHeadingPage?.(1)
+        editorRef.value?.navigateSectionPage?.(1)
         return
       }
       if (e.key === 'ArrowLeft') {
         e.preventDefault()
-        editorRef.value?.navigateHeadingPage?.(-1)
+        editorRef.value?.navigateSectionPage?.(-1)
         return
       }
     }
@@ -123,14 +123,12 @@ export function useKeyboardShortcuts({
       }
       return
     }
-    if (leftDrawerOpen.value && leftDrawerMode.value === 'chapters' && addExpanded.value && !search.searchVisible) {
-      const level = parseInt(e.key, 10)
-      if (level >= 1 && level <= 6) {
-        e.preventDefault()
-        onInsertHeading(level)
-        return
-      }
-    }
+    // The old number-key (1–6) "insert heading level N" shortcut is gone —
+    // there are two add actions now (Chapter / Section), exposed as buttons in
+    // the nav drawer's add control. Adding a letter-key shortcut (e.g. c/s) was
+    // considered and rejected: those are common prose letters, and with the
+    // drawer open + expanded a plain keystroke would misfire while the user
+    // types. Cmd+Enter opens the drawer and reveals the buttons; that's enough.
   }
 
   function onSelectionChange() {

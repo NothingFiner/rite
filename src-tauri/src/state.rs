@@ -149,14 +149,15 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::document::{Body, Element, Paragraph, ParagraphStyle, TextRun, TextStyle};
+    use crate::document::{Element, Paragraph, Section, SectionType, TextRun, TextStyle};
     use crate::history::{self, HistoryKind};
     use std::fs;
     use std::path::PathBuf;
 
-    /// A one-paragraph document whose single run contains `text`. Used as the
-    /// thing we mutate between history pushes — each distinct `text` is a
-    /// distinct document state, so `compute_doc_ops` emits a real change.
+    /// A one-section, one-paragraph document whose single run contains `text`.
+    /// Used as the thing we mutate between history pushes — each distinct
+    /// `text` is a distinct document state, so `compute_doc_ops` emits a real
+    /// change.
     fn doc_text(text: &str) -> Document {
         Document {
             title: "T".to_string(),
@@ -165,10 +166,12 @@ mod tests {
             has_toc: false,
             has_epigram: false,
             epigram_text: String::new(),
-            body: Body {
-                content: vec![Paragraph {
+            sections: vec![Section {
+                id: "s1".to_string(),
+                title: String::new(),
+                section_type: SectionType::Section,
+                paragraphs: vec![Paragraph {
                     id: "p1".to_string(),
-                    paragraph_style: ParagraphStyle::Normal,
                     elements: vec![Element {
                         text_run: TextRun {
                             content: text.to_string(),
@@ -179,13 +182,13 @@ mod tests {
                     right_indent: None,
                     first_line_indent: None,
                 }],
-            },
+            }],
         }
     }
 
     fn current_text(state: &AppState) -> String {
         let doc = state.document.lock().unwrap().clone();
-        doc.body.content[0]
+        doc.sections[0].paragraphs[0]
             .elements
             .iter()
             .map(|e| e.text_run.content.as_str())
@@ -441,7 +444,7 @@ mod tests {
     /// Read the text of the first paragraph's first run from any document. Used
     /// to compare reconstructed/baseline documents against `doc_text` inputs.
     fn current_text_from(doc: &Document) -> String {
-        doc.body.content[0]
+        doc.sections[0].paragraphs[0]
             .elements
             .iter()
             .map(|e| e.text_run.content.as_str())

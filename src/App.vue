@@ -28,19 +28,19 @@
       :open="leftDrawerOpen && leftDrawerMode === 'chapters'"
       v-model:expanded="addExpanded"
       :toc-items="nav.tocItems"
-      :paragraphs="store.doc?.body?.content || []"
       :active-id="nav.selectedNavId"
       @scroll-to="onScrollTo"
-      @insert-heading="onInsertHeading"
+      @insert-section="onInsertSection"
       @rename-section="nav.renameSection"
-      @delete-item="nav.deleteHeading"
+      @change-section-type="nav.changeSectionType"
+      @delete-item="nav.deleteSection"
       @select="nav.selectedNavId = $event"
     />
 
     <GeneralOptionsDrawer
       :open="leftDrawerOpen && leftDrawerMode === 'general-options'"
       :store="store"
-      :heading-format="headingFormat"
+      :section-format="sectionFormat"
     />
     <TextOptionsDrawer
       :open="leftDrawerOpen && leftDrawerMode === 'text-options'"
@@ -67,7 +67,8 @@
           :zoom="theme.editorZoom"
           :margin="theme.editorMargin"
           :toc-items="nav.tocItems"
-          @sync-body="store.syncBodyContent"
+          @sync-sections="store.syncSections"
+          @delete-section="store.deleteSection"
           @update="store.markModified()"
           v-if="store.doc"
         />
@@ -122,7 +123,7 @@ import { useSearchPanel } from './composables/useSearchPanel.js'
 import { useNavigation } from './composables/useNavigation.js'
 import { useFileIO } from './composables/useFileIO.js'
 import { useFormat } from './composables/useFormat.js'
-import { useHeadingFormat } from './composables/useHeadingFormat.js'
+import { useSectionFormat } from './composables/useSectionFormat.js'
 import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts.js'
 import DocumentRenderer from './components/DocumentRenderer.vue'
 import Toolbar from './components/Toolbar.vue'
@@ -155,15 +156,17 @@ const search = reactive(useSearchPanel(editorRef, viewMode))
 const nav = reactive(useNavigation(doc, editorRef))
 const fileIO = useFileIO()
 const format = reactive(useFormat(editorRef, store.markModified.bind(store)))
-const headingFormat = reactive(useHeadingFormat())
+const sectionFormat = reactive(useSectionFormat())
 
 const wordCount = computed(() => {
   if (!store.doc) return 0
   let count = 0
-  for (const p of store.doc.body.content) {
-    for (const el of p.elements) {
-      const text = el.textRun.content || ''
-      if (text.trim()) count += text.trim().split(/\s+/).length
+  for (const section of store.doc.sections || []) {
+    for (const p of section.paragraphs || []) {
+      for (const el of p.elements) {
+        const text = el.textRun.content || ''
+        if (text.trim()) count += text.trim().split(/\s+/).length
+      }
     }
   }
   return count
@@ -180,15 +183,16 @@ function onActivitySelect(mode) {
 }
 
 function onScrollTo(id) {
-  nav.scrollToHeading(id, () => { viewMode.value = 'editor' })
+  nav.scrollToSection(id, () => { viewMode.value = 'editor' })
 }
 
-function onInsertHeading(level) {
-  const styleMap = { 1: 'heading1', 2: 'heading2', 3: 'heading3', 4: 'heading4', 5: 'heading5', 6: 'heading6' }
-  const style = styleMap[level] || 'heading1'
+// Insert is local to the editor (decision 2): force editor view, then ask the
+// editor to splice a new section after the nav-selected section (or the cursor's
+// section) and focus its title for inline editing. No async round-trip.
+function onInsertSection(sectionType) {
   viewMode.value = 'editor'
   nextTick(() => {
-    editorRef.value?.insertHeading?.(style, '', { atPageTop: true, afterId: nav.selectedNavId })
+    editorRef.value?.insertSection?.(sectionType, nav.selectedNavId)
   })
   addExpanded.value = false
 }
@@ -211,12 +215,12 @@ useKeyboardShortcuts({
   leftDrawerMode,
   addExpanded,
   editorRef,
-  onInsertHeading,
+  onInsertSection,
 })
 
 onMounted(async () => {
   theme.loadPrefs()
-  headingFormat.loadPrefs()
+  sectionFormat.loadPrefs()
   format.loadPrefs()
   document.execCommand('styleWithCSS', false, true)
   await store.loadInitialDocument()

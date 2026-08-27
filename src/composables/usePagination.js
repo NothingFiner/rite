@@ -1,16 +1,24 @@
 import { ref, computed, watch } from 'vue'
-import { paragraphToHTML } from './useParagraphHTML.js'
-import { isHeading } from '../constants/ParagraphStyle.js'
+import { paragraphToHTML, sectionTitleToHTML } from './useParagraphHTML.js'
+import { flattenSections } from './useSectionBlocks.js'
+import { useSectionFormat } from './useSectionFormat.js'
 import { CONTENT_WIDTH, CONTENT_HEIGHT } from '../constants/page.js'
 
-export function calculateBreaksFromHeights(heights, paragraphs, contentHeight) {
+/// Compute the block indices that start a new page from the per-block heights.
+/// A page break is forced before a section-title block (so a chapter/section
+/// starts on a fresh page) whenever there is already content on the current
+/// page, and otherwise when the next block would overflow the page. This
+/// replaces the old `isHeading(paragraphStyle)` rule — section-titles are the
+/// structural break points now.
+export function calculateBreaksFromHeights(heights, blocks, contentHeight) {
   const breaks = []
   let currentHeight = 0
 
-  for (let i = 0; i < paragraphs.length; i++) {
+  for (let i = 0; i < blocks.length; i++) {
     const h = heights[i]
+    const isSectionTitle = blocks[i].kind === 'section-title'
 
-    if (isHeading(paragraphs[i].paragraphStyle) && currentHeight > 0) {
+    if (isSectionTitle && currentHeight > 0) {
       breaks.push(i)
       currentHeight = h
     } else if (currentHeight + h > contentHeight && currentHeight > 0) {
@@ -25,9 +33,27 @@ export function calculateBreaksFromHeights(heights, paragraphs, contentHeight) {
 }
 
 export function usePagination(docRef) {
-  const pageBreaks = ref([]) // Array of paragraph indices that start a new page
+  const pageBreaks = ref([]) // Array of block indices that start a new page
+  const sectionFormat = useSectionFormat()
 
-  function measureManuscriptParagraphs(paragraphs) {
+  /// Build the manuscript HTML for every block in order, returning the HTML
+  /// string (whose `.ms-para` elements appear in the same order as `blocks`).
+  function blocksToManuscriptHTML(blocks) {
+    return blocks
+      .map((block) => {
+        if (block.kind === 'section-title') {
+          const chapterPrefix =
+            block.sectionType === 'chapter'
+              ? sectionFormat.formatChapter(block.chapterIndex)
+              : ''
+          return sectionTitleToHTML(block, block.chapterIndex, chapterPrefix, { manuscript: true })
+        }
+        return paragraphToHTML(block.paragraph, { manuscript: true })
+      })
+      .join('')
+  }
+
+  function measureBlocks(blocks) {
     const measure = document.createElement('div')
     measure.className = 'ms-measure'
     measure.style.cssText = `
@@ -76,58 +102,65 @@ export function usePagination(docRef) {
     measure.appendChild(style)
 
     const container = document.createElement('div')
-    container.innerHTML = paragraphs.map((p) =>
-      paragraphToHTML(p, { manuscript: true })
-    ).join('')
+    container.innerHTML = blocksToManuscriptHTML(blocks)
     measure.appendChild(container)
 
     // The measurement div must be in the live DOM for offsetHeight to be computed.
     document.body.appendChild(measure)
 
     const paraEls = container.querySelectorAll('.ms-para')
-    const heights = Array.from(paraEls).map(el => el.offsetHeight)
+    const heights = Array.from(paraEls).map((el) => el.offsetHeight)
 
     document.body.removeChild(measure)
     return heights
   }
 
   function calculateBreaks() {
-    const paragraphs = docRef.value?.body?.content || []
-    if (paragraphs.length === 0) {
+    const sections = docRef.value?.sections
+    if (!sections || sections.length === 0) {
       pageBreaks.value = []
       return
     }
-
-    const heights = measureManuscriptParagraphs(paragraphs)
-    pageBreaks.value = calculateBreaksFromHeights(heights, paragraphs, CONTENT_HEIGHT)
+    const blocks = flattenSections(sections)
+    if (blocks.length === 0) {
+      pageBreaks.value = []
+      return
+    }
+    const heights = measureBlocks(blocks)
+    pageBreaks.value = calculateBreaksFromHeights(heights, blocks, CONTENT_HEIGHT)
   }
 
   const pageCount = computed(() => pageBreaks.value.length + 1)
 
-  function getPageForParagraph(paraIndex) {
+  function getPageForBlock(blockIndex) {
     let page = 1
     for (const breakIdx of pageBreaks.value) {
-      if (paraIndex >= breakIdx) page++
+      if (blockIndex >= breakIdx) page++
       else break
     }
     return page
   }
 
-  function getParagraphsForPage(pageNum, paragraphs) {
+  function getBlocksForPage(pageNum, blocks) {
     const startIdx = pageNum === 1 ? 0 : pageBreaks.value[pageNum - 2]
-    const endIdx = pageNum <= pageBreaks.value.length ? pageBreaks.value[pageNum - 1] : paragraphs.length
-    return paragraphs.slice(startIdx, endIdx)
+    const endIdx =
+      pageNum <= pageBreaks.value.length ? pageBreaks.value[pageNum - 1] : blocks.length
+    return blocks.slice(startIdx, endIdx)
   }
 
-  watch(() => docRef.value?.body?.content, () => {
-    calculateBreaks()
-  }, { deep: true, immediate: true })
+  watch(
+    () => docRef.value?.sections,
+    () => {
+      calculateBreaks()
+    },
+    { deep: true, immediate: true }
+  )
 
   return {
     pageBreaks,
     pageCount,
-    getPageForParagraph,
-    getParagraphsForPage,
+    getPageForBlock,
+    getBlocksForPage,
     calculateBreaks,
   }
 }

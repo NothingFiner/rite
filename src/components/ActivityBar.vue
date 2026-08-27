@@ -115,7 +115,10 @@ const ListIcon = () => h('svg', {
 ])
 
 const items = [
-  { id: 'chapters', label: 'Chapters', icon: BookIcon },
+  // The id stays 'chapters' (compared in App.vue's drawer-open conditions and
+  // here in useKeyboardShortcuts' Cmd+Enter handler); only the user-facing
+  // label changes to reflect the flat-sections model.
+  { id: 'chapters', label: 'Sections', icon: BookIcon },
   { id: 'general-options', label: 'General Options', icon: ListIcon },
   { id: 'text-options', label: 'Text Options', icon: CogIcon },
 ]

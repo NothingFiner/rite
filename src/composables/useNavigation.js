@@ -1,34 +1,54 @@
 import { ref, computed, nextTick } from 'vue'
 import { usePagination } from './usePagination.js'
 import { useDocumentStore } from '../stores/document.js'
-import { ParagraphStyle, getHeadingLevel } from '../constants/ParagraphStyle.js'
+import { flattenSections } from './useSectionBlocks.js'
+import { useSectionFormat } from './useSectionFormat.js'
 
+// Builds the flat navigation outline. With headings retired, the outline is
+// one row per Section — no Part/Chapter grouping, no levels. Each row carries
+// its stable section id, section type, the render-derived chapter index (for
+// Chapter-type sections only), a display title, and its starting page. Chapter
+// numbers are derived (position among Chapter-type sections), never stored.
 export function useNavigation(docRef, editorRef) {
   const store = useDocumentStore()
   const selectedNavId = ref(null)
-  const { getPageForParagraph } = usePagination(docRef)
+  const { getPageForBlock } = usePagination(docRef)
+  const sectionFormat = useSectionFormat()
 
   const tocItems = computed(() => {
+    const sections = docRef.value?.sections || []
+    if (sections.length === 0) return []
+    const blocks = flattenSections(sections)
     const items = []
-    const paragraphs = docRef.value?.body?.content || []
-    for (let i = 0; i < paragraphs.length; i++) {
-      const p = paragraphs[i]
-      const level = getHeadingLevel(p.paragraphStyle)
-      if (level > 0) {
-        items.push({ id: p.id, level, title: extractHeadingTitle(p) || `Untitled Heading ${level}`, page: getPageForParagraph(i) })
-      }
+    for (let i = 0; i < blocks.length; i++) {
+      if (blocks[i].kind !== 'section-title') continue
+      items.push({
+        id: blocks[i].sectionId,
+        title: blocks[i].title,
+        sectionType: blocks[i].sectionType,
+        chapterIndex: blocks[i].chapterIndex,
+        displayTitle: displayTitleFor(blocks[i]),
+        page: getPageForBlock(i),
+      })
     }
     return items
   })
 
-  function extractHeadingTitle(p) {
-    return p.elements.map(el => el.textRun.content).join('').trim()
+  // Rendered title for the nav row. A Chapter shows its derived prefix
+  // ("Chapter 3: ") plus the subtitle, or just "Chapter 3" when the subtitle is
+  // empty. A Section shows its literal title, or "Untitled Section" when blank.
+  function displayTitleFor(block) {
+    if (block.sectionType === 'chapter') {
+      const prefix = sectionFormat.formatChapter(block.chapterIndex) // "Chapter 3: "
+      return block.title ? prefix + block.title : prefix.replace(/: $/, '')
+    }
+    return block.title || 'Untitled Section'
   }
 
-  function scrollToHeading(id, switchToEditor) {
+  function scrollToSection(id, switchToEditor) {
     if (switchToEditor) switchToEditor()
     nextTick(() => {
-      editorRef.value?.scrollToParagraph?.(id)
+      editorRef.value?.scrollToSection?.(id)
     })
   }
 
@@ -37,17 +57,22 @@ export function useNavigation(docRef, editorRef) {
     // Editor re-renders automatically via its watcher when store.doc changes.
   }
 
-  async function deleteHeading(id) {
-    await store.deleteHeading(id)
+  async function deleteSection(id) {
+    await store.deleteSection(id)
     selectedNavId.value = null
     // Editor re-renders automatically via its watcher when store.doc changes.
+  }
+
+  async function changeSectionType(id, newType) {
+    await store.changeSectionType(id, newType)
   }
 
   return {
     selectedNavId,
     tocItems,
-    scrollToHeading,
+    scrollToSection,
     renameSection,
-    deleteHeading,
+    deleteSection,
+    changeSectionType,
   }
 }

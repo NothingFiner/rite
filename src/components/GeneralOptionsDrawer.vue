@@ -4,45 +4,40 @@
       <div class="general-options">
         <h3 class="drawer-heading">General Options</h3>
 
-        <!-- Heading Options accordion -->
+        <!-- Chapter Naming accordion — replaces the old 6-level Heading
+             Options. Sections are flat now, so there is one auto-numbered kind
+             (Chapter) whose prefix word + numbering scheme are configured here.
+             The number itself is render-derived (position among Chapter-type
+             sections), so it is never stored or entered. -->
         <button
           class="accordion-header"
-          :class="{ active: expandedSections['heading-options'] }"
-          @click="expandedSections['heading-options'] = !expandedSections['heading-options']"
+          :class="{ active: expandedSections['chapter-naming'] }"
+          @click="expandedSections['chapter-naming'] = !expandedSections['chapter-naming']"
         >
-          <span>Heading Options</span>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" :class="{ rotated: expandedSections['heading-options'] }">
+          <span>Chapter Naming</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" :class="{ rotated: expandedSections['chapter-naming'] }">
             <polyline points="6 9 12 15 18 9" />
           </svg>
         </button>
-        <div v-show="expandedSections['heading-options']" class="accordion-body">
-          <div v-for="level in [1, 2, 3, 4, 5, 6]" :key="level" class="heading-level-row">
-            <div class="heading-level-label">Level {{ level }}</div>
-            <label class="drawer-label">Prefix</label>
-            <input
-              class="drawer-input"
-              :value="headingFormat.headingFormats[level].prefix"
-              @input="e => headingFormat.setFormat(level, { prefix: e.target.value })"
-            />
-            <label class="drawer-label">Numbering</label>
-            <select
-              class="drawer-input"
-              :value="headingFormat.headingFormats[level].numbering"
-              @change="e => headingFormat.setFormat(level, { numbering: e.target.value })"
-            >
-              <option value="none">None</option>
-              <option value="arabic">Arabic (1, 2, 3)</option>
-              <option value="roman">Roman (I, II, III)</option>
-            </select>
-            <div class="drawer-check">
-              <input
-                :id="'auto-gen-' + level"
-                type="checkbox"
-                :checked="headingFormat.headingFormats[level].autoGenerate"
-                @change="e => headingFormat.setFormat(level, { autoGenerate: e.target.checked })"
-              />
-              <label :for="'auto-gen-' + level">Auto-generate heading text</label>
-            </div>
+        <div v-show="expandedSections['chapter-naming']" class="accordion-body">
+          <label class="drawer-label">Prefix</label>
+          <input
+            class="drawer-input"
+            :value="sectionFormat.sectionFormat.prefix"
+            @input="e => sectionFormat.setFormat({ prefix: e.target.value })"
+          />
+          <label class="drawer-label">Numbering</label>
+          <select
+            class="drawer-input"
+            :value="sectionFormat.sectionFormat.numbering"
+            @change="e => sectionFormat.setFormat({ numbering: e.target.value })"
+          >
+            <option value="arabic">Arabic (1, 2, 3)</option>
+            <option value="roman">Roman (I, II, III)</option>
+          </select>
+          <div class="drawer-preview">
+            <span class="drawer-label">Preview</span>
+            <div class="preview-text">{{ previewTitle }}</div>
           </div>
         </div>
 
@@ -83,9 +78,9 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 
-// Receives the document store and the heading-format composable as props and
+// Receives the document store and the section-format composable as props and
 // drives them directly (setFormat / store.doc.* + markModified). These are
 // app-specific config panels coupled to the preference composables by nature,
 // so the coupling is honest; keeping it behind emits would be plumbing for no
@@ -93,10 +88,17 @@ import { ref } from 'vue'
 const props = defineProps({
   open: { type: Boolean, default: false },
   store: { type: Object, required: true },
-  headingFormat: { type: Object, required: true },
+  sectionFormat: { type: Object, required: true },
 })
 
-const expandedSections = ref({ 'heading-options': true, 'document-info': false })
+const expandedSections = ref({ 'chapter-naming': true, 'document-info': false })
+
+// Live preview of how the configured prefix + numbering render for a chapter
+// with a sample subtitle. formatChapter(3) yields e.g. "Chapter 3: ".
+const previewTitle = computed(() => {
+  const prefix = props.sectionFormat.formatChapter(3)
+  return prefix + 'The Arrival'
+})
 </script>
 
 <style scoped>
@@ -178,6 +180,22 @@ const expandedSections = ref({ 'heading-options': true, 'document-info': false }
   accent-color: var(--accent);
 }
 
+.drawer-preview {
+  margin-top: 12px;
+}
+
+.preview-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 8px 10px;
+  background: var(--input-bg);
+  border: 1px solid var(--bg-glass-border);
+  border-radius: 6px;
+}
+
 .general-options {
   display: flex;
   flex-direction: column;
@@ -216,24 +234,5 @@ const expandedSections = ref({ 'heading-options': true, 'document-info': false }
   display: flex;
   flex-direction: column;
   gap: 8px;
-}
-
-.heading-level-row {
-  border-bottom: 1px solid var(--bg-glass-border);
-  padding-bottom: 12px;
-}
-
-.heading-level-row:last-child {
-  border-bottom: none;
-  padding-bottom: 0;
-}
-
-.heading-level-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--accent);
-  margin-bottom: 6px;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
 }
 </style>

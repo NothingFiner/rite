@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { invoke } from '@tauri-apps/api/tauri'
+import { createSection } from '../constants/DocumentModel.js'
 
 export const useDocumentStore = defineStore('document', {
   state: () => ({
@@ -24,7 +25,7 @@ export const useDocumentStore = defineStore('document', {
           hasTOC: false,
           hasEpigram: false,
           epigramText: '',
-          body: { content: [] },
+          sections: [createSection()],
         }
       }
     },
@@ -43,23 +44,13 @@ export const useDocumentStore = defineStore('document', {
       }
     },
 
-    async insertHeading(level, afterId = null) {
+    async deleteSection(id) {
       try {
-        const updated = await invoke('insert_heading', { level, afterId })
+        const updated = await invoke('delete_section', { id })
         this.doc = updated
         this.isModified = true
       } catch (e) {
-        console.error('Failed to insert heading:', e)
-      }
-    },
-
-    async deleteHeading(id) {
-      try {
-        const updated = await invoke('delete_heading', { id })
-        this.doc = updated
-        this.isModified = true
-      } catch (e) {
-        console.error('Failed to delete heading:', e)
+        console.error('Failed to delete section:', e)
       }
     },
 
@@ -70,6 +61,16 @@ export const useDocumentStore = defineStore('document', {
         this.isModified = true
       } catch (e) {
         console.error('Failed to rename section:', e)
+      }
+    },
+
+    async changeSectionType(id, newType) {
+      try {
+        const updated = await invoke('change_section_type', { id, newType })
+        this.doc = updated
+        this.isModified = true
+      } catch (e) {
+        console.error('Failed to change section type:', e)
       }
     },
 
@@ -85,16 +86,6 @@ export const useDocumentStore = defineStore('document', {
         this.isModified = true
       } catch (e) {
         console.error('Failed to apply text style:', e)
-      }
-    },
-
-    async applyParagraphStyle({ paragraphId, style }) {
-      try {
-        const updated = await invoke('apply_paragraph_style', { paragraphId, style })
-        this.doc = updated
-        this.isModified = true
-      } catch (e) {
-        console.error('Failed to apply paragraph style:', e)
       }
     },
 
@@ -168,10 +159,14 @@ export const useDocumentStore = defineStore('document', {
       this.doc = newDoc
     },
 
-    syncBodyContent(paragraphs) {
+    /// Replace the document's sections from the editor's flat-DOM sync. The
+    /// editor owns the flat block sequence; on every edit it groups blocks
+    /// back into sections and emits the result here. This is the single
+    /// direct write into doc.sections, so it is the one place the model and
+    /// the live DOM are reconciled.
+    syncSections(sections) {
       if (!this.doc) return
-      if (!this.doc.body) this.doc.body = { content: [] }
-      this.doc.body.content = paragraphs
+      this.doc.sections = sections
       this.markModified()
     },
 
