@@ -399,6 +399,77 @@ function getNextParagraph(el) {
   return next || null
 }
 
+// --- Page/line navigation (exposed to the parent for keyboard shortcuts) -----
+// These operate on this component's own sheet DOM (sheetRef.value) and read the
+// data-page-start / data-para-style attributes set by layoutPageBreaks.
+
+// Extend the current selection to the end of the next sibling paragraph (a
+// "select line" action), or select the whole current paragraph if there is no
+// next paragraph.
+function selectLine() {
+  const sel = window.getSelection()
+  if (!sel.rangeCount) return
+  const para = getParagraphAtCursor()
+  if (!para) return
+  const range = sel.getRangeAt(0)
+  const endPara = range.endContainer.nodeType === 3
+    ? range.endContainer.parentElement.closest('.paragraph')
+    : range.endContainer.closest('.paragraph')
+  if (endPara && endPara.nextElementSibling && endPara.nextElementSibling.classList.contains('paragraph')) {
+    const next = endPara.nextElementSibling
+    range.setEndAfter(next.lastChild || next)
+    sel.removeAllRanges()
+    sel.addRange(range)
+  } else {
+    const r = document.createRange()
+    r.selectNodeContents(para)
+    sel.removeAllRanges()
+    sel.addRange(r)
+  }
+}
+
+// Jump the cursor to the first paragraph of the page `direction` pages away from
+// the cursor's current page. Each paragraph carries its page number in
+// data-page-start, set by layoutPageBreaks.
+function navigatePage(direction) {
+  const sheet = sheetRef.value
+  if (!sheet) return
+  const paras = Array.from(sheet.querySelectorAll('.paragraph'))
+  const current = getParagraphAtCursor()
+  if (!current) return
+  const currentPage = parseInt(current.dataset.pageStart, 10) || 1
+  const targetPage = currentPage + direction
+  if (targetPage < 1) return
+  const target = paras.find(p => parseInt(p.dataset.pageStart, 10) === targetPage)
+  if (!target) return
+  placeCursorAtStart(target)
+  target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+// Jump the cursor to the first paragraph of the next/previous page that begins
+// with a heading.
+function navigateHeadingPage(direction) {
+  const sheet = sheetRef.value
+  if (!sheet) return
+  const paras = Array.from(sheet.querySelectorAll('.paragraph'))
+  const current = getParagraphAtCursor()
+  if (!current) return
+  const currentPage = parseInt(current.dataset.pageStart, 10) || 1
+  const headings = paras.filter(p => /^heading[1-6]$/.test(p.dataset.paraStyle))
+  const headingPages = headings.map(h => parseInt(h.dataset.pageStart, 10) || 1)
+  let targetPage
+  if (direction > 0) {
+    targetPage = headingPages.find(p => p > currentPage)
+  } else {
+    targetPage = [...headingPages].reverse().find(p => p < currentPage)
+  }
+  if (!targetPage) return
+  const target = paras.find(p => parseInt(p.dataset.pageStart, 10) === targetPage)
+  if (!target) return
+  placeCursorAtStart(target)
+  target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
 function onKeydown(e) {
   if (e.key === 'Enter') {
     e.preventDefault()
@@ -801,7 +872,7 @@ onMounted(() => {
   renderEditor()
 })
 
-defineExpose({ syncFromDOM, renderFromDoc, insertHeading, scrollToParagraph, applySearchHighlights: editorApplySearchHighlights, clearSearchHighlights: editorClearSearchHighlights })
+defineExpose({ syncFromDOM, renderFromDoc, insertHeading, scrollToParagraph, selectLine, navigatePage, navigateHeadingPage, applySearchHighlights: editorApplySearchHighlights, clearSearchHighlights: editorClearSearchHighlights })
 </script>
 
 <style scoped>

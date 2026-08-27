@@ -42,6 +42,18 @@ function scrollToParagraph(id) {
   editorRef.value?.scrollToParagraph?.(id)
 }
 
+function selectLine() {
+  editorRef.value?.selectLine?.()
+}
+
+function navigatePage(direction) {
+  editorRef.value?.navigatePage?.(direction)
+}
+
+function navigateHeadingPage(direction) {
+  editorRef.value?.navigateHeadingPage?.(direction)
+}
+
 function applySearchHighlights(matches, currentIndex) {
   activeRef()?.applySearchHighlights?.(matches, currentIndex)
 }
@@ -54,5 +66,5 @@ function clearSearchHighlights() {
 // ManuscriptDisplay re-renders automatically via computed props.
 // EditorDisplay calls renderEditor() in its onMounted hook.
 
-defineExpose({ syncFromDOM, renderFromDoc, insertHeading, scrollToParagraph, applySearchHighlights, clearSearchHighlights })
+defineExpose({ syncFromDOM, renderFromDoc, insertHeading, scrollToParagraph, selectLine, navigatePage, navigateHeadingPage, applySearchHighlights, clearSearchHighlights })
 </script>
