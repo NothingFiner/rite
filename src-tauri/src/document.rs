@@ -6,6 +6,14 @@ pub struct Document {
     pub title: String,
     pub author: String,
     pub author_contact: String,
+    // The frontend spells this `hasTOC` (all-caps), which predates the
+    // `rename_all = "camelCase"` container attribute. Match the frontend's
+    // spelling on the wire so round-tripping a frontend-built doc (import/new,
+    // which only ever sets `hasTOC`) doesn't fail deserialization with
+    // "missing field hasToc". The `alias` keeps already-saved `.rite` files
+    // and history snapshots — which serialize the Rust field as `hasToc` —
+    // readable, so this is backward-compatible.
+    #[serde(rename = "hasTOC", alias = "hasToc")]
     pub has_toc: bool,
     pub has_epigram: bool,
     pub epigram_text: String,
