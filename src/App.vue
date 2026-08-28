@@ -41,6 +41,7 @@
       :open="leftDrawerOpen && leftDrawerMode === 'general-options'"
       :store="store"
       :section-format="sectionFormat"
+      :llm-settings="llmSettings"
     />
     <TextOptionsDrawer
       :open="leftDrawerOpen && leftDrawerMode === 'text-options'"
@@ -53,12 +54,15 @@
       :has-last-path="!!store.lastPath"
     />
 
-    <!-- Right drawer: currently empty, reserved for future use -->
+    <!-- Right drawer: the Assistant panel (chat/analysis surface). The LLM is
+         an analytical collaborator — responses live here, never in the doc. -->
     <div class="drawer right" :class="{ open: rightDrawerOpen }">
       <div class="drawer-content right-drawer">
-        <div class="drawer-section">
-          <p class="drawer-empty">Settings moved to General Options drawer</p>
-        </div>
+        <LlmPanel
+          :chat="chat"
+          :settings="llmSettings"
+          @open-settings="openGeneralOptions"
+        />
       </div>
     </div>
 
@@ -136,6 +140,8 @@ import { useFormat } from './composables/useFormat.js'
 import { useSectionFormat } from './composables/useSectionFormat.js'
 import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts.js'
 import { useVersionHistory } from './composables/useVersionHistory.js'
+import { useLlmSettings } from './composables/useLlmSettings.js'
+import { useChat } from './composables/useChat.js'
 import DocumentRenderer from './components/DocumentRenderer.vue'
 import Toolbar from './components/Toolbar.vue'
 import StatusBar from './components/StatusBar.vue'
@@ -146,6 +152,7 @@ import TextOptionsDrawer from './components/TextOptionsDrawer.vue'
 import HistoryListDrawer from './components/HistoryListDrawer.vue'
 import HistoryView from './components/HistoryView.vue'
 import ActivityBar from './components/ActivityBar.vue'
+import LlmPanel from './components/LlmPanel.vue'
 
 const store = useDocumentStore()
 const { doc, isModified } = storeToRefs(store)
@@ -166,11 +173,23 @@ let autosaveTimer = null
 
 const theme = reactive(useTheme(viewMode))
 const search = reactive(useSearchPanel(editorRef, viewMode))
-const nav = reactive(useNavigation(doc, editorRef))
+// Keep the RAW composable results for factories that need to read refs via
+// `.value` (useChat reads llmSettings.settings.value.* and
+// nav.selectedNavId.value). The reactive-wrapped versions go to the
+// templates/components, which see auto-unwrapped values (no `.value`).
+// Both share the same underlying object — `reactive()` returns a proxy of the
+// same object, not a copy — so edits via the reactive proxy (e.g. the drawer's
+// setSettings, or the nav drawer setting selectedNavId) are seen by useChat's
+// raw refs, and vice versa.
+const navRaw = useNavigation(doc, editorRef)
+const nav = reactive(navRaw)
 const fileIO = useFileIO()
 const format = reactive(useFormat(editorRef, store.markModified.bind(store)))
 const sectionFormat = reactive(useSectionFormat())
 const history = reactive(useVersionHistory(store))
+const llmSettingsRaw = useLlmSettings()
+const llmSettings = reactive(llmSettingsRaw)
+const chat = reactive(useChat(doc, llmSettingsRaw, navRaw, editorRef))
 
 const wordCount = computed(() => {
   if (!store.doc) return 0
@@ -242,6 +261,13 @@ function onSearchReplaceAll() {
   search.onSearchReplaceAll()
 }
 
+// Open the General Options drawer to the AI Assistant section (called by the
+// LlmPanel empty state when no model is configured).
+function openGeneralOptions() {
+  leftDrawerMode.value = 'general-options'
+  leftDrawerOpen.value = true
+}
+
 useKeyboardShortcuts({
   store,
   fileIO,
@@ -259,6 +285,7 @@ onMounted(async () => {
   theme.loadPrefs()
   sectionFormat.loadPrefs()
   format.loadPrefs()
+  llmSettings.loadPrefs()
   document.execCommand('styleWithCSS', false, true)
   await store.loadInitialDocument()
 
@@ -278,15 +305,16 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-/* Drawers — App.vue owns only the right (placeholder) drawer. The two left
+/* Drawers — App.vue owns the right drawer (the Assistant panel). The two left
    option drawers each own their own scoped copy of the .drawer base styles
    (see GeneralOptionsDrawer.vue / TextOptionsDrawer.vue, following the
-   NavigationDrawer.vue precedent). */
+   NavigationDrawer.vue precedent). The right drawer is wider (400px) to give
+   the chat/analysis surface room to breathe. */
 .drawer {
   position: fixed;
   top: 38px;
   bottom: 36px;
-  width: 260px;
+  width: 400px;
   transition: transform 0.25s ease;
   z-index: 25;
 }
@@ -313,6 +341,10 @@ onUnmounted(() => {
 .drawer-content.right-drawer {
   border-right: none;
   border-left: 1px solid var(--bg-glass-border);
+  /* The LlmPanel manages its own internal scroll (message list) + a pinned
+     input row, so the drawer itself should not also scroll — it fills height. */
+  display: flex;
+  flex-direction: column;
 }
 
 .drawer-section {
@@ -340,7 +372,7 @@ onUnmounted(() => {
 }
 
 .scroll-layer.right-pad {
-  padding-right: 260px;
+  padding-right: 400px;
 }
 
 .scroll-layer.mode-editor {

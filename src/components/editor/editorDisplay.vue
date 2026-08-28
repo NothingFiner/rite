@@ -398,6 +398,25 @@ function placeCursorAtStart(el) {
   sel.addRange(range)
 }
 
+/// Return the plain text of the current selection within the editor sheet, or
+/// '' when nothing is selected or the selection lies outside the sheet. Used by
+/// the Assistant panel's `selection` scope — the model reads the writer's
+/// selected text as context.
+function getSelectionText() {
+  const sel = window.getSelection()
+  if (!sel || sel.isCollapsed || !sel.rangeCount) return ''
+  const text = sel.toString()
+  if (!text) return ''
+  // Confirm the selection is within this editor sheet so we don't capture
+  // selections made in other UI (e.g. the nav drawer).
+  const root = sheetRef.value
+  if (!root) return text
+  let node = sel.anchorNode
+  let el = node?.nodeType === 3 ? node.parentElement : node
+  while (el && el !== root) el = el.parentElement
+  return el === root ? text : ''
+}
+
 function selectLine() {
   const sel = window.getSelection()
   if (!sel.rangeCount) return
@@ -731,6 +750,10 @@ defineExpose({
   navigateSectionPage,
   applySearchHighlights: editorApplySearchHighlights,
   clearSearchHighlights: editorClearSearchHighlights,
+  // The Assistant panel's `selection` scope reads the editor's current text
+  // selection. Returns the plain-text selection within the sheet, or '' when
+  // nothing is selected / the selection is outside the editor.
+  getSelectionText,
 })
 </script>
 
