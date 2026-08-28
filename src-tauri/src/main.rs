@@ -4,6 +4,7 @@ mod commands;
 mod diff;
 mod document;
 mod history;
+mod llm;
 mod state;
 
 use commands::{
@@ -12,6 +13,7 @@ use commands::{
     reconstruct_version, redo, rename_section, replace_all, replace_current, restore_version,
     save_document, save_snapshot, search_document, split_paragraph, sync_document, undo,
 };
+use llm::{llm_cancel, llm_chat, llm_chat_stream, llm_list_models, list_roles};
 use state::AppState;
 
 fn main() {
@@ -39,6 +41,11 @@ fn main() {
             sync_document,
             undo,
             redo,
+            list_roles,
+            llm_chat,
+            llm_chat_stream,
+            llm_list_models,
+            llm_cancel,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

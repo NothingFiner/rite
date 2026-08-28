@@ -19,6 +19,14 @@ similar = "2.5"
 regex = "1"
 uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
+# HTTP client for the LLM proxy. `stream` for SSE chunk reading; `rustls-tls`
+# so HTTPS cloud endpoints (Ollama Cloud) work without OpenSSL (builds clean on
+# macOS). `default-features = false` keeps the dep small.
+reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], default-features = false }
+# `futures-util` brings the `StreamExt` trait into scope for SSE chunk
+# iteration (`bytes_stream().next()`). reqwest's `stream` feature re-exports
+# the types but not the trait prelude, so this is a direct dep.
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem
