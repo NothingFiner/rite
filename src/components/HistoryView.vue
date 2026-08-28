@@ -19,25 +19,25 @@
         Back to editor
       </button>
       <span class="history-view-title">
-        <template v-if="history.selectedTimestamp.value">
-          {{ history.diffBlocks.value ? 'Diff vs current' : 'Preview' }} · {{ formatHistoryTimestamp(history.selectedTimestamp.value) }}
+        <template v-if="history.selectedTimestamp">
+          {{ history.diffBlocks ? 'Diff vs current' : 'Preview' }} · {{ formatHistoryTimestamp(history.selectedTimestamp) }}
         </template>
         <template v-else>Version history</template>
       </span>
     </div>
 
     <div class="history-view-canvas">
-      <p v-if="history.error.value" class="history-view-error">{{ history.error.value }}</p>
+      <p v-if="history.error" class="history-view-error">{{ history.error }}</p>
 
-      <div v-if="history.loading.value" class="history-view-placeholder">Loading…</div>
+      <div v-if="history.loading" class="history-view-placeholder">Loading…</div>
 
       <DiffView
-        v-else-if="history.diffBlocks.value"
-        :diff-blocks="history.diffBlocks.value"
+        v-else-if="history.diffBlocks"
+        :diff-blocks="history.diffBlocks"
       />
       <HistoryPreview
-        v-else-if="history.previewDocument.value"
-        :document="history.previewDocument.value"
+        v-else-if="history.previewDocument"
+        :document="history.previewDocument"
       />
       <div v-else class="history-view-placeholder">
         Select a version from the list to preview it, or choose “Diff vs current”

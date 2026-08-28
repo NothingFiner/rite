@@ -14,14 +14,14 @@
       <div class="drawer-section">
         <h3 class="drawer-heading">History</h3>
 
-        <p v-if="history.error.value" class="history-error">{{ history.error.value }}</p>
+        <p v-if="history.error" class="history-error">{{ history.error }}</p>
 
         <ul class="history-list" v-if="hasLastPath">
           <li
-            v-for="entry in history.entries.value"
+            v-for="entry in history.entries"
             :key="entry.timestamp"
             class="history-row"
-            :class="{ active: history.selectedTimestamp.value === entry.timestamp }"
+            :class="{ active: history.selectedTimestamp === entry.timestamp }"
             @click="onSelect(entry.timestamp)"
           >
             <span class="history-kind" :class="entry.kind" :title="entry.kind === 'snapshot' ? 'Snapshot (full save)' : 'Delta (autosave)'">
@@ -29,10 +29,10 @@
             </span>
             <span class="history-label">{{ formatHistoryTimestamp(entry.timestamp) }}</span>
           </li>
-          <li v-if="history.entries.value.length === 0 && !history.loading.value" class="history-empty">
+          <li v-if="history.entries.length === 0 && !history.loading" class="history-empty">
             No history yet — save or autosave will record versions.
           </li>
-          <li v-if="history.loading.value && history.entries.value.length === 0" class="history-empty">
+          <li v-if="history.loading && history.entries.length === 0" class="history-empty">
             Loading…
           </li>
         </ul>
@@ -42,20 +42,20 @@
         </div>
       </div>
 
-      <div class="drawer-footer" v-if="history.selectedTimestamp.value && hasLastPath">
+      <div class="drawer-footer" v-if="history.selectedTimestamp && hasLastPath">
         <button
           class="history-action"
-          :disabled="history.loading.value"
+          :disabled="history.loading"
           @click="onRestore"
         >
           Restore this version
         </button>
         <button
           class="history-action secondary"
-          :disabled="history.loading.value"
+          :disabled="history.loading"
           @click="onDiff"
         >
-          {{ history.diffBlocks.value ? 'Back to preview' : 'Diff vs current' }}
+          {{ history.diffBlocks ? 'Back to preview' : 'Diff vs current' }}
         </button>
         <p class="history-restore-hint">
           Restoring is non-destructive: the file on disk is untouched until you
@@ -82,7 +82,7 @@ function onSelect(timestamp) {
   // If a diff is open for this same version, just drop the diff back to preview
   // instead of re-reconstructing. Otherwise load the preview for the newly
   // selected version.
-  if (props.history.diffBlocks.value && props.history.selectedTimestamp.value === timestamp) {
+  if (props.history.diffBlocks && props.history.selectedTimestamp === timestamp) {
     props.history.clearDiff()
     return
   }
@@ -90,7 +90,7 @@ function onSelect(timestamp) {
 }
 
 function onRestore() {
-  const ts = props.history.selectedTimestamp.value
+  const ts = props.history.selectedTimestamp
   if (!ts) return
   const confirmed = window.confirm(
     'Restore this version? It becomes the live document. Your current unsaved ' +
@@ -101,9 +101,9 @@ function onRestore() {
 }
 
 function onDiff() {
-  const ts = props.history.selectedTimestamp.value
+  const ts = props.history.selectedTimestamp
   if (!ts) return
-  if (props.history.diffBlocks.value) {
+  if (props.history.diffBlocks) {
     props.history.clearDiff()
   } else {
     props.history.diffAgainstCurrent(ts)
