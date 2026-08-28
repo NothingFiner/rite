@@ -1,15 +1,16 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod commands;
+mod diff;
 mod document;
 mod history;
 mod state;
 
 use commands::{
-    apply_text_style, autosave_document, change_section_type, delete_section, get_document,
-    list_history, merge_paragraphs, open_document, reconstruct_version, redo, rename_section,
-    replace_all, replace_current, save_document, save_snapshot, search_document, split_paragraph,
-    sync_document, undo,
+    apply_text_style, autosave_document, change_section_type, delete_section,
+    diff_against_current, get_document, list_history, merge_paragraphs, open_document,
+    reconstruct_version, redo, rename_section, replace_all, replace_current, restore_version,
+    save_document, save_snapshot, search_document, split_paragraph, sync_document, undo,
 };
 use state::AppState;
 
@@ -33,6 +34,8 @@ fn main() {
             save_snapshot,
             list_history,
             reconstruct_version,
+            restore_version,
+            diff_against_current,
             sync_document,
             undo,
             redo,

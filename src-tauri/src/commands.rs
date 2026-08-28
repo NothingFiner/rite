@@ -2,6 +2,7 @@ use crate::document::{
     find_paragraph_mut, find_section_mut, Document, Element, Paragraph, ReplaceResult, SearchMatch,
     Section, SectionType, TextRun, TextStyleDelta,
 };
+use crate::diff::{self, SectionDiff};
 use crate::history::{self, HistoryEntry};
 use crate::state::AppState;
 use regex::Regex;
@@ -365,6 +366,46 @@ pub fn list_history(state: State<AppState>) -> Result<Vec<HistoryEntry>, String>
 pub fn reconstruct_version(timestamp: String, state: State<AppState>) -> Result<Document, String> {
     let base_path = require_last_path(&state)?;
     history::reconstruct_version(&timestamp, Path::new(&base_path))
+}
+
+/// Replace the live document with the version reconstructed at `timestamp`.
+/// Non-destructive: the `.rite` on disk is untouched (the next explicit save
+/// rewrites it). Undoable: a history delta is journaled for the old→restored
+/// transition, so Cmd+Z reverts the restore. The reconstructed document is
+/// returned so the frontend store can adopt it as the live doc.
+#[tauri::command]
+pub fn restore_version(timestamp: String, state: State<AppState>) -> Result<Document, String> {
+    let base_path = require_last_path(&state)?;
+    let restored = history::reconstruct_version(&timestamp, Path::new(&base_path))?;
+
+    // Capture the old state before overwriting. `push_history_delta` computes
+    // the delta from `old` to the *current* document internally, so the live
+    // doc must already hold `restored` when we call it.
+    let mut state_doc = state.document.lock().map_err(|e| e.to_string())?;
+    let old = state_doc.clone();
+    *state_doc = restored.clone();
+    drop(state_doc);
+
+    state.push_history_delta(&old);
+
+    let mut modified = state.is_modified.lock().map_err(|e| e.to_string())?;
+    *modified = true;
+    Ok(restored)
+}
+
+/// Structural diff of the version at `timestamp` (left/old) against the current
+/// live document (right/new). Returns one `SectionDiff` per section, walked by
+/// id, with word-level spans inside modified paragraphs. Read-only: touches
+/// neither the live document nor the history sidecar.
+#[tauri::command]
+pub fn diff_against_current(
+    timestamp: String,
+    state: State<AppState>,
+) -> Result<Vec<SectionDiff>, String> {
+    let base_path = require_last_path(&state)?;
+    let past = history::reconstruct_version(&timestamp, Path::new(&base_path))?;
+    let current = state.document.lock().map_err(|e| e.to_string())?;
+    Ok(diff::compute_diff(&past, &*current))
 }
 
 /// Clone the current last_path, or error if the document has never been saved

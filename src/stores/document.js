@@ -159,6 +159,18 @@ export const useDocumentStore = defineStore('document', {
       this.doc = newDoc
     },
 
+    /// Adopt a document returned by `restore_version` as the live doc. Unlike
+    /// `setDoc` + `markModified`, this does NOT trigger a debounced sync back to
+    /// Rust: the Rust AppState already holds the restored document (the command
+    /// set it and journaled the old→restored history delta), so syncing would
+    /// just rewrite identical state. We only flag modified so the StatusBar
+    /// reflects that the .rite on disk is now stale until the next explicit
+    /// save. The editor re-renders from the new `doc.sections` via its watcher.
+    applyRestoredDocument(restoredDoc) {
+      this.doc = restoredDoc
+      this.isModified = true
+    },
+
     /// Replace the document's sections from the editor's flat-DOM sync. The
     /// editor owns the flat block sequence; on every edit it groups blocks
     /// back into sections and emits the result here. This is the single

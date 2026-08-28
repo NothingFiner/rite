@@ -47,6 +47,11 @@
       :theme="theme"
       :format="format"
     />
+    <HistoryListDrawer
+      :open="leftDrawerOpen && leftDrawerMode === 'history'"
+      :history="history"
+      :has-last-path="!!store.lastPath"
+    />
 
     <!-- Right drawer: currently empty, reserved for future use -->
     <div class="drawer right" :class="{ open: rightDrawerOpen }">
@@ -59,6 +64,11 @@
 
     <div class="scroll-layer" :class="['mode-' + viewMode, { 'left-pad': leftDrawerOpen, 'right-pad': rightDrawerOpen }]" @click="nav.selectedNavId = null">
       <div class="editor-wrapper" :class="'mode-' + viewMode">
+        <HistoryView
+          v-if="viewMode === 'history'"
+          :history="history"
+          @back="onSetMode('editor')"
+        />
         <DocumentRenderer
           ref="editorRef"
           :modelValue="store.doc"
@@ -70,7 +80,7 @@
           @sync-sections="store.syncSections"
           @delete-section="store.deleteSection"
           @update="store.markModified()"
-          v-if="store.doc"
+          v-else-if="store.doc"
         />
       </div>
     </div>
@@ -79,7 +89,7 @@
       :mode="viewMode"
       :right-open="rightDrawerOpen"
       @toggle-right="rightDrawerOpen = !rightDrawerOpen"
-      @set-mode="viewMode = $event"
+      @set-mode="onSetMode($event)"
     />
 
     <SearchPanel
@@ -125,6 +135,7 @@ import { useFileIO } from './composables/useFileIO.js'
 import { useFormat } from './composables/useFormat.js'
 import { useSectionFormat } from './composables/useSectionFormat.js'
 import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts.js'
+import { useVersionHistory } from './composables/useVersionHistory.js'
 import DocumentRenderer from './components/DocumentRenderer.vue'
 import Toolbar from './components/Toolbar.vue'
 import StatusBar from './components/StatusBar.vue'
@@ -132,6 +143,8 @@ import SearchPanel from './components/SearchPanel.vue'
 import NavigationDrawer from './components/NavigationDrawer.vue'
 import GeneralOptionsDrawer from './components/GeneralOptionsDrawer.vue'
 import TextOptionsDrawer from './components/TextOptionsDrawer.vue'
+import HistoryListDrawer from './components/HistoryListDrawer.vue'
+import HistoryView from './components/HistoryView.vue'
 import ActivityBar from './components/ActivityBar.vue'
 
 const store = useDocumentStore()
@@ -157,6 +170,7 @@ const nav = reactive(useNavigation(doc, editorRef))
 const fileIO = useFileIO()
 const format = reactive(useFormat(editorRef, store.markModified.bind(store)))
 const sectionFormat = reactive(useSectionFormat())
+const history = reactive(useVersionHistory(store))
 
 const wordCount = computed(() => {
   if (!store.doc) return 0
@@ -180,6 +194,29 @@ function onActivitySelect(mode) {
     leftDrawerMode.value = mode
     leftDrawerOpen.value = true
   }
+}
+
+// Toolbar view-mode switch (Editor / Manuscript / History). History is a full
+// view, not a drawer mode: entering it opens the version-list drawer and loads
+// the history sidecar; clicking History while already in the view toggles the
+// list drawer. Leaving History closes the list drawer so it does not linger
+// over the editor.
+function onSetMode(mode) {
+  if (mode === 'history') {
+    if (viewMode.value === 'history') {
+      leftDrawerOpen.value = !leftDrawerOpen.value
+    } else {
+      viewMode.value = 'history'
+      leftDrawerMode.value = 'history'
+      leftDrawerOpen.value = true
+      history.loadHistory()
+    }
+    return
+  }
+  if (viewMode.value === 'history' && leftDrawerMode.value === 'history') {
+    leftDrawerOpen.value = false
+  }
+  viewMode.value = mode
 }
 
 function onScrollTo(id) {

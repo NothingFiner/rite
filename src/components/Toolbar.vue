@@ -19,6 +19,14 @@
       >
         Manuscript
       </button>
+      <button
+        class="tool-btn"
+        :class="{ active: mode === 'history' }"
+        @click="$emit('setMode', 'history')"
+        title="Browse, diff, and restore past versions"
+      >
+        History
+      </button>
       <div class="divider"></div>
       <button
         class="tool-btn drawer-toggle"
