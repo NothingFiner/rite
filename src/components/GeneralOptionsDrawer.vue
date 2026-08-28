@@ -91,7 +91,7 @@
           <label class="drawer-label">Endpoint</label>
           <input
             class="drawer-input"
-            :value="llmSettings.settings.value.endpoint"
+            :value="llmSettings.settings.endpoint"
             @input="e => llmSettings.setSettings({ endpoint: e.target.value })"
             placeholder="http://localhost:11434"
           />
@@ -104,7 +104,7 @@
           </label>
           <select
             class="drawer-input"
-            :value="llmSettings.settings.value.model"
+            :value="llmSettings.settings.model"
             @change="e => llmSettings.setModel(e.target.value)"
           >
             <option value="" disabled>Choose a model…</option>
@@ -116,7 +116,7 @@
           <input
             class="drawer-input"
             type="password"
-            :value="llmSettings.settings.value.apiKey"
+            :value="llmSettings.settings.apiKey"
             @input="e => llmSettings.setSettings({ apiKey: e.target.value })"
             placeholder="Empty for local Ollama"
           />
@@ -128,7 +128,7 @@
             min="0"
             max="1"
             step="0.1"
-            :value="llmSettings.settings.value.temperature ?? ''"
+            :value="llmSettings.settings.temperature ?? ''"
             @input="e => {
               const v = e.target.value
               llmSettings.setSettings({ temperature: v === '' ? null : Number(v) })
@@ -187,8 +187,8 @@ async function fetchModelList() {
   modelsError.value = ''
   try {
     modelList.value = await fetchModels({
-      endpoint: props.llmSettings.settings.value.endpoint,
-      apiKey: props.llmSettings.settings.value.apiKey,
+      endpoint: props.llmSettings.settings.endpoint,
+      apiKey: props.llmSettings.settings.apiKey,
     })
   } catch (e) {
     modelsError.value = typeof e === 'string' ? e : String(e)
@@ -203,18 +203,17 @@ async function testConnection() {
   testResult.value = ''
   testOk.value = false
   try {
-    // A trivial ping via the one-shot chat command confirms the endpoint +
-    // model + auth are all valid end-to-end.
-    await invoke('llm_chat', {
-      request: {
-        endpoint: props.llmSettings.settings.value.endpoint,
-        model: props.llmSettings.settings.value.model,
-        apiKey: props.llmSettings.settings.value.apiKey || null,
-        temperature: null,
-        messages: [{ role: 'user', content: 'Reply with the single word: ok' }],
-      },
+    // Test connection by fetching the model list — this validates the endpoint
+    // + auth WITHOUT requiring a model to be selected first (a chat completion
+    // needs a model name, but the models endpoint just lists what's available).
+    // Also refreshes the <select> so a successful test immediately populates
+    // the model picker.
+    const models = await fetchModels({
+      endpoint: props.llmSettings.settings.endpoint,
+      apiKey: props.llmSettings.settings.apiKey,
     })
-    testResult.value = '✓ connected'
+    modelList.value = models
+    testResult.value = `✓ connected (${models.length} model${models.length === 1 ? '' : 's'})`
     testOk.value = true
   } catch (e) {
     testResult.value = '✗ ' + (typeof e === 'string' ? e : String(e))

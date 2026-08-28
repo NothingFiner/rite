@@ -47,8 +47,8 @@
 
     <!-- Message list -->
     <div class="llm-messages" ref="messagesContainer">
-      <div v-if="chat.messages.value.length === 0" class="llm-empty">
-        <template v-if="!settings.settings.value.model">
+      <div v-if="chat.messages.length === 0" class="llm-empty">
+        <template v-if="!settings.settings.model">
           <p class="llm-empty-text">Configure the AI assistant in General Options → AI Assistant.</p>
           <button class="llm-empty-btn" @click="$emit('openSettings')">Open General Options</button>
         </template>
@@ -61,7 +61,7 @@
       </div>
 
       <div
-        v-for="(msg, index) in chat.messages.value"
+        v-for="(msg, index) in chat.messages"
         :key="index"
         class="llm-message"
         :class="msg.role"
@@ -146,7 +146,7 @@ const currentRoleDescription = computed(() => {
 })
 
 const inputPlaceholder = computed(() => {
-  if (!props.settings.settings.value.model) return 'Configure a model in General Options…'
+  if (!props.settings.settings.model) return 'Configure a model in General Options…'
   if (!props.chat.selectedRoleName) return 'Select a role first…'
   return 'Ask about your manuscript… (Enter to send, Shift+Enter for newline)'
 })
@@ -165,8 +165,9 @@ function renderMarkdown(content) {
 }
 
 // Auto-scroll the message list to the bottom as new content streams in.
+// `props.chat.messages` is auto-unwrapped by the reactive proxy (no `.value`).
 watch(
-  () => props.chat.messages.value.map((m) => m.content).join(''),
+  () => props.chat.messages.map((m) => m.content).join(''),
   () => {
     nextTick(() => {
       if (messagesContainer.value) {

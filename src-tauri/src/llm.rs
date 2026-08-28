@@ -204,10 +204,15 @@ fn build_headers(api_key: &Option<String>) -> Result<reqwest::header::HeaderMap,
     Ok(headers)
 }
 
-/// The full chat-completions URL: `${endpoint}/v1/chat/completions`. A trailing
-/// slash on the endpoint is tolerated.
+/// The full chat-completions URL: `${endpoint}/v1/chat/completions`. Trailing
+/// slashes and a trailing `/v1` or `/api` on the endpoint are stripped so users
+/// can enter either the root URL (`https://ollama.com`) or an API base
+/// (`https://ollama.com/api`) without constructing doubled paths.
 fn chat_completions_url(endpoint: &str) -> String {
-    let base = endpoint.trim_end_matches('/');
+    let base = endpoint
+        .trim_end_matches('/')
+        .trim_end_matches("/v1")
+        .trim_end_matches("/api");
     format!("{}/v1/chat/completions", base)
 }
 
@@ -383,13 +388,23 @@ pub async fn llm_chat_stream(request: ChatRequest, window: Window) -> Result<Str
 /// most OpenAI-compatible servers); on failure falls back to Ollama-native
 /// `${endpoint}/api/tags` and maps `models[].name`. Sends `Authorization:
 /// Bearer <key>` when an API key is present (required for Ollama Cloud).
+///
+/// The endpoint is normalized so a trailing `/api` or `/v1` is not doubled:
+/// entering `https://ollama.com` or `https://ollama.com/api` both resolve
+/// correctly. This matters because users may copy either the root URL or the
+/// native API base from provider docs.
 #[tauri::command]
 pub async fn llm_list_models(endpoint: String, api_key: Option<String>) -> Result<Vec<String>, String> {
     let headers = build_headers(&api_key)?;
     let client = reqwest::Client::builder()
         .build()
         .map_err(|e| e.to_string())?;
-    let base = endpoint.trim_end_matches('/');
+    // Strip trailing slashes AND a trailing /v1 or /api so we don't construct
+    // doubled paths like `/api/api/tags` or `/v1/v1/models`.
+    let base = endpoint
+        .trim_end_matches('/')
+        .trim_end_matches("/v1")
+        .trim_end_matches("/api");
 
     // OpenAI-compatible path first.
     let url = format!("{}/v1/models", base);
@@ -589,6 +604,24 @@ mod tests {
         );
         assert_eq!(
             chat_completions_url("https://ollama.com/"),
+            "https://ollama.com/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn chat_completions_url_strips_trailing_api_or_v1() {
+        // A user who copied the native API base (ends in /api) or the OpenAI
+        // base (ends in /v1) must not get a doubled path.
+        assert_eq!(
+            chat_completions_url("https://ollama.com/api"),
+            "https://ollama.com/v1/chat/completions"
+        );
+        assert_eq!(
+            chat_completions_url("https://ollama.com/v1"),
+            "https://ollama.com/v1/chat/completions"
+        );
+        assert_eq!(
+            chat_completions_url("https://ollama.com/api/"),
             "https://ollama.com/v1/chat/completions"
         );
     }

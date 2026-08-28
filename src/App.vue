@@ -173,13 +173,23 @@ let autosaveTimer = null
 
 const theme = reactive(useTheme(viewMode))
 const search = reactive(useSearchPanel(editorRef, viewMode))
-const nav = reactive(useNavigation(doc, editorRef))
+// Keep the RAW composable results for factories that need to read refs via
+// `.value` (useChat reads llmSettings.settings.value.* and
+// nav.selectedNavId.value). The reactive-wrapped versions go to the
+// templates/components, which see auto-unwrapped values (no `.value`).
+// Both share the same underlying object — `reactive()` returns a proxy of the
+// same object, not a copy — so edits via the reactive proxy (e.g. the drawer's
+// setSettings, or the nav drawer setting selectedNavId) are seen by useChat's
+// raw refs, and vice versa.
+const navRaw = useNavigation(doc, editorRef)
+const nav = reactive(navRaw)
 const fileIO = useFileIO()
 const format = reactive(useFormat(editorRef, store.markModified.bind(store)))
 const sectionFormat = reactive(useSectionFormat())
 const history = reactive(useVersionHistory(store))
-const llmSettings = reactive(useLlmSettings())
-const chat = reactive(useChat(doc, llmSettings, nav, editorRef))
+const llmSettingsRaw = useLlmSettings()
+const llmSettings = reactive(llmSettingsRaw)
+const chat = reactive(useChat(doc, llmSettingsRaw, navRaw, editorRef))
 
 const wordCount = computed(() => {
   if (!store.doc) return 0
