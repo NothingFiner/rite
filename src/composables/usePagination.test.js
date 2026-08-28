@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { calculateBreaksFromHeights } from './usePagination.js'
+import { calculateBreaksFromHeights, assembleGlobalBreaks } from './usePagination.js'
 
 // Blocks now carry a `kind` ('section-title' | 'paragraph'). The break rule:
 // force a page break before a section-title whenever the page already has
@@ -79,6 +79,97 @@ describe('usePagination', () => {
       const heights = Array(24).fill(100)
       // 700 + 100 = 800 > 768, break every 7 blocks
       expect(calculateBreaksFromHeights(heights, blocks, CONTENT_HEIGHT)).toEqual([7, 14, 21])
+    })
+  })
+
+  describe('assembleGlobalBreaks (per-section equivalence)', () => {
+    // Each section is [title, ...paragraphs]. Per-section pagination computes
+    // local overflow breaks for each section independently; assembleGlobalBreaks
+    // offsets them by each section's global start index and adds a forced break
+    // at each non-first section's title. The result must equal running
+    // calculateBreaksFromHeights over the whole flattened block list, as long as
+    // every section carries positive height into the next (true for real DOM).
+    function buildDoc(sectionSpecs, contentHeight) {
+      const allBlocks = []
+      const allHeights = []
+      const sectionResults = []
+      for (const spec of sectionSpecs) {
+        const secBlocks = [titleBlock(), ...spec.paraHs.map(() => paraBlock())]
+        const secHeights = [spec.titleH, ...spec.paraHs]
+        allBlocks.push(...secBlocks)
+        allHeights.push(...secHeights)
+        sectionResults.push({
+          localBreaks: calculateBreaksFromHeights(secHeights, secBlocks, contentHeight),
+          blockCount: secBlocks.length,
+        })
+      }
+      return { allBlocks, allHeights, sectionResults }
+    }
+
+    it('matches whole-doc pagination on a fixed multi-section document', () => {
+      const CH = 768
+      const { allBlocks, allHeights, sectionResults } = buildDoc(
+        [
+          { titleH: 50, paraHs: [100, 100, 100, 100, 100, 100, 100, 100] }, // overflow mid-section
+          { titleH: 50, paraHs: [100, 100, 100] }, // fits on one page
+          { titleH: 50, paraHs: [100, 100, 100, 100, 100, 100, 100, 100, 100] }, // overflow
+        ],
+        CH,
+      )
+      const whole = calculateBreaksFromHeights(allHeights, allBlocks, CH)
+      const assembled = assembleGlobalBreaks(sectionResults)
+      expect(assembled).toEqual(whole)
+    })
+
+    it('matches whole-doc pagination across many deterministic random docs', () => {
+      // Deterministic LCG so the test is reproducible.
+      let state = 123456789
+      const rand = () => {
+        state = (state * 1103515245 + 12345) & 0x7fffffff
+        return state
+      }
+      const CH = 768
+      for (let trial = 0; trial < 200; trial++) {
+        const sectionCount = 1 + (rand() % 6)
+        const specs = []
+        for (let s = 0; s < sectionCount; s++) {
+          const paraCount = 1 + (rand() % 12)
+          const paraHs = []
+          for (let p = 0; p < paraCount; p++) paraHs.push(20 + (rand() % 200)) // positive heights
+          specs.push({ titleH: 20 + (rand() % 80), paraHs })
+        }
+        const { allBlocks, allHeights, sectionResults } = buildDoc(specs, CH)
+        const whole = calculateBreaksFromHeights(allHeights, allBlocks, CH)
+        const assembled = assembleGlobalBreaks(sectionResults)
+        expect(assembled).toEqual(whole)
+      }
+    })
+
+    it('returns only forced section breaks when no section overflows', () => {
+      const CH = 768
+      const { allBlocks, allHeights, sectionResults } = buildDoc(
+        [
+          { titleH: 50, paraHs: [100] },
+          { titleH: 50, paraHs: [100] },
+          { titleH: 50, paraHs: [100] },
+        ],
+        CH,
+      )
+      // Three short sections; breaks only at the section titles.
+      expect(assembleGlobalBreaks(sectionResults)).toEqual(
+        calculateBreaksFromHeights(allHeights, allBlocks, CH),
+      )
+    })
+
+    it('produces no forced break for a single-section document', () => {
+      const CH = 768
+      const { allBlocks, allHeights, sectionResults } = buildDoc(
+        [{ titleH: 50, paraHs: [100, 100, 100] }],
+        CH,
+      )
+      expect(assembleGlobalBreaks(sectionResults)).toEqual(
+        calculateBreaksFromHeights(allHeights, allBlocks, CH),
+      )
     })
   })
 })
