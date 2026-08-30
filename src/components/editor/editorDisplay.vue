@@ -16,6 +16,7 @@
 import { ref, onMounted, nextTick, watch, computed, toRef } from 'vue'
 import { paragraphToHTML, sectionTitleToHTML, escapeHtml } from '../../composables/useParagraphHTML.js'
 import { flattenSections, groupBlocks, computeFirstLineIndent } from '../../composables/useSectionBlocks.js'
+import { computeReconcileOps, blockKey } from '../../composables/useEditorReconcile.js'
 import { usePagination } from '../../composables/usePagination.js'
 import { applySearchHighlights, clearSearchHighlights } from '../../composables/useSearchHighlights.js'
 import { THEMES } from '../../constants/themes.js'
@@ -37,6 +38,13 @@ const sheetRef = ref(null)
 // old `freshHeadingId` mechanism retargeted at section titles.
 const freshSectionId = ref(null)
 const skipNextWatcher = ref(false)
+// The flat block list (with baked firstLineIndent) matching the CURRENT live
+// DOM. Maintained as an invariant across all three DOM-producing paths:
+// renderEditor (full rebuild), syncFromDOM (edit readback), and reconcileEditor
+// (surgical patch). reconcileEditor diffs this against the new model to compute
+// the minimal patch; if it ever disagrees with the actual DOM it falls back to
+// a full renderEditor (see the drift gate).
+const lastRenderedBlocks = ref(null)
 const docRef = toRef(props, 'modelValue')
 const { pageBreaks } = usePagination(docRef)
 const sectionFormat = useSectionFormat()
@@ -179,10 +187,27 @@ function domToBlocks(root) {
   return blocks
 }
 
+/// Stamp the render-derived `chapterIndex` onto each section-title block (1-based
+/// running count of chapters; null for non-chapters). `flattenSections` already
+/// does this for model-sourced blocks, but `domToBlocks` (the DOM readback path)
+/// does not — so blocks built from the DOM must be baked here to match. The
+/// reconciler renders a block via this index to reproduce the "Chapter N: "
+/// prefix; without it, every chapter title would falsely diff as changed after
+/// an edit. Idempotent: re-baking a flattenSections list yields the same values.
+function bakeChapterIndices(blocks) {
+  let chapterIndex = 0
+  for (const block of blocks) {
+    if (block.kind === 'section-title') {
+      block.chapterIndex = block.sectionType === 'chapter' ? ++chapterIndex : null
+    }
+  }
+}
+
 function syncFromDOM() {
   const root = sheetRef.value
   if (!root || !props.modelValue) return
   const blocks = domToBlocks(root)
+  bakeChapterIndices(blocks)
 
   // Compute and bake section-aware first-line indents.
   for (let i = 0; i < blocks.length; i++) {
@@ -208,6 +233,10 @@ function syncFromDOM() {
   for (const s of sections) {
     if (!s.paragraphs || s.paragraphs.length === 0) s.paragraphs.push(createParagraph())
   }
+
+  // Keep the retained block list in sync with the live DOM so a later external
+  // change diffs against reality, not a pre-typing snapshot.
+  lastRenderedBlocks.value = blocks
 
   skipNextWatcher.value = true
   emit('syncSections', sections)
@@ -286,6 +315,200 @@ function layoutPageBreaks() {
   }
 }
 
+// --- Reconciliation (external model changes) ---------------------------------
+// When the model changes outside the editor (undo, rename, delete, type-change,
+// restore), patch the live DOM surgically by stable block id instead of the
+// full `innerHTML` rebuild renderEditor performs — so the cursor and scroll
+// stay where the user left them. The pure op computation lives in
+// useEditorReconcile.js; this function owns the DOM application, cursor
+// save/restore, the epigram, and a drift-gate fallback to renderEditor.
+
+/// `[data-section-id="…"]` / `[data-para-id="…"]` selector for a block key.
+function blockSelector(key) {
+  if (key.startsWith('title:')) return `[data-section-id="${key.slice(6)}"]`
+  return `[data-para-id="${key.slice(5)}"]`
+}
+
+/// Render a single block to its full outer HTML, matching renderEditor's
+/// rendering byte-for-byte so an unchanged block is `keep`, not a false
+/// `replace`. Uses the block's baked `chapterIndex` (set by flattenSections or
+/// bakeChapterIndices) for the render-derived chapter prefix.
+function renderBlockHTML(block) {
+  if (block.kind === 'section-title') {
+    const idx = block.chapterIndex
+    const chapterPrefix = idx != null ? sectionFormat.formatChapter(idx) : ''
+    return sectionTitleToHTML(
+      { id: block.sectionId, title: block.title, sectionType: block.sectionType },
+      idx,
+      chapterPrefix,
+      { fresh: block.sectionId === freshSectionId.value }
+    )
+  }
+  return paragraphToHTML(block.paragraph, { sectionId: block.sectionId })
+}
+
+/// Snapshot the selection so it can be restored after the DOM patch. Returns
+/// `{ key, kind, offset }` where offset is the character count from the start
+/// of the editable unit (the paragraph, or the editable title span) to the
+/// caret, or null when the selection is outside the sheet.
+function bookmarkSelection(root) {
+  const sel = window.getSelection()
+  if (!sel || !sel.rangeCount) return null
+  const anchor = sel.anchorNode
+  if (!anchor || !root.contains(anchor)) return null
+  let blockEl = anchor.nodeType === 3 ? anchor.parentElement : anchor
+  while (blockEl && blockEl !== root && !blockEl.classList?.contains('paragraph') && !blockEl.classList?.contains('section-title')) {
+    blockEl = blockEl.parentElement
+  }
+  if (!blockEl || blockEl === root) return null
+  const kind = blockEl.classList.contains('paragraph') ? 'paragraph' : 'section-title'
+  // For a section-title the editable unit is its inner span (the chapter prefix
+  // is locked); for a paragraph it is the paragraph itself.
+  const unit = kind === 'section-title' ? editableSpanOf(blockEl) : blockEl
+  const key = kind === 'paragraph'
+    ? 'para:' + blockEl.dataset.paraId
+    : 'title:' + blockEl.dataset.sectionId
+  // Character offset from the start of the unit to the caret.
+  const range = sel.getRangeAt(0).cloneRange()
+  const probe = document.createRange()
+  probe.selectNodeContents(unit)
+  probe.setEnd(range.startContainer, range.startOffset)
+  return { key, kind, offset: probe.toString().length }
+}
+
+/// Restore the caret saved by bookmarkSelection. If the block was removed by
+/// the patch, leave the cursor where the browser placed it (acceptable for v1).
+function restoreSelection(root, bookmark) {
+  if (!bookmark) return
+  const sel = window.getSelection()
+  if (!sel) return
+  const blockEl = root.querySelector(blockSelector(bookmark.key))
+  if (!blockEl) return
+  const unit = bookmark.kind === 'section-title' ? editableSpanOf(blockEl) : blockEl
+  // Walk text nodes to place the caret at the (clamped) character offset.
+  let remaining = Math.max(0, bookmark.offset)
+  const walker = document.createTreeWalker(unit, NodeFilter.SHOW_TEXT)
+  let node = walker.nextNode()
+  while (node) {
+    const len = node.textContent.length
+    if (remaining <= len) {
+      const range = document.createRange()
+      range.setStart(node, remaining)
+      range.collapse(true)
+      sel.removeAllRanges()
+      sel.addRange(range)
+      return
+    }
+    remaining -= len
+    node = walker.nextNode()
+  }
+  // Offset at/past the end: collapse to the end of the unit.
+  const range = document.createRange()
+  range.selectNodeContents(unit)
+  range.collapse(false)
+  sel.removeAllRanges()
+  sel.addRange(range)
+}
+
+/// Patch the live DOM to match the new model, preserving the cursor. Falls
+/// back to a full renderEditor when there is no retained baseline or the DOM
+/// has drifted from it (worst case = today's behavior).
+function reconcileEditor() {
+  const root = sheetRef.value
+  if (!root || !props.modelValue) return
+
+  const oldBlocks = lastRenderedBlocks.value
+  if (!oldBlocks) { renderEditor(); return }
+
+  // Drift gate: the live DOM's content blocks must match the retained baseline
+  // before we apply an incremental patch. If not, fall back to the full rebuild.
+  const liveNodes = Array.from(root.querySelectorAll('.section-title, .paragraph'))
+  const liveByKey = new Map()
+  for (const node of liveNodes) {
+    liveByKey.set(
+      node.classList.contains('paragraph')
+        ? 'para:' + node.dataset.paraId
+        : 'title:' + node.dataset.sectionId,
+      node
+    )
+  }
+  if (liveNodes.length !== oldBlocks.length || liveByKey.size !== liveNodes.length) {
+    renderEditor(); return
+  }
+  for (const block of oldBlocks) {
+    if (!liveByKey.has(blockKey(block))) { renderEditor(); return }
+  }
+
+  // Build the new baked block list (same preparation as renderEditor).
+  const newBlocks = flattenSections(props.modelValue.sections || []).map(b => {
+    if (b.kind === 'paragraph') return { ...b, paragraph: { ...b.paragraph } }
+    return b
+  })
+  for (let i = 0; i < newBlocks.length; i++) {
+    if (newBlocks[i].kind !== 'paragraph') continue
+    newBlocks[i].paragraph.firstLineIndent = computeFirstLineIndent(newBlocks, i)
+  }
+
+  const bookmark = bookmarkSelection(root)
+
+  // Clear the trailing decorations layoutPageBreaks owns; it re-adds them.
+  root.querySelectorAll('.page-break-line').forEach(el => el.remove())
+  root.querySelectorAll('.editor-sentinel').forEach(el => el.remove())
+
+  // Epigram: a non-content block at the very front, not part of flattenSections.
+  const wantEpigram = !!(props.modelValue.hasEpigram && props.modelValue.epigramText)
+  let epigramNode = root.querySelector('.epigram-block')
+  if (wantEpigram) {
+    const epigramHtml = `<div class="epigram-block">${escapeHtml(props.modelValue.epigramText).replace(/\n/g, '<br>')}</div>`
+    if (!epigramNode) {
+      epigramNode = document.createElement('div')
+      root.insertBefore(epigramNode, root.firstChild)
+    }
+    if (epigramNode.outerHTML !== epigramHtml) epigramNode.outerHTML = epigramHtml
+    epigramNode = root.querySelector('.epigram-block')
+  } else if (epigramNode) {
+    epigramNode.remove()
+    epigramNode = null
+  }
+
+  const { ops, removedKeys } = computeReconcileOps(oldBlocks, newBlocks, renderBlockHTML)
+
+  // Apply ops in new order, keeping a prevNode cursor so each block lands in the
+  // right place. Content blocks live after the epigram (if any); the hr/sentinel
+  // are gone, so epigram + content are the only children while we patch.
+  let prevNode = epigramNode || null
+  for (const op of ops) {
+    let node
+    if (op.op === 'keep') {
+      node = liveByKey.get(op.key)
+    } else if (op.op === 'replace') {
+      const old = liveByKey.get(op.key)
+      if (old) old.outerHTML = op.html
+      node = root.querySelector(blockSelector(op.key))
+    } else {
+      if (prevNode) prevNode.insertAdjacentHTML('afterend', op.html)
+      else root.insertAdjacentHTML('afterbegin', op.html)
+      node = root.querySelector(blockSelector(op.key))
+    }
+    const expectedNext = prevNode
+      ? prevNode.nextSibling
+      : (epigramNode ? epigramNode.nextSibling : root.firstChild)
+    if (node && node !== expectedNext) root.insertBefore(node, expectedNext)
+    prevNode = node
+  }
+
+  // Remove deleted blocks (still present from the old DOM).
+  for (const key of removedKeys) {
+    const node = liveByKey.get(key)
+    if (node && root.contains(node)) node.remove()
+  }
+
+  applySectionTitleLocks()
+  nextTick(() => layoutPageBreaks())
+  restoreSelection(root, bookmark)
+  lastRenderedBlocks.value = newBlocks
+}
+
 // --- Render ------------------------------------------------------------------
 
 function renderEditor() {
@@ -303,6 +526,9 @@ function renderEditor() {
     if (blocks[i].kind !== 'paragraph') continue
     blocks[i].paragraph.firstLineIndent = computeFirstLineIndent(blocks, i)
   }
+  // Record the baked block list so a later external change can diff against it
+  // instead of rebuilding the whole sheet.
+  lastRenderedBlocks.value = blocks
 
   let chapterIndex = 0
   let html = blocks.map(b => {
@@ -720,9 +946,12 @@ watch(() => props.modelValue?.sections, () => {
     skipNextWatcher.value = false
     return
   }
-  // Re-render when the store doc changes externally (rename, delete, load).
-  // Skipped when the change originated here (syncFromDOM, insertSection).
-  renderEditor()
+  // Patch when the store doc changes externally (rename, delete, type-change,
+  // undo/redo, restore) — surgical id-keyed DOM patch that preserves the
+  // cursor/scroll. Skipped when the change originated here (syncFromDOM,
+  // insertSection). reconcileEditor falls back to renderEditor when it can't
+  // verify the DOM against the retained baseline (first paint, drift).
+  reconcileEditor()
 }, { deep: true })
 
 watch(pageBreaks, () => {
