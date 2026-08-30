@@ -66,7 +66,7 @@
       </div>
     </div>
 
-    <div class="scroll-layer" :class="['mode-' + viewMode, { 'left-pad': leftDrawerOpen, 'right-pad': rightDrawerOpen }]" @click="nav.selectedNavId = null">
+    <div class="scroll-layer" :class="'mode-' + viewMode" @click="nav.selectedNavId = null">
       <div class="editor-wrapper" :class="'mode-' + viewMode">
         <HistoryView
           v-if="viewMode === 'history'"
@@ -365,14 +365,6 @@ onUnmounted(() => {
   padding-top: 38px;
   padding-bottom: 36px;
   padding-left: 48px;
-}
-
-.scroll-layer.left-pad {
-  padding-left: 308px;
-}
-
-.scroll-layer.right-pad {
-  padding-right: 400px;
 }
 
 .scroll-layer.mode-editor {
