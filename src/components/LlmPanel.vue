@@ -32,19 +32,6 @@
         {{ preset.label }}
       </button>
     </div>
-
-    <!-- Scope + Clear row -->
-    <div class="llm-scope-row">
-      <select class="drawer-input llm-scope-select" v-model="chat.scope">
-        <option value="section">Current section</option>
-        <option value="selection">Selection</option>
-        <option value="document">Whole document</option>
-      </select>
-      <button class="llm-clear-btn" :disabled="chat.busy" @click="chat.clear" title="Clear conversation">
-        Clear
-      </button>
-    </div>
-
     <!-- Message list -->
     <div class="llm-messages" ref="messagesContainer">
       <div v-if="chat.messages.length === 0" class="llm-empty">
@@ -99,6 +86,34 @@
         Stop
       </button>
     </div>
+    <div class="llm-scope-row">
+      <label :for="scopeSelect" class="llm-scope-label">Feedback Target: </label>
+      <select :id="scopeSelect" class="drawer-input llm-scope-select" v-model="chat.scope">
+        <option value="section">Current section</option>
+        <option value="selection">Selection</option>
+        <option value="document">Whole document</option>
+      </select>
+    </div>
+    <div class="llm-clear-row">
+       <button
+          class="llm-clear-btn"
+          :disabled="chat.busy"
+          :aria-expanded="clearOpen"
+          aria-controls="clearConfirm"
+          @click="toggleClearOpen"
+        >
+          {{ clearOpen ? 'Cancel' : 'Clear Conversation'}}
+        </button>
+      <transition name="slide-fade">
+        <button
+          class="llm-clear-btn"
+          :disabled="chat.busy"
+          v-show="clearOpen"
+          @click="chat.clear"
+          id="clearConfirm"
+        >Confirm Clear</button>
+      </transition>
+    </div>
   </div>
 </template>
 
@@ -121,6 +136,11 @@ marked.setOptions({ breaks: true, gfm: true })
 
 const roles = ref([])
 const messagesContainer = ref(null)
+const clearOpen = ref(false)
+
+// Stable id pairing the Feedback Target <label> with its <select> (label[for]
+// ↔ select[id]) so clicking the label focuses the control.
+const scopeSelect = 'llm-scope-select'
 
 // Load roles from the Rust command (compile-time-embedded personas). Each
 // role's `body` is the composed system prompt (base rules + persona) — sent
@@ -144,6 +164,15 @@ const currentRoleDescription = computed(() => {
   const role = roles.value.find((r) => r.name === props.chat.selectedRoleName)
   return role?.description || ''
 })
+
+const toggleClearOpen = () => {
+  clearOpen.value = !clearOpen.value;
+  if (clearOpen.value) {
+    nextTick(() => {
+      document.getElementById('clearConfirm')?.focus();
+    });
+  }
+}
 
 const inputPlaceholder = computed(() => {
   if (!props.settings.settings.model) return 'Configure a model in General Options…'
@@ -264,12 +293,23 @@ watch(
   align-items: center;
 }
 
+.llm-scope-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
 .llm-scope-select {
   flex: 1 1 auto;
+  flex-basis: 50%;
+}
+
+.llm-clear-row {
+  display: flex;
+  gap: 6px;
 }
 
 .llm-clear-btn {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   padding: 6px 10px;
   border-radius: 6px;
   border: 1px solid var(--bg-glass-border);
@@ -482,5 +522,16 @@ watch(
 
 .llm-stop-btn:hover {
   background: rgba(238, 85, 85, 0.12);
+}
+
+.slide-fade-enter-active,
+.slide-fade-leave-active {
+  transition: all 0.2s ease;
+}
+
+.slide-fade-enter-from,
+.slide-fade-leave-to {
+  opacity: 0;
+  transform: translateX(-8px);
 }
 </style>

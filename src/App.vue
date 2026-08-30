@@ -66,7 +66,7 @@
       </div>
     </div>
 
-    <div class="scroll-layer" :class="'mode-' + viewMode" @click="nav.selectedNavId = null">
+    <div class="scroll-layer" :class="['mode-' + viewMode, { 'right-pad': rightDrawerOpen }]" @click="nav.selectedNavId = null">
       <div class="editor-wrapper" :class="'mode-' + viewMode">
         <HistoryView
           v-if="viewMode === 'history'"
@@ -320,12 +320,22 @@ onUnmounted(() => {
 }
 
 .drawer.right {
-  right: 0;
-  transform: translateX(100%);
+  /* Slide via `right` (a layout property), NOT `transform`. The right drawer
+     is the only drawer that also shifts the editor's right padding (so the
+     text stays selectable for chat context). Animating the drawer with a GPU
+     `transform` while the padding reflows on the main thread makes the two
+     drift by a few frames — the dark editor gutter flashes in the gap, which
+     reads as a black trail as the drawer closes. `right` and `padding-right`
+     are both layout transitions, so the browser updates them atomically in one
+     layout pass: the drawer's left edge and the paper's right edge stay
+     touching frame-for-frame, no gap, no trail. (The left drawers keep
+     `transform` — they have no padding to sync against.) */
+  right: -400px;
+  transition: right 0.25s ease;
 }
 
 .drawer.right.open {
-  transform: translateX(0);
+  right: 0;
 }
 
 .drawer-content {
@@ -365,6 +375,17 @@ onUnmounted(() => {
   padding-top: 38px;
   padding-bottom: 36px;
   padding-left: 48px;
+  /* Animate the right padding so the editor slides with the Assistant drawer
+     instead of snapping when it opens/closes (matches the drawer's 0.25s). */
+  transition: padding-right 0.25s ease;
+}
+
+/* When the Assistant (right) drawer is open, pull the editor content in so the
+   right edge of the text stays visible and selectable for chat context — the
+   drawer would otherwise overlay it. The left drawer is intentionally left
+   unpadded (it overlays the editor). */
+.scroll-layer.right-pad {
+  padding-right: 400px;
 }
 
 .scroll-layer.mode-editor {
