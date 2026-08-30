@@ -38,7 +38,11 @@ export const useDocumentStore = defineStore('document', {
         this.lastPath = path
         this.isModified = false
       } catch (e) {
+        // Log, then rethrow so the caller (useFileIO.openFile) can surface the
+        // actual cause to the user. Previously this swallowed the error, which
+        // made a failed open look like "nothing happens."
         console.error('Failed to open document:', e)
+        throw e
       } finally {
         this.isLoading = false
       }

@@ -1,23 +1,34 @@
 use crate::document::{apply_doc_ops, compute_doc_ops, DocOp, Document};
-use crate::history;
-use std::path::Path;
+use crate::history::{self, HistoryRecord, RiteFile};
 use std::sync::Mutex;
 
 pub struct AppState {
     pub document: Mutex<Document>,
-    /// History of change batches. Each entry is the set of DocOps that transformed
-    /// the document from state N to state N+1. Storing deltas instead of full
-    /// snapshots keeps memory usage low for novel-length documents.
+    /// In-memory undo/redo: each entry is the set of DocOps that transformed the
+    /// document from state N to state N+1. Storing deltas (not full snapshots)
+    /// keeps memory low for novel-length documents. Capped at `max_history`;
+    /// lost when the app closes. This is DISTINCT from `version_history` below,
+    /// which is the persistent, on-disk (now embedded) browse/restore history.
     pub history: Mutex<Vec<Vec<DocOp>>>,
     pub history_index: Mutex<usize>,
     pub max_history: usize,
     pub is_modified: Mutex<bool>,
     pub last_path: Mutex<Option<String>>,
-    /// The document state the on-disk history was last advanced from. Explicit save
-    /// sets this to the saved document (after writing a snapshot); autosave computes
-    /// the delta from this to the current document, then advances it. Opening a file
-    /// sets it to the loaded document so the first autosave delta has a baseline.
+    /// The document state the embedded history was last advanced from. Explicit
+    /// save sets this to the saved document (after appending a snapshot);
+    /// autosave computes the delta from this to the current document, then
+    /// advances it. Opening a file sets it to the loaded document so the first
+    /// autosave delta has a baseline.
     pub last_history_state: Mutex<Document>,
+    /// The persistent version history (snapshots + deltas), embedded in the
+    /// `.rite` file. Loaded on open, appended to on save/autosave, and written
+    /// back to the `.rite` as part of the single `RiteFile`. Bounded by
+    /// `max_snapshots` (contiguous eviction of the oldest snapshots + the
+    /// deltas before the oldest survivor) and `max_deltas_per_snapshot` (a long
+    /// run of deltas folds into a fresh snapshot).
+    pub version_history: Mutex<Vec<HistoryRecord>>,
+    pub max_snapshots: usize,
+    pub max_deltas_per_snapshot: usize,
 }
 
 impl AppState {
@@ -30,12 +41,15 @@ impl AppState {
             is_modified: Mutex::default(),
             last_path: Mutex::default(),
             last_history_state: Mutex::new(Document::default()),
+            version_history: Mutex::new(Vec::new()),
+            max_snapshots: 4,
+            max_deltas_per_snapshot: 50,
         }
     }
 
     /// Record the delta between `old` and the current document state as a new
-    /// history entry. If the user had undone and then mutates, discard the
-    /// redo branch first.
+    /// in-memory undo entry. If the user had undone and then mutates, discard
+    /// the redo branch first.
     pub fn push_history_delta(&self, old: &Document) {
         let current = self.document.lock().unwrap().clone();
         let ops = compute_doc_ops(old, &current);
@@ -59,7 +73,7 @@ impl AppState {
         }
     }
 
-    /// Reset history to an empty baseline, used when opening a file.
+    /// Reset in-memory undo/redo to an empty baseline, used when opening a file.
     pub fn reset_history(&self) {
         let mut history = self.history.lock().unwrap();
         let mut index = self.history_index.lock().unwrap();
@@ -67,38 +81,92 @@ impl AppState {
         *index = 0;
     }
 
-    /// Set the on-disk history baseline to `doc`. Used on open so the first
+    /// Set the embedded-history baseline to `doc`. Used on open so the first
     /// autosave delta is computed against the loaded document rather than the
     /// default empty document.
     pub fn set_history_baseline(&self, doc: &Document) {
         *self.last_history_state.lock().unwrap() = doc.clone();
     }
 
-    /// Write a full snapshot of the current document to the history sidecar at
-    /// `base_path` and advance `last_history_state` to it. Used by explicit save
-    /// and the manual-checkpoint command. Returns the snapshot's timestamp stem.
-    /// No lock is held across the disk write.
-    pub fn write_history_snapshot(&self, base_path: &Path) -> Result<String, String> {
-        let doc = self.document.lock().map_err(|e| e.to_string())?.clone();
-        let stem = history::save_snapshot(&doc, base_path)?;
-        *self.last_history_state.lock().map_err(|e| e.to_string())? = doc;
-        Ok(stem)
+    /// Replace the embedded version history (used on open, after reading the
+    /// `.rite` and migrating any legacy sidecar). Compacts immediately so a
+    /// freshly migrated history (which the old sidecar never capped) is bounded
+    /// right away.
+    pub fn set_version_history(&self, records: Vec<HistoryRecord>) {
+        let mut records = records;
+        history::compact_history(&mut records, self.max_snapshots);
+        *self.version_history.lock().unwrap() = records;
     }
 
-    /// Compute and persist the delta from `last_history_state` to the current
-    /// document, then advance `last_history_state` to the current document.
-    /// Returns true if a delta file was written, false if nothing changed. Used
-    /// by autosave. No lock is held across the disk write.
-    pub fn write_history_delta(&self, base_path: &Path) -> Result<bool, String> {
+    /// Append a full snapshot of `doc` to the embedded history and compact.
+    /// Returns the snapshot's timestamp. Used by explicit save and the manual
+    /// checkpoint. No disk write — the caller serializes the whole `RiteFile`
+    /// after mutating, so no lock is held across I/O.
+    pub fn append_history_snapshot(&self, doc: &Document) -> Result<String, String> {
+        let timestamp = history::current_timestamp();
+        let mut version_history = self.version_history.lock().map_err(|e| e.to_string())?;
+        version_history.push(HistoryRecord::Snapshot {
+            timestamp: timestamp.clone(),
+            document: doc.clone(),
+        });
+        history::compact_history(&mut version_history, self.max_snapshots);
+        Ok(timestamp)
+    }
+
+    /// Journal the delta from the last history baseline to the current document
+    /// into the embedded history. If the two are identical, nothing is journaled
+    /// (`Ok(false)`). Otherwise either a `Delta` is appended, or — once
+    /// `max_deltas_per_snapshot` deltas have accumulated since the last snapshot
+    /// — a full `Snapshot` of the current document is appended instead (the
+    /// pending change is folded into it, bounding replay depth and file size
+    /// across a long unsaved session). The baseline advances to the current
+    /// document either way. No disk write.
+    pub fn append_history_delta(&self) -> Result<bool, String> {
         let current = self.document.lock().map_err(|e| e.to_string())?.clone();
         let old = self
             .last_history_state
             .lock()
             .map_err(|e| e.to_string())?
             .clone();
-        let wrote = history::write_delta_since(&old, &current, base_path)?;
+        let ops = history::doc_ops_between(&old, &current);
+        if ops.is_empty() {
+            return Ok(false);
+        }
+
+        let timestamp = history::current_timestamp();
+        {
+            let mut version_history = self.version_history.lock().map_err(|e| e.to_string())?;
+            let deltas_since = history::deltas_since_last_snapshot(&version_history);
+            if deltas_since >= self.max_deltas_per_snapshot {
+                // Fold the pending change into a fresh snapshot to bound replay
+                // depth instead of appending another delta.
+                version_history.push(HistoryRecord::Snapshot {
+                    timestamp,
+                    document: current.clone(),
+                });
+            } else {
+                version_history.push(HistoryRecord::Delta { timestamp, ops });
+            }
+            history::compact_history(&mut version_history, self.max_snapshots);
+        }
+
         *self.last_history_state.lock().map_err(|e| e.to_string())? = current;
-        Ok(wrote)
+        Ok(true)
+    }
+
+    /// Snapshot the live document + embedded history into a `RiteFile` for the
+    /// caller to write to disk. Locks are held only long enough to clone.
+    pub fn build_rite_file(&self) -> Result<RiteFile, String> {
+        let document = self.document.lock().map_err(|e| e.to_string())?.clone();
+        let history = self
+            .version_history
+            .lock()
+            .map_err(|e| e.to_string())?
+            .clone();
+        Ok(RiteFile {
+            document,
+            history,
+        })
     }
 
     /// Undo the most recent change batch by inverting and applying its
@@ -150,9 +218,7 @@ impl AppState {
 mod tests {
     use super::*;
     use crate::document::{Element, Paragraph, Section, SectionType, TextRun, TextStyle};
-    use crate::history::{self, HistoryKind};
-    use std::fs;
-    use std::path::PathBuf;
+    use crate::history::{self, HistoryRecord};
 
     /// A one-section, one-paragraph document whose single run contains `text`.
     /// Used as the thing we mutate between history pushes — each distinct
@@ -168,8 +234,8 @@ mod tests {
             epigram_text: String::new(),
             sections: vec![Section {
                 id: "s1".to_string(),
-                title: String::new(),
                 section_type: SectionType::Section,
+                title: String::new(),
                 paragraphs: vec![Paragraph {
                     id: "p1".to_string(),
                     elements: vec![Element {
@@ -188,6 +254,14 @@ mod tests {
 
     fn current_text(state: &AppState) -> String {
         let doc = state.document.lock().unwrap().clone();
+        doc.sections[0].paragraphs[0]
+            .elements
+            .iter()
+            .map(|e| e.text_run.content.as_str())
+            .collect()
+    }
+
+    fn current_text_from(doc: &Document) -> String {
         doc.sections[0].paragraphs[0]
             .elements
             .iter()
@@ -329,42 +403,12 @@ mod tests {
         assert!(!state.undo().unwrap());
     }
 
-    // --- on-disk history wiring (write_history_snapshot / write_history_delta) ---
+    // --- embedded version history wiring ---------------------------------------
     //
-    // These exercise the AppState methods that thread the on-disk history engine
-    // (crate::history) through the live document and the last_history_state baseline.
-
-    /// A self-cleaning temp directory. `new` creates a fresh, unique dir; `Drop`
-    /// removes it, even if the test panics. Mirrors history.rs's TempDir without
-    /// sharing test-only code across modules.
-    struct TempDir(PathBuf);
-
-    impl TempDir {
-        fn new(name: &str) -> Self {
-            let dir = std::env::temp_dir().join(format!(
-                "rite-state-test-{}-{}",
-                std::process::id(),
-                name
-            ));
-            let _ = fs::remove_dir_all(&dir);
-            fs::create_dir_all(&dir).unwrap();
-            Self(dir)
-        }
-        /// A pretend document path inside the temp dir.
-        fn base(&self) -> PathBuf {
-            self.0.join("MyNovel.rite")
-        }
-    }
-
-    impl Drop for TempDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
-
-    fn history_entries(tmp: &TempDir) -> Vec<crate::history::HistoryEntry> {
-        history::list_history(&tmp.base()).unwrap()
-    }
+    // These exercise the AppState methods that thread the embedded history
+    // (crate::history) through the live document and the last_history_state
+    // baseline: appending snapshots/deltas, auto-snapshotting, compaction, and
+    // round-tripping the whole RiteFile to disk.
 
     #[test]
     fn set_history_baseline_sets_state() {
@@ -375,48 +419,42 @@ mod tests {
     }
 
     #[test]
-    fn write_history_snapshot_writes_snapshot_and_advances_baseline() {
-        let tmp = TempDir::new("snapshot_baseline");
+    fn append_history_snapshot_adds_a_snapshot() {
         let state = AppState::new();
         *state.document.lock().unwrap() = doc_text("a");
+        state.set_history_baseline(&doc_text("a"));
 
-        let stem = state.write_history_snapshot(&tmp.base()).unwrap();
+        state.append_history_snapshot(&doc_text("a")).unwrap();
 
-        let entries = history_entries(&tmp);
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].kind, HistoryKind::Snapshot);
-        assert_eq!(entries[0].timestamp, stem);
-
-        // The baseline advanced to the saved document.
-        let baseline = state.last_history_state.lock().unwrap().clone();
-        assert_eq!(current_text_from(&baseline), "a");
+        let vh = state.version_history.lock().unwrap();
+        assert_eq!(vh.len(), 1);
+        assert!(matches!(vh[0], HistoryRecord::Snapshot { .. }));
     }
 
     #[test]
-    fn write_history_delta_journals_delta_and_advances_baseline() {
-        let tmp = TempDir::new("delta_journal");
+    fn append_history_delta_journals_delta_and_advances_baseline() {
         let state = AppState::new();
         *state.document.lock().unwrap() = doc_text("a");
-        // Establish a base snapshot (and set the baseline to "a").
-        state.write_history_snapshot(&tmp.base()).unwrap();
+        state.set_history_baseline(&doc_text("a"));
+        state.append_history_snapshot(&doc_text("a")).unwrap(); // baseline snapshot
 
         // Edit, then journal a delta from the "a" baseline.
         *state.document.lock().unwrap() = doc_text("ab");
-        let wrote = state.write_history_delta(&tmp.base()).unwrap();
-        assert!(wrote);
+        let journaled = state.append_history_delta().unwrap();
+        assert!(journaled);
 
-        let entries = history_entries(&tmp);
-        assert_eq!(entries.len(), 2); // one snapshot + one delta
-        let delta_ts = entries
+        let vh = state.version_history.lock().unwrap();
+        assert_eq!(vh.len(), 2); // snapshot + delta
+        assert!(matches!(vh[1], HistoryRecord::Delta { .. }));
+
+        // Reconstructing at the delta reconstructs "ab".
+        let delta_ts = vh
             .iter()
-            .find(|e| e.kind == HistoryKind::Delta)
+            .find(|r| matches!(r, HistoryRecord::Delta { .. }))
             .unwrap()
-            .timestamp
-            .clone();
-
-        // Reconstructing at the delta's timestamp yields the edited document,
-        // proving the delta was written against the snapshot baseline.
-        let reconstructed = history::reconstruct_version(&delta_ts, &tmp.base()).unwrap();
+            .timestamp()
+            .to_string();
+        let reconstructed = history::reconstruct_version(&delta_ts, &vh).unwrap();
         assert_eq!(current_text_from(&reconstructed), "ab");
 
         // The baseline advanced to the edited document.
@@ -425,29 +463,95 @@ mod tests {
     }
 
     #[test]
-    fn write_history_delta_noop_when_unchanged() {
-        let tmp = TempDir::new("delta_noop");
-        let state = AppState::new();
+    fn append_history_delta_auto_snapshots_after_threshold() {
+        let mut state = AppState::new();
+        state.max_deltas_per_snapshot = 3;
         *state.document.lock().unwrap() = doc_text("a");
-        state.write_history_snapshot(&tmp.base()).unwrap(); // baseline == "a"
+        state.set_history_baseline(&doc_text("a"));
+        state.append_history_snapshot(&doc_text("a")).unwrap();
 
-        // Document still equals the baseline → no delta to write.
-        let wrote = state.write_history_delta(&tmp.base()).unwrap();
-        assert!(!wrote);
+        // Journal exactly the threshold number of deltas.
+        for i in 1..=3 {
+            *state.document.lock().unwrap() = doc_text(&format!("a{}", i));
+            state.append_history_delta().unwrap();
+        }
+        // The next journal should fold into a snapshot, not another delta.
+        *state.document.lock().unwrap() = doc_text("a4");
+        state.append_history_delta().unwrap();
 
-        // Only the snapshot from above is on disk.
-        let entries = history_entries(&tmp);
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].kind, HistoryKind::Snapshot);
+        let vh = state.version_history.lock().unwrap();
+        let snapshots = vh
+            .iter()
+            .filter(|r| matches!(r, HistoryRecord::Snapshot { .. }))
+            .count();
+        // The baseline snapshot + one auto-snapshot.
+        assert_eq!(snapshots, 2);
+        // Reconstructing the latest state yields "a4".
+        let latest_ts = vh.last().unwrap().timestamp().to_string();
+        let reconstructed = history::reconstruct_version(&latest_ts, &vh).unwrap();
+        assert_eq!(current_text_from(&reconstructed), "a4");
     }
 
-    /// Read the text of the first paragraph's first run from any document. Used
-    /// to compare reconstructed/baseline documents against `doc_text` inputs.
-    fn current_text_from(doc: &Document) -> String {
-        doc.sections[0].paragraphs[0]
-            .elements
-            .iter()
-            .map(|e| e.text_run.content.as_str())
-            .collect()
+    #[test]
+    fn append_history_delta_noop_when_unchanged() {
+        let state = AppState::new();
+        *state.document.lock().unwrap() = doc_text("a");
+        state.set_history_baseline(&doc_text("a"));
+        state.append_history_snapshot(&doc_text("a")).unwrap(); // baseline == "a"
+
+        // Document still equals the baseline → no delta to journal.
+        let journaled = state.append_history_delta().unwrap();
+        assert!(!journaled);
+
+        let vh = state.version_history.lock().unwrap();
+        assert_eq!(vh.len(), 1); // only the baseline snapshot
+        assert!(matches!(vh[0], HistoryRecord::Snapshot { .. }));
+    }
+
+    #[test]
+    fn build_rite_file_roundtrips_to_disk() {
+        let state = AppState::new();
+        *state.document.lock().unwrap() = doc_text("a");
+        state.set_history_baseline(&doc_text("a"));
+        state.append_history_snapshot(&doc_text("a")).unwrap();
+        *state.document.lock().unwrap() = doc_text("ab");
+        state.append_history_delta().unwrap();
+
+        let file = state.build_rite_file().unwrap();
+        let tmp = std::env::temp_dir().join(format!(
+            "rite-state-test-{}-roundtrip",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let base = tmp.join("MyNovel.rite");
+        history::write_rite_file(&base, &file).unwrap();
+
+        let json = std::fs::read_to_string(&base).unwrap();
+        let back = history::read_rite_file(&json).unwrap();
+        assert_eq!(back, file);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn set_version_history_compacts_on_load() {
+        let mut state = AppState::new();
+        state.max_snapshots = 2;
+        // A migrated history with five snapshots — more than the cap.
+        let mut records = Vec::new();
+        for i in 0..5 {
+            records.push(HistoryRecord::Snapshot {
+                timestamp: format!("2026-07-19T10-{:02}-00-000", i),
+                document: doc_text(&format!("v{}", i)),
+            });
+        }
+        state.set_version_history(records);
+
+        let vh = state.version_history.lock().unwrap();
+        // Only the two newest snapshots survive.
+        assert_eq!(vh.len(), 2);
+        assert_eq!(vh[0].timestamp(), "2026-07-19T10-03-00-000");
+        assert_eq!(vh[1].timestamp(), "2026-07-19T10-04-00-000");
     }
 }

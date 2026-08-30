@@ -67,6 +67,7 @@
 </template>
 
 <script setup>
+import { ask } from '@tauri-apps/api/dialog'
 import { formatHistoryTimestamp } from '../composables/useVersionHistory.js'
 
 const props = defineProps({
@@ -89,12 +90,17 @@ function onSelect(timestamp) {
   props.history.selectVersion(timestamp)
 }
 
-function onRestore() {
+async function onRestore() {
   const ts = props.history.selectedTimestamp
   if (!ts) return
-  const confirmed = window.confirm(
+  // Tauri's async `ask` (Rust-side native dialog) instead of the synchronous
+  // `window.confirm`, which blocks the webview on a JS panel that doesn't
+  // render in this overlay-titlebar window (see useFileIO.js for the full
+  // rationale). Async keeps the webview responsive while the dialog is up.
+  const confirmed = await ask(
     'Restore this version? It becomes the live document. Your current unsaved ' +
-    'changes stay recoverable with Cmd+Z until you save.'
+    'changes stay recoverable with Cmd+Z until you save.',
+    { title: 'Rite', type: 'warning' }
   )
   if (!confirmed) return
   props.history.restoreVersion(ts)

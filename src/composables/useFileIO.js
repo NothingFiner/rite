@@ -1,4 +1,4 @@
-import { open, save } from '@tauri-apps/api/dialog'
+import { open, save, ask, message } from '@tauri-apps/api/dialog'
 import { readBinaryFile } from '@tauri-apps/api/fs'
 import { useDocumentStore } from '../stores/document.js'
 import { importDocx, importOdt } from './useImport.js'
@@ -49,13 +49,32 @@ export function useFileIO() {
     try {
       await store.loadDocument(filePath)
     } catch (e) {
+      // The store rethrows open_document failures (it used to swallow them
+      // silently with console.error, which read as "nothing happens" in the
+      // UI). Surface the actual cause — a serde schema mismatch on an older
+      // .rite, an IO error, etc. — so the user knows why the file didn't open.
       console.error('Failed to open:', e)
+      await message('Failed to open document: ' + (e?.message || String(e)), {
+        title: 'Rite',
+        type: 'error',
+      })
     }
   }
 
   async function importFile() {
     if (store.isModified && store.doc?.sections?.length > 0 && !sectionListIsEmpty(store.doc.sections)) {
-      const shouldSave = confirm('You have unsaved changes. Save before importing?')
+      // Use Tauri's async `ask` (a Rust-side native dialog) instead of the
+      // synchronous `window.confirm`. `window.confirm`/`window.alert` block the
+      // webview's main thread on a WKWebView JS panel that, in this app's
+      // overlay-titlebar + macOSPrivateApi window, does not render visibly — so
+      // the call never returns and the app freezes (only reachable when a doc
+      // with unsaved content is open, which is why import "hangs" then). The
+      // async Tauri dialog keeps the webview responsive and is the same dialog
+      // plugin `open`/`save` already use successfully.
+      const shouldSave = await ask('You have unsaved changes. Save before importing?', {
+        title: 'Rite',
+        type: 'warning',
+      })
       if (shouldSave) {
         await saveFile()
       }
@@ -99,7 +118,7 @@ export function useFileIO() {
       await store.syncToRust()
     } catch (e) {
       console.error('Failed to import:', e)
-      alert('Import failed: ' + e.message)
+      await message('Import failed: ' + e.message, { title: 'Rite', type: 'error' })
     }
   }
 

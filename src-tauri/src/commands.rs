@@ -260,22 +260,25 @@ pub fn replace_all(
 
 #[tauri::command]
 pub fn save_document(path: String, state: State<AppState>) -> Result<(), String> {
-    let doc = state.document.lock().map_err(|e| e.to_string())?;
-    let json = serde_json::to_string_pretty(&*doc).map_err(|e| e.to_string())?;
-    let tmp_path = format!("{}.tmp", path);
-    fs::write(&tmp_path, json).map_err(|e| e.to_string())?;
-    fs::rename(&tmp_path, &path).map_err(|e| e.to_string())?;
-    drop(doc);
+    let doc = state.document.lock().map_err(|e| e.to_string())?.clone();
 
-    // Write a full snapshot to the history sidecar and advance the history
-    // baseline, so subsequent autosaves journal deltas from this saved state.
-    state.write_history_snapshot(Path::new(&path))?;
+    // Record a full snapshot of the saved document in the embedded history (the
+    // save baseline), then write the whole `.rite` — document + history — as a
+    // single atomic file. This replaces the old `.rite` + `.rite.history` sidecar
+    // pair, so nothing separate appears in Finder next to the document.
+    state.append_history_snapshot(&doc)?;
+    let file = state.build_rite_file()?;
+    history::write_rite_file(Path::new(&path), &file)?;
 
     let mut last_path = state.last_path.lock().map_err(|e| e.to_string())?;
     *last_path = Some(path);
 
     let mut modified = state.is_modified.lock().map_err(|e| e.to_string())?;
     *modified = false;
+
+    // The saved document is now the baseline the next autosave delta computes
+    // against (the snapshot just appended reconstructs to this same state).
+    state.set_history_baseline(&doc);
 
     Ok(())
 }
@@ -284,19 +287,40 @@ pub fn save_document(path: String, state: State<AppState>) -> Result<(), String>
 pub fn open_document(path: String, state: State<AppState>) -> Result<Document, String> {
     let json = fs::read_to_string(&path).map_err(|e| e.to_string())?;
 
-    // The on-disk shape is the section-based `Document`. (The legacy flat
-    // `body.content` shape and its migration path were removed — there are no
-    // surviving legacy `.rite` files to support.)
-    let doc = serde_json::from_str::<Document>(&json).map_err(|e| e.to_string())?;
+    // Parse the `.rite` as an embedded `RiteFile { document, history }`. A
+    // bare `Document` (a pre-embedding `.rite`, written before history lived
+    // inside the file) is accepted as a fallback with an empty history, so
+    // older single-document saves still open.
+    let mut rite_file = history::read_rite_file(&json)?;
+
+    // Absorb any legacy `.rite.history` sidecar folder into the embedded
+    // history, then delete the folder so it no longer appears in Finder.
+    // No-op when there was no sidecar (a modern `.rite` with embedded history).
+    let migrated = history::migrate_sidecar(Path::new(&path))?;
+    if !migrated.is_empty() {
+        rite_file.history.extend(migrated);
+        // Both sides are already oldest-first; a stable sort by timestamp keeps
+        // them that way and tolerates any interleaving.
+        rite_file
+            .history
+            .sort_by(|a, b| a.timestamp().cmp(b.timestamp()));
+    }
+
+    let doc = rite_file.document.clone();
 
     let mut state_doc = state.document.lock().map_err(|e| e.to_string())?;
     *state_doc = doc.clone();
     drop(state_doc);
 
+    // Load the embedded history into the live state. set_version_history also
+    // compacts, so a freshly migrated (uncapped, old sidecar) history is
+    // bounded immediately.
+    state.set_version_history(rite_file.history);
+
     state.reset_history();
     // The loaded document is the baseline the first autosave delta computes
-    // against (the sidecar already holds a snapshot from the document's last
-    // explicit save, so that delta will reconstruct correctly).
+    // against (the embedded history already holds a snapshot from the
+    // document's last explicit save).
     state.set_history_baseline(&doc);
 
     let mut last_path = state.last_path.lock().map_err(|e| e.to_string())?;
@@ -324,59 +348,79 @@ pub fn autosave_document(state: State<AppState>) -> Result<(), String> {
         return Ok(());
     }
 
-    // Autosave journals a delta to the history sidecar; it does not rewrite the
-    // .rite (that happens only on explicit save). A document with no last_path
-    // has never been saved, so there is no sidecar location to journal to.
+    // A document with no last_path has never been saved, so there is no `.rite`
+    // to rewrite or baseline to journal from.
     let base_path = state.last_path.lock().map_err(|e| e.to_string())?.clone();
     let Some(base_path) = base_path else {
         return Ok(());
     };
 
-    state.write_history_delta(Path::new(&base_path))?;
+    // Journal the change since the last baseline into the embedded history (a
+    // delta, or a fresh snapshot if the delta run has grown long), then rewrite
+    // the whole `.rite` so the history on disk stays current. The tradeoff of
+    // embedding history in the file is that a throttled autosave rewrites the
+    // whole file including history — but it only fires here (and on explicit
+    // save), never per keystroke.
+    let journaled = state.append_history_delta()?;
+    if journaled {
+        let file = state.build_rite_file()?;
+        history::write_rite_file(Path::new(&base_path), &file)?;
+    }
 
     *state.is_modified.lock().map_err(|e| e.to_string())? = false;
     Ok(())
 }
 
-/// Manually write a full snapshot of the current document to the history
-/// sidecar, without touching the .rite. A checkpoint records progress without
-/// overwriting the named file. Returns the snapshot's timestamp stem. Requires
-/// the document to have been saved at least once (a last_path to journal to).
+/// Manually append a full snapshot of the current document to the embedded
+/// history and persist the `.rite`. A checkpoint records progress (a
+/// browse/restore point) without a full save's semantics. Returns the snapshot's
+/// timestamp. Requires the document to have been saved at least once (a
+/// last_path to write to).
 #[tauri::command]
 pub fn save_snapshot(state: State<AppState>) -> Result<String, String> {
     let base_path = require_last_path(&state)?;
-    state.write_history_snapshot(Path::new(&base_path))
+    let doc = state.document.lock().map_err(|e| e.to_string())?.clone();
+    let timestamp = state.append_history_snapshot(&doc)?;
+    let file = state.build_rite_file()?;
+    history::write_rite_file(Path::new(&base_path), &file)?;
+    Ok(timestamp)
 }
 
-/// List every snapshot and delta in the open document's history sidecar, oldest
-/// first. Returns an empty list when no document is open or it has no history.
+/// List every snapshot and delta in the open document's embedded history,
+/// oldest first. Returns an empty list when no document is open or it has no
+/// history yet.
 #[tauri::command]
 pub fn list_history(state: State<AppState>) -> Result<Vec<HistoryEntry>, String> {
-    let Some(base_path) = state.last_path.lock().map_err(|e| e.to_string())?.clone() else {
+    let Some(_) = state.last_path.lock().map_err(|e| e.to_string())?.clone() else {
         return Ok(Vec::new());
     };
-    history::list_history(Path::new(&base_path))
+    let history_records = state.version_history.lock().map_err(|e| e.to_string())?;
+    Ok(history::list_history(&history_records))
 }
 
-/// Reconstruct the document as it was at `timestamp`: load the newest snapshot
+/// Reconstruct the document as it was at `timestamp`: take the newest snapshot
 /// at or before it, then replay intervening deltas forward. A read-only query
-/// — it does not load the result into the live document (restoring a version is
-/// a separate action).
+/// over the embedded history — it does not load the result into the live
+/// document (restoring a version is a separate action).
 #[tauri::command]
 pub fn reconstruct_version(timestamp: String, state: State<AppState>) -> Result<Document, String> {
-    let base_path = require_last_path(&state)?;
-    history::reconstruct_version(&timestamp, Path::new(&base_path))
+    let _ = require_last_path(&state)?;
+    let history_records = state.version_history.lock().map_err(|e| e.to_string())?;
+    history::reconstruct_version(&timestamp, &history_records)
 }
 
 /// Replace the live document with the version reconstructed at `timestamp`.
 /// Non-destructive: the `.rite` on disk is untouched (the next explicit save
-/// rewrites it). Undoable: a history delta is journaled for the old→restored
-/// transition, so Cmd+Z reverts the restore. The reconstructed document is
-/// returned so the frontend store can adopt it as the live doc.
+/// rewrites it). Undoable: an in-memory history delta is journaled for the
+/// old→restored transition, so Cmd+Z reverts the restore. The reconstructed
+/// document is returned so the frontend store can adopt it as the live doc.
 #[tauri::command]
 pub fn restore_version(timestamp: String, state: State<AppState>) -> Result<Document, String> {
-    let base_path = require_last_path(&state)?;
-    let restored = history::reconstruct_version(&timestamp, Path::new(&base_path))?;
+    let _ = require_last_path(&state)?;
+    let restored = {
+        let history_records = state.version_history.lock().map_err(|e| e.to_string())?;
+        history::reconstruct_version(&timestamp, &history_records)?
+    };
 
     // Capture the old state before overwriting. `push_history_delta` computes
     // the delta from `old` to the *current* document internally, so the live
@@ -396,20 +440,23 @@ pub fn restore_version(timestamp: String, state: State<AppState>) -> Result<Docu
 /// Structural diff of the version at `timestamp` (left/old) against the current
 /// live document (right/new). Returns one `SectionDiff` per section, walked by
 /// id, with word-level spans inside modified paragraphs. Read-only: touches
-/// neither the live document nor the history sidecar.
+/// neither the live document nor the embedded history.
 #[tauri::command]
 pub fn diff_against_current(
     timestamp: String,
     state: State<AppState>,
 ) -> Result<Vec<SectionDiff>, String> {
-    let base_path = require_last_path(&state)?;
-    let past = history::reconstruct_version(&timestamp, Path::new(&base_path))?;
+    let _ = require_last_path(&state)?;
+    let past = {
+        let history_records = state.version_history.lock().map_err(|e| e.to_string())?;
+        history::reconstruct_version(&timestamp, &history_records)?
+    };
     let current = state.document.lock().map_err(|e| e.to_string())?;
     Ok(diff::compute_diff(&past, &*current))
 }
 
 /// Clone the current last_path, or error if the document has never been saved
-/// (no sidecar location to read from or write to).
+/// (no `.rite` to read from or write to).
 fn require_last_path(state: &State<AppState>) -> Result<String, String> {
     state
         .last_path

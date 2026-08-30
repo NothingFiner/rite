@@ -1,26 +1,26 @@
-//! On-disk version history: full snapshots plus a sequence of deltas.
+//! Version history, embedded in the single `.rite` file.
 //!
-//! For a document at `<base>` (e.g. `/novels/MyNovel.rite`), history lives in a
-//! sidecar directory laid out as:
+//! A `.rite` file is a JSON object `{ document, history }` where `history` is
+//! an ordered list of records — full `Snapshot`s (a `Document` at a point in
+//! time) and `Delta`s (a `Vec<DocOp>` forward ops from the preceding state).
+//! Reconstructing a past version = take the newest snapshot at or before the
+//! target timestamp, then replay the intervening deltas forward. Every `DocOp`
+//! carries its old state, so `apply_doc_ops` validates each step and refuses a
+//! delta whose precondition no longer matches — a corruption guard.
 //!
-//! ```text
-//! /novels/MyNovel.rite.history/
-//!   snapshots/
-//!     2026-07-19T10-00-00-123.rite     <- full Document JSON
-//!   deltas/
-//!     2026-07-19T10-05-00-456.delta    <- Vec<DocOp> (forward ops)
-//!     2026-07-19T10-11-00-789.delta
-//! ```
+//! Previously history lived in a sidecar `<base>.rite.history/` directory of
+//! snapshot/delta files. Embedding it makes a document a single self-contained
+//! file (no separate folder visible in Finder, portable, shareable). Existing
+//! sidecars are migrated into the embedded list on open and then deleted; bare
+//! pre-embedding `.rite` files (a top-level `Document` with no wrapper) are
+//! read via a deserialization fallback.
 //!
 //! Timestamps are UTC, fixed-width `YYYY-MM-DDTHH-MM-SS-mmm`, so a plain
-//! lexicographic string sort is also chronological. A historical version is
-//! reconstructed by taking the newest snapshot at or before the target time
-//! and applying the intervening deltas forward in order. Every `DocOp` carries
-//! its old state, so `apply_doc_ops` validates each step and will refuse to
-//! apply a delta whose precondition no longer matches — a corruption guard.
-//!
-//! This module is pure functions over `&Document` / `&Path`. The Tauri command
-//! wrappers (which thread in `AppState`) live in `commands.rs`.
+//! lexicographic string sort is also chronological — which reconstruction
+//! relies on. This module is pure functions over `&Document` / `&[HistoryRecord]`
+//! / `&Path`; the Tauri command wrappers (which thread in `AppState`) live in
+//! `commands.rs`, and the in-memory history + compaction policy live in
+//! `state.rs`.
 
 use crate::document::{apply_doc_ops, compute_doc_ops, DocOp, Document};
 use chrono::Utc;
@@ -28,6 +28,8 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Suffix of the legacy sidecar directory. Kept only for one-time migration of
+/// pre-embedding `.rite.history/` folders into the embedded record list.
 const HISTORY_SUFFIX: &str = ".history";
 const SNAPSHOTS_DIR: &str = "snapshots";
 const DELTAS_DIR: &str = "deltas";
@@ -50,15 +52,86 @@ pub struct HistoryEntry {
     pub label: Option<String>,
 }
 
+/// One entry in the embedded history list. A `Snapshot` is a full `Document` at
+/// `timestamp`; a `Delta` is the forward `DocOp`s that transformed the state
+/// just before it into the state at `timestamp`. Tagged by `kind` on the wire.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum HistoryRecord {
+    Snapshot { timestamp: String, document: Document },
+    Delta { timestamp: String, ops: Vec<DocOp> },
+}
+
+impl HistoryRecord {
+    pub fn timestamp(&self) -> &str {
+        match self {
+            HistoryRecord::Snapshot { timestamp, .. } => timestamp,
+            HistoryRecord::Delta { timestamp, .. } => timestamp,
+        }
+    }
+
+    fn kind(&self) -> HistoryKind {
+        match self {
+            HistoryRecord::Snapshot { .. } => HistoryKind::Snapshot,
+            HistoryRecord::Delta { .. } => HistoryKind::Delta,
+        }
+    }
+}
+
+/// The on-disk `.rite` file: the live document plus its embedded history.
+/// `history` defaults to empty so a hand-written or partially-migrated file
+/// without a history array still deserializes.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RiteFile {
+    pub document: Document,
+    #[serde(default)]
+    pub history: Vec<HistoryRecord>,
+}
+
 /// A sortable, filesystem-safe UTC timestamp with millisecond precision.
 /// Format: `2026-07-19T10-00-00-123`. Fixed width means `String::cmp` orders
-/// timestamps chronologically, which the reconstruction algorithm relies on.
+/// timestamps chronologically, which reconstruction relies on.
 pub fn current_timestamp() -> String {
     Utc::now().format("%Y-%m-%dT%H-%M-%S-%3f").to_string()
 }
 
-/// `<base>.history` — the sidecar history directory for a document at `base`.
-pub fn history_dir(base_path: &Path) -> PathBuf {
+/// Write `content` to `path` via a sibling `.tmp` file then atomic rename, so a
+/// crash mid-write cannot leave a half-written `.rite`.
+fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
+    let tmp = format!("{}.tmp", path.to_string_lossy());
+    fs::write(&tmp, content).map_err(|e| e.to_string())?;
+    fs::rename(&tmp, path).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Serialize a `RiteFile` to pretty JSON and atomically write it to `path`.
+pub fn write_rite_file(path: &Path, file: &RiteFile) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(file).map_err(|e| e.to_string())?;
+    atomic_write(path, &json)
+}
+
+/// Parse a `.rite` file's JSON into a `RiteFile`. Tries the embedded
+/// `{ document, history }` shape first; if that fails, falls back to the
+/// pre-embedding bare-`Document` shape (a top-level `Document` with no
+/// wrapper) and wraps it with empty history. Either way the result is a
+/// self-contained `RiteFile`.
+pub fn read_rite_file(json: &str) -> Result<RiteFile, String> {
+    if let Ok(file) = serde_json::from_str::<RiteFile>(json) {
+        return Ok(file);
+    }
+    let document: Document = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    Ok(RiteFile {
+        document,
+        history: Vec::new(),
+    })
+}
+
+// --- Legacy sidecar migration ----------------------------------------------
+
+/// `<base>.history` — the legacy sidecar history directory for a document at
+/// `base`. Used only to migrate pre-embedding sidecars into embedded records.
+fn history_dir(base_path: &Path) -> PathBuf {
     let mut s = base_path.as_os_str().to_owned();
     s.push(HISTORY_SUFFIX);
     PathBuf::from(s)
@@ -72,179 +145,172 @@ fn deltas_dir(history: &Path) -> PathBuf {
     history.join(DELTAS_DIR)
 }
 
-/// Write `content` to `path` via a sibling `.tmp` file then atomic rename, so a
-/// crash mid-write cannot leave a half-written history file.
-fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
-    let tmp = format!("{}.tmp", path.to_string_lossy());
-    fs::write(&tmp, content).map_err(|e| e.to_string())?;
-    fs::rename(&tmp, path).map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-/// Is any history entry (snapshot or delta) already using `stem` as its
-/// timestamp? History is one ordered sequence, so a stem must be free in *both*
-/// subdirectories — otherwise a snapshot and a delta sharing a timestamp would
-/// make `reconstruct_version` ambiguous about which state that time refers to.
-fn is_stem_in_use(history: &Path, stem: &str) -> bool {
-    snapshots_dir(history)
-        .join(format!("{}.{}", stem, SNAPSHOT_EXT))
-        .exists()
-        || deltas_dir(history)
-            .join(format!("{}.{}", stem, DELTA_EXT))
-            .exists()
-}
-
-/// Pick a globally-unique stem for a new entry in `dir`. Starts at `ts`; if
-/// that stem is already taken (another write landed in the same millisecond),
-/// tries `ts-1`, `ts-2`, … until a free one is found. The counter sorts right
-/// after the original timestamp (`...-456` < `...-456-1` < `...-456-2` <
-/// `...-457`), so chronological order survives disambiguation. Writes are
-/// sequential in-process, so counter order matches the order the transitions
-/// actually happened — reconstruction stays correct.
-fn reserve_entry(history: &Path, dir: &Path, ts: &str, ext: &str) -> (String, PathBuf) {
-    let candidates =
-        std::iter::once(ts.to_string()).chain((1u32..).map(|n| format!("{}-{}", ts, n)));
-    for stem in candidates {
-        if !is_stem_in_use(history, &stem) {
-            return (stem.clone(), dir.join(format!("{}.{}", stem, ext)));
-        }
-    }
-    unreachable!("the candidate sequence is infinite")
-}
-
-/// Write a full snapshot of `doc` and return its timestamp stem. Creates the
-/// sidecar directory tree if needed. This is the "explicit save / checkpoint"
-/// path from the plan's snapshot policy.
-pub fn save_snapshot(doc: &Document, base_path: &Path) -> Result<String, String> {
-    let history = history_dir(base_path);
-    let snaps = snapshots_dir(&history);
-    fs::create_dir_all(&snaps).map_err(|e| e.to_string())?;
-    let ts = current_timestamp();
-    let (stem, path) = reserve_entry(&history, &snaps, &ts, SNAPSHOT_EXT);
-    let json = serde_json::to_string_pretty(doc).map_err(|e| e.to_string())?;
-    atomic_write(&path, &json)?;
-    Ok(stem)
-}
-
-/// Write a batch of forward `DocOp`s as one delta file. Returns `Some(stem)`
-/// if a file was written, or `None` if `ops` was empty (nothing to write).
-pub fn write_delta(ops: &[DocOp], base_path: &Path) -> Result<Option<String>, String> {
-    if ops.is_empty() {
-        return Ok(None);
-    }
-    let history = history_dir(base_path);
-    let deltas = deltas_dir(&history);
-    fs::create_dir_all(&deltas).map_err(|e| e.to_string())?;
-    let ts = current_timestamp();
-    let (stem, path) = reserve_entry(&history, &deltas, &ts, DELTA_EXT);
-    let json = serde_json::to_string(ops).map_err(|e| e.to_string())?;
-    atomic_write(&path, &json)?;
-    Ok(Some(stem))
-}
-
-/// Compute and write the delta between `old` and `current`. Returns true if a
-/// delta file was written, false if the two states were identical (no-op). This
-/// is the autosave helper: callers keep a `last_history_state` and pass it as
-/// `old`, then update it to `current` when this returns true.
-pub fn write_delta_since(
-    old: &Document,
-    current: &Document,
-    base_path: &Path,
-) -> Result<bool, String> {
-    let ops = compute_doc_ops(old, current);
-    if ops.is_empty() {
-        return Ok(false);
-    }
-    write_delta(&ops, base_path)?;
-    Ok(true)
-}
-
-/// List every snapshot and delta, oldest first. Missing directory trees yield
-/// an empty list (a never-saved document has no history).
-pub fn list_history(base_path: &Path) -> Result<Vec<HistoryEntry>, String> {
+/// Read a legacy `<base>.rite.history/` sidecar (snapshots + deltas) into an
+/// ordered list of embedded `HistoryRecord`s, then delete the sidecar
+/// directory. Returns an empty list (and deletes nothing) when no sidecar
+/// exists. The one-time migration on open: after this the document's history
+/// lives inside its `.rite` and the separate folder is gone.
+pub fn migrate_sidecar(base_path: &Path) -> Result<Vec<HistoryRecord>, String> {
     let hist = history_dir(base_path);
-    let mut entries = Vec::new();
-
-    for (dir, kind) in [
-        (snapshots_dir(&hist), HistoryKind::Snapshot),
-        (deltas_dir(&hist), HistoryKind::Delta),
-    ] {
-        if let Ok(rd) = fs::read_dir(&dir) {
-            for entry in rd.flatten() {
-                if let Some(stem) = entry.path().file_stem().and_then(|s| s.to_str()) {
-                    entries.push(HistoryEntry {
-                        timestamp: stem.to_string(),
-                        kind: kind.clone(),
-                        label: None,
-                    });
-                }
-            }
-        }
+    if !hist.exists() {
+        return Ok(Vec::new());
     }
 
-    entries.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
-    Ok(entries)
-}
+    let mut records = Vec::new();
 
-/// The newest snapshot timestamp `<= target`, or an error if there is none
-/// (the target predates the first snapshot, or history is empty).
-fn newest_snapshot_at_or_before(history: &Path, target: &str) -> Result<String, String> {
-    let mut best: Option<String> = None;
-    for entry in fs::read_dir(snapshots_dir(history))
-        .map_err(|e| e.to_string())?
-        .flatten()
-    {
-        if let Some(stem) = entry.path().file_stem().and_then(|s| s.to_str()) {
-            if stem <= target && best.as_deref().map_or(true, |b| stem > b) {
-                best = Some(stem.to_string());
-            }
-        }
-    }
-    best.ok_or_else(|| format!("no snapshot at or before {}", target))
-}
-
-/// Delta files with `after < timestamp <= before_inclusive`, ascending.
-fn delta_files_between(
-    history: &Path,
-    after: &str,
-    before_inclusive: &str,
-) -> Vec<(String, PathBuf)> {
-    let mut out = Vec::new();
-    if let Ok(rd) = fs::read_dir(deltas_dir(history)) {
+    if let Ok(rd) = fs::read_dir(snapshots_dir(&hist)) {
         for entry in rd.flatten() {
-            if let Some(stem) = entry.path().file_stem().and_then(|s| s.to_str()) {
-                if stem > after && stem <= before_inclusive {
-                    out.push((stem.to_string(), entry.path()));
-                }
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some(SNAPSHOT_EXT) {
+                continue;
             }
+            let stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            let json = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            let document: Document = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+            records.push(HistoryRecord::Snapshot {
+                timestamp: stem,
+                document,
+            });
         }
     }
-    out.sort_by(|a, b| a.0.cmp(&b.0));
-    out
+
+    if let Ok(rd) = fs::read_dir(deltas_dir(&hist)) {
+        for entry in rd.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some(DELTA_EXT) {
+                continue;
+            }
+            let stem = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            let json = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+            let ops: Vec<DocOp> = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+            records.push(HistoryRecord::Delta {
+                timestamp: stem,
+                ops,
+            });
+        }
+    }
+
+    records.sort_by(|a, b| a.timestamp().cmp(b.timestamp()));
+
+    // The sidecar's contents are now embedded; remove the folder so it stops
+    // appearing alongside the `.rite` in Finder.
+    fs::remove_dir_all(&hist).map_err(|e| e.to_string())?;
+
+    Ok(records)
 }
 
-fn load_snapshot(history: &Path, ts: &str) -> Result<Document, String> {
-    let path = snapshots_dir(history).join(format!("{}.{}", ts, SNAPSHOT_EXT));
-    let json = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    serde_json::from_str(&json).map_err(|e| e.to_string())
-}
+// --- Reconstruction & listing (pure, over the in-memory record list) --------
 
-/// Reconstruct the document as it was at `target_ts`: load the newest snapshot
+/// Reconstruct the document as it was at `target_ts`: take the newest snapshot
 /// at or before `target_ts`, then apply every delta after that snapshot and up
 /// to (and including) `target_ts`, in chronological order. Errors if no
 /// suitable snapshot exists or a delta's precondition no longer matches.
-pub fn reconstruct_version(target_ts: &str, base_path: &Path) -> Result<Document, String> {
-    let hist = history_dir(base_path);
-    let snapshot_ts = newest_snapshot_at_or_before(&hist, target_ts)?;
-    let mut doc = load_snapshot(&hist, &snapshot_ts)?;
+pub fn reconstruct_version(target_ts: &str, history: &[HistoryRecord]) -> Result<Document, String> {
+    // Newest snapshot with timestamp <= target. Timestamps can collide (two
+    // saves within the same millisecond); the history list is appended in
+    // chronological order, so on an equal timestamp a later index is the more
+    // recent state — prefer it. `>=` (rather than `>`) makes the tie-break pick
+    // the later of two equal-timestamp snapshots.
+    let mut best: Option<usize> = None;
+    for (i, record) in history.iter().enumerate() {
+        if matches!(record, HistoryRecord::Snapshot { .. }) && record.timestamp() <= target_ts {
+            if best.map_or(true, |b| record.timestamp() >= history[b].timestamp()) {
+                best = Some(i);
+            }
+        }
+    }
+    let snap_idx = best.ok_or_else(|| format!("no snapshot at or before {}", target_ts))?;
 
-    for (ts, path) in delta_files_between(&hist, &snapshot_ts, target_ts) {
-        let json = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        let ops: Vec<DocOp> = serde_json::from_str(&json).map_err(|e| e.to_string())?;
-        apply_doc_ops(&mut doc, &ops).map_err(|e| format!("applying delta {}: {}", ts, e))?;
+    let mut doc = match &history[snap_idx] {
+        HistoryRecord::Snapshot { document, .. } => document.clone(),
+        HistoryRecord::Delta { .. } => unreachable!("best is always a snapshot index"),
+    };
+
+    // We picked the NEWEST snapshot <= target, so every record between it and
+    // the target is a delta — replay them in order.
+    for record in history.iter().skip(snap_idx + 1) {
+        if record.timestamp() > target_ts {
+            break;
+        }
+        if let HistoryRecord::Delta { ops, .. } = record {
+            apply_doc_ops(&mut doc, ops)
+                .map_err(|e| format!("applying delta {}: {}", record.timestamp(), e))?;
+        }
     }
 
     Ok(doc)
+}
+
+/// List every snapshot and delta, oldest first, as frontend rows.
+pub fn list_history(history: &[HistoryRecord]) -> Vec<HistoryEntry> {
+    let mut entries: Vec<HistoryEntry> = history
+        .iter()
+        .map(|record| HistoryEntry {
+            timestamp: record.timestamp().to_string(),
+            kind: record.kind(),
+            label: None,
+        })
+        .collect();
+    entries.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+    entries
+}
+
+// --- Compaction (pure) ------------------------------------------------------
+
+/// Bound the history by keeping only the `max_snapshots` most recent snapshots
+/// and the contiguous deltas after the oldest surviving one. Eviction is
+/// contiguous from the front — the oldest snapshot and everything before the
+/// oldest *surviving* snapshot are dropped together — so reconstruction of any
+/// timestamp at or after the oldest surviving snapshot stays correct. Dropping
+/// a delta from the middle would break replay, which is why we evict in one
+/// contiguous slice rather than picking off individual deltas.
+pub fn compact_history(history: &mut Vec<HistoryRecord>, max_snapshots: usize) {
+    let snapshot_indices: Vec<usize> = history
+        .iter()
+        .enumerate()
+        .filter(|(_, record)| matches!(record, HistoryRecord::Snapshot { .. }))
+        .map(|(index, _)| index)
+        .collect();
+
+    if snapshot_indices.len() > max_snapshots {
+        // Keep from the (len - max_snapshots)-th snapshot onward.
+        let keep_from = snapshot_indices[snapshot_indices.len() - max_snapshots];
+        history.drain(0..keep_from);
+    }
+}
+
+/// Count the deltas after the most recent snapshot — used by the auto-snapshot
+/// policy to decide when a run of deltas has grown long enough that the next
+/// autosave should record a full snapshot instead of another delta (keeping
+/// replay depth and file size bounded across a long unsaved session).
+pub fn deltas_since_last_snapshot(history: &[HistoryRecord]) -> usize {
+    let last_snapshot = history
+        .iter()
+        .rposition(|record| matches!(record, HistoryRecord::Snapshot { .. }));
+    match last_snapshot {
+        Some(idx) => history[idx + 1..]
+            .iter()
+            .filter(|record| matches!(record, HistoryRecord::Delta { .. }))
+            .count(),
+        None => history
+            .iter()
+            .filter(|record| matches!(record, HistoryRecord::Delta { .. }))
+            .count(),
+    }
+}
+
+/// Compute the forward `DocOp`s from `old` to `current`. Empty when the two are
+/// identical (the caller treats an empty op list as "nothing to journal").
+pub fn doc_ops_between(old: &Document, current: &Document) -> Vec<DocOp> {
+    compute_doc_ops(old, current)
 }
 
 #[cfg(test)]
@@ -254,8 +320,7 @@ mod tests {
     use std::path::PathBuf;
 
     /// A self-cleaning temp directory. `new` creates a fresh, unique dir; `Drop`
-    /// removes it, even if the test panics. This mirrors the `tempfile` crate's
-    /// `TempDir` without adding a dependency.
+    /// removes it, even if the test panics.
     struct TempDir(PathBuf);
 
     impl TempDir {
@@ -321,137 +386,241 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn save_then_load_snapshot_roundtrips() {
-        let tmp = TempDir::new("save_roundtrip");
-        let doc = doc_text("hello world");
+    // A tiny chronological timestamp helper for deterministic records. Real
+    // timestamps come from `current_timestamp()`; tests need stable ordering
+    // without depending on wall-clock timing.
+    fn ts(minute: u32) -> String {
+        format!("2026-07-19T10-{:02}-00-000", minute)
+    }
 
-        let ts = save_snapshot(&doc, &tmp.base()).unwrap();
-        let loaded = reconstruct_version(&ts, &tmp.base()).unwrap();
+    fn snapshot(minute: u32, text: &str) -> HistoryRecord {
+        HistoryRecord::Snapshot {
+            timestamp: ts(minute),
+            document: doc_text(text),
+        }
+    }
 
-        assert_eq!(loaded, doc);
+    fn delta(minute: u32, old: &str, new: &str) -> HistoryRecord {
+        HistoryRecord::Delta {
+            timestamp: ts(minute),
+            ops: compute_doc_ops(&doc_text(old), &doc_text(new)),
+        }
     }
 
     #[test]
-    fn delta_reconstructs_from_snapshot() {
-        let tmp = TempDir::new("delta_reconstruct");
-        let v0 = doc_text("a");
-        let v1 = doc_text("ab");
-
-        let snap_ts = save_snapshot(&v0, &tmp.base()).unwrap();
-        let wrote = write_delta_since(&v0, &v1, &tmp.base()).unwrap();
-        assert!(wrote);
-
-        let entries = list_history(&tmp.base()).unwrap();
-        // One snapshot + one delta.
-        assert_eq!(entries.len(), 2);
-
-        // The delta's timestamp reconstructs v1.
-        let delta_ts = entries
-            .iter()
-            .find(|e| e.kind == HistoryKind::Delta)
-            .unwrap()
-            .timestamp
-            .clone();
-        let loaded = reconstruct_version(&delta_ts, &tmp.base()).unwrap();
-        assert_eq!(para_text(&loaded), "ab");
-
-        // The snapshot's timestamp still reconstructs v0.
-        let loaded_snap = reconstruct_version(&snap_ts, &tmp.base()).unwrap();
-        assert_eq!(para_text(&loaded_snap), "a");
+    fn rite_file_roundtrips_through_json() {
+        let file = RiteFile {
+            document: doc_text("hello"),
+            history: vec![snapshot(0, "hello"), delta(5, "hello", "hello world")],
+        };
+        let json = serde_json::to_string_pretty(&file).unwrap();
+        let back: RiteFile = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, file);
     }
 
     #[test]
-    fn multiple_deltas_apply_in_order() {
-        let tmp = TempDir::new("multi_delta");
-        let v0 = doc_text("a");
-        let v1 = doc_text("ab");
-        let v2 = doc_text("abc");
-        let v3 = doc_text("abcd");
-
-        save_snapshot(&v0, &tmp.base()).unwrap();
-        write_delta_since(&v0, &v1, &tmp.base()).unwrap();
-        write_delta_since(&v1, &v2, &tmp.base()).unwrap();
-        write_delta_since(&v2, &v3, &tmp.base()).unwrap();
-
-        let entries = list_history(&tmp.base()).unwrap();
-        let deltas: Vec<&HistoryEntry> = entries
-            .iter()
-            .filter(|e| e.kind == HistoryKind::Delta)
-            .collect();
-        assert_eq!(deltas.len(), 3);
-
-        // The last delta reconstructs v3; the first reconstructs v1.
-        let last = reconstruct_version(&deltas[2].timestamp, &tmp.base()).unwrap();
-        assert_eq!(para_text(&last), "abcd");
-        let first = reconstruct_version(&deltas[0].timestamp, &tmp.base()).unwrap();
-        assert_eq!(para_text(&first), "ab");
+    fn write_then_read_rite_file_roundtrips() {
+        let tmp = TempDir::new("write_read");
+        let file = RiteFile {
+            document: doc_text("hello"),
+            history: vec![snapshot(0, "hello")],
+        };
+        write_rite_file(&tmp.base(), &file).unwrap();
+        let json = fs::read_to_string(&tmp.base()).unwrap();
+        let back = read_rite_file(&json).unwrap();
+        assert_eq!(back, file);
     }
 
     #[test]
-    fn reconstruct_version_at_snapshot_applies_no_deltas() {
-        let tmp = TempDir::new("at_snapshot");
-        let v0 = doc_text("a");
-        let v1 = doc_text("ab");
+    fn read_rite_file_falls_back_to_bare_document() {
+        // A pre-embedding .rite is a bare Document (no `document`/`history`
+        // wrapper). read_rite_file must accept it and wrap it with empty
+        // history so old files still open.
+        let bare = serde_json::to_string_pretty(&doc_text("legacy")).unwrap();
+        let file = read_rite_file(&bare).unwrap();
+        assert_eq!(para_text(&file.document), "legacy");
+        assert!(file.history.is_empty());
+    }
 
-        let snap_ts = save_snapshot(&v0, &tmp.base()).unwrap();
-        write_delta_since(&v0, &v1, &tmp.base()).unwrap();
-
-        // Asking for the snapshot's own timestamp returns the snapshot verbatim.
-        let loaded = reconstruct_version(&snap_ts, &tmp.base()).unwrap();
+    #[test]
+    fn reconstruct_at_snapshot_returns_snapshot_verbatim() {
+        let history = vec![snapshot(0, "a"), delta(5, "a", "ab")];
+        let loaded = reconstruct_version(&ts(0), &history).unwrap();
         assert_eq!(para_text(&loaded), "a");
     }
 
     #[test]
-    fn list_history_sorted_with_kinds() {
-        let tmp = TempDir::new("list_sorted");
-        let v0 = doc_text("a");
-        let v1 = doc_text("ab");
-        let v2 = doc_text("abc");
+    fn reconstruct_replays_deltas_forward() {
+        let history = vec![
+            snapshot(0, "a"),
+            delta(5, "a", "ab"),
+            delta(10, "ab", "abc"),
+        ];
+        assert_eq!(para_text(&reconstruct_version(&ts(5), &history).unwrap()), "ab");
+        assert_eq!(
+            para_text(&reconstruct_version(&ts(10), &history).unwrap()),
+            "abc"
+        );
+    }
 
-        save_snapshot(&v0, &tmp.base()).unwrap();
-        write_delta_since(&v0, &v1, &tmp.base()).unwrap();
-        write_delta_since(&v1, &v2, &tmp.base()).unwrap();
+    #[test]
+    fn reconstruct_prefers_later_snapshot_on_equal_timestamps() {
+        // Two snapshots share a timestamp (e.g. a save and an autosave within
+        // the same millisecond). The later-appended one represents the more
+        // recent state, so reconstructing at that timestamp must pick it — not
+        // the older snapshot with the same timestamp.
+        let same = ts(10);
+        let history = vec![
+            HistoryRecord::Snapshot {
+                timestamp: same.clone(),
+                document: doc_text("older"),
+            },
+            HistoryRecord::Snapshot {
+                timestamp: same.clone(),
+                document: doc_text("newer"),
+            },
+        ];
+        assert_eq!(
+            para_text(&reconstruct_version(&same, &history).unwrap()),
+            "newer"
+        );
+    }
 
-        let entries = list_history(&tmp.base()).unwrap();
+    #[test]
+    fn reconstruct_uses_newest_snapshot_at_or_before_target() {
+        // Two snapshots; a target after the second must NOT replay the first
+        // snapshot's deltas.
+        let history = vec![
+            snapshot(0, "a"),
+            delta(5, "a", "ab"),
+            snapshot(10, "xy"), // a fresh baseline
+            delta(15, "xy", "xyz"),
+        ];
+        assert_eq!(
+            para_text(&reconstruct_version(&ts(15), &history).unwrap()),
+            "xyz"
+        );
+    }
+
+    #[test]
+    fn reconstruct_before_oldest_snapshot_errors() {
+        let history = vec![snapshot(10, "a")];
+        let res = reconstruct_version(&ts(0), &history);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn reconstruct_with_empty_history_errors() {
+        let res = reconstruct_version(&ts(0), &[]);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn list_history_is_sorted_oldest_first_with_kinds() {
+        let history = vec![
+            snapshot(0, "a"),
+            delta(5, "a", "ab"),
+            delta(10, "ab", "abc"),
+        ];
+        let entries = list_history(&history);
         assert_eq!(entries.len(), 3);
-        // Sorted ascending by timestamp.
         assert!(entries.windows(2).all(|w| w[0].timestamp < w[1].timestamp));
-        // Kinds: snapshot, delta, delta.
         assert_eq!(entries[0].kind, HistoryKind::Snapshot);
         assert_eq!(entries[1].kind, HistoryKind::Delta);
         assert_eq!(entries[2].kind, HistoryKind::Delta);
     }
 
     #[test]
-    fn write_delta_since_noop_when_unchanged() {
-        let tmp = TempDir::new("noop_delta");
-        let v0 = doc_text("a");
-        save_snapshot(&v0, &tmp.base()).unwrap();
-
-        let wrote = write_delta_since(&v0, &v0, &tmp.base()).unwrap();
-        assert!(!wrote);
-
-        // Still just the one snapshot.
-        let entries = list_history(&tmp.base()).unwrap();
-        assert_eq!(entries.len(), 1);
+    fn compact_keeps_only_most_recent_snapshots() {
+        let mut history = vec![
+            snapshot(0, "a"),
+            delta(5, "a", "ab"),
+            snapshot(10, "ab"),
+            delta(15, "ab", "abc"),
+            snapshot(20, "abc"),
+        ];
+        compact_history(&mut history, 2);
+        // The first snapshot + its delta are evicted; the two newest snapshots
+        // (and the delta between them) survive.
+        assert_eq!(history.len(), 3);
+        assert_eq!(history[0], snapshot(10, "ab"));
+        assert_eq!(history[1], delta(15, "ab", "abc"));
+        assert_eq!(history[2], snapshot(20, "abc"));
     }
 
     #[test]
-    fn reconstruct_version_with_no_history_errors() {
-        let tmp = TempDir::new("empty_history");
-        // No snapshot ever written; reconstruction must fail cleanly.
-        let res = reconstruct_version("2026-01-01T00-00-00-000", &tmp.base());
-        assert!(res.is_err());
+    fn compact_preserves_reconstruction_of_surviving_range() {
+        let mut history = vec![
+            snapshot(0, "a"),
+            delta(5, "a", "ab"),
+            snapshot(10, "ab"),
+            delta(15, "ab", "abc"),
+            snapshot(20, "abc"),
+            delta(25, "abc", "abcd"),
+        ];
+        compact_history(&mut history, 2);
+        // The oldest surviving snapshot is at minute 10; anything before it is
+        // gone, but everything from minute 10 on reconstructs correctly.
+        assert!(reconstruct_version(&ts(0), &history).is_err());
+        assert_eq!(para_text(&reconstruct_version(&ts(10), &history).unwrap()), "ab");
+        assert_eq!(
+            para_text(&reconstruct_version(&ts(25), &history).unwrap()),
+            "abcd"
+        );
     }
 
     #[test]
-    fn reconstruct_version_before_oldest_snapshot_errors() {
-        let tmp = TempDir::new("before_oldest");
-        save_snapshot(&doc_text("a"), &tmp.base()).unwrap();
-        // A target earlier than the only snapshot: nothing to load from.
-        let res = reconstruct_version("2000-01-01T00-00-00-000", &tmp.base());
-        assert!(res.is_err());
+    fn compact_is_noop_when_at_or_under_cap() {
+        let mut history = vec![snapshot(0, "a"), delta(5, "a", "ab")];
+        compact_history(&mut history, 5);
+        assert_eq!(history.len(), 2);
+    }
+
+    #[test]
+    fn deltas_since_last_snapshot_counts_trailing_deltas() {
+        let history = vec![snapshot(0, "a"), delta(5, "a", "ab"), delta(10, "ab", "abc")];
+        assert_eq!(deltas_since_last_snapshot(&history), 2);
+
+        let history2 = vec![delta(5, "a", "ab")]; // no snapshot yet
+        assert_eq!(deltas_since_last_snapshot(&history2), 1);
+    }
+
+    #[test]
+    fn migrate_sidecar_reads_and_removes_legacy_folder() {
+        let tmp = TempDir::new("migrate");
+        // Build a legacy sidecar by hand: a snapshot + a delta, the way the old
+        // code wrote them (pretty Document JSON / Vec<DocOp> JSON).
+        let hist = history_dir(&tmp.base());
+        fs::create_dir_all(snapshots_dir(&hist)).unwrap();
+        fs::create_dir_all(deltas_dir(&hist)).unwrap();
+        fs::write(
+            snapshots_dir(&hist).join(format!("{}.{}", ts(0), SNAPSHOT_EXT)),
+            serde_json::to_string_pretty(&doc_text("a")).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            deltas_dir(&hist).join(format!("{}.{}", ts(5), DELTA_EXT)),
+            serde_json::to_string(&compute_doc_ops(&doc_text("a"), &doc_text("ab"))).unwrap(),
+        )
+        .unwrap();
+
+        let records = migrate_sidecar(&tmp.base()).unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].timestamp(), ts(0));
+        assert_eq!(records[1].timestamp(), ts(5));
+
+        // Reconstructing from the migrated records matches the sidecar's data.
+        assert_eq!(para_text(&reconstruct_version(&ts(5), &records).unwrap()), "ab");
+
+        // The sidecar folder is gone.
+        assert!(!hist.exists());
+    }
+
+    #[test]
+    fn migrate_sidecar_returns_empty_when_none_exists() {
+        let tmp = TempDir::new("migrate_none");
+        let records = migrate_sidecar(&tmp.base()).unwrap();
+        assert!(records.is_empty());
     }
 
     #[test]
