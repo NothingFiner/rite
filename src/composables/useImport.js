@@ -43,6 +43,42 @@ function runText(elements) {
   return (elements || []).map((el) => el.textRun.content).join('').trim()
 }
 
+// Normalize a section title imported from an external document so it does not
+// duplicate the prefix the renderer will later derive. A chapter-type section
+// stores ONLY its subtitle in `title` — the "Chapter N: " prefix is produced at
+// render time by useSectionFormat().formatChapter(idx). Google Docs exports
+// often bake that prefix into the heading text itself, so a heading that
+// literally reads "Chapter 2" (no real subtitle) would render as
+// "Chapter 2: Chapter 2", and "Chapter 2: The Beginning" would render as
+// "Chapter 2: Chapter 2: The Beginning". This function strips the redundant
+// leading prefix so only the real subtitle (or nothing) is stored.
+//
+// Section-type sections are NOT touched: they render their title literally with
+// no derived number prefix, so there is no duplication to remove — and a
+// section legitimately titled "Chapter 2" (e.g. a foreword referencing another
+// chapter) would be damaged by stripping. The asymmetry is intentional.
+export function deduplicateSectionTitle(title, sectionType) {
+  if (sectionType !== 'chapter') return title
+  const trimmed = (title || '').trim()
+  if (!trimmed) return ''
+
+  // Pure duplicate: "Chapter 2: Chapter 2" (or with a hyphen) — the whole
+  // string is just the prefix repeated. Must be checked BEFORE the
+  // prefix+subtitle case, otherwise the second "Chapter 2" would be captured
+  // as if it were a real subtitle.
+  if (/^chapter\s+\d+\s*[:\-]\s*chapter\s+\d+$/i.test(trimmed)) return ''
+  // Just the prefix with no subtitle: "Chapter 2" — nothing real to keep, so
+  // the renderer shows only the derived "Chapter N".
+  if (/^chapter\s+\d+$/i.test(trimmed)) return ''
+  // Prefix + real subtitle: "Chapter 2: The Beginning" → "The Beginning".
+  const prefixAndSubtitle = trimmed.match(/^chapter\s+\d+\s*[:\-]\s*(.+)$/i)
+  if (prefixAndSubtitle) return prefixAndSubtitle[1].trim()
+
+  // No recognizable chapter prefix (e.g. "The Beginning" or anything custom)
+  // — leave it untouched so the subtitle is preserved as authored.
+  return trimmed
+}
+
 /* ------------------------------------------------------------------ */
 /* DOCX import                                                        */
 /* ------------------------------------------------------------------ */
@@ -102,10 +138,11 @@ function htmlToSections(root) {
   while (node) {
     if (/^H[1-6]$/.test(node.nodeName)) {
       if (current) sections.push(current)
+      const sectionType = node.nodeName === 'H2' ? 'chapter' : 'section'
       current = {
         id: generateSectionId(),
-        title: (node.textContent || '').trim(),
-        sectionType: node.nodeName === 'H2' ? 'chapter' : 'section',
+        title: deduplicateSectionTitle((node.textContent || '').trim(), sectionType),
+        sectionType,
         paragraphs: [],
       }
     } else if (node.nodeName === 'P') {
@@ -222,10 +259,11 @@ export async function importOdt(arrayBuffer) {
 
     if (isHeading) {
       if (current) sections.push(current)
+      const sectionType = level === 2 ? 'chapter' : 'section'
       current = {
         id: generateSectionId(),
-        title: runText(elements),
-        sectionType: level === 2 ? 'chapter' : 'section',
+        title: deduplicateSectionTitle(runText(elements), sectionType),
+        sectionType,
         paragraphs: [],
       }
     } else {
