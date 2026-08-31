@@ -271,7 +271,9 @@ pub fn save_document(path: String, state: State<AppState>) -> Result<(), String>
     // pair, so nothing separate appears in Finder next to the document.
     state.append_history_snapshot(&doc)?;
     let file = state.build_rite_file()?;
-    history::write_rite_file(Path::new(&path), &file)?;
+    // `write_rite_file` takes ownership and stamps the current schema version
+    // on the way to disk; `file` is not used afterward, so move it in.
+    history::write_rite_file(Path::new(&path), file)?;
 
     let mut last_path = state.last_path.lock().map_err(|e| e.to_string())?;
     *last_path = Some(path);
@@ -293,8 +295,11 @@ pub fn open_document(path: String, state: State<AppState>) -> Result<Document, S
     // Parse the `.rite` as an embedded `RiteFile { document, history }`. A
     // bare `Document` (a pre-embedding `.rite`, written before history lived
     // inside the file) is accepted as a fallback with an empty history, so
-    // older single-document saves still open.
-    let mut rite_file = history::read_rite_file(&json)?;
+    // older single-document saves still open. Then run the forward-migration
+    // hook so the rest of the app only ever sees a file at the current schema;
+    // a file from a newer Rite is rejected here with a clear error rather than
+    // silently misread.
+    let mut rite_file = history::migrate_rite_file(history::read_rite_file(&json)?)?;
 
     // Absorb any legacy `.rite.history` sidecar folder into the embedded
     // history, then delete the folder so it no longer appears in Finder.
@@ -380,7 +385,7 @@ pub fn autosave_document(state: State<AppState>) -> Result<(), String> {
     let journaled = state.append_history_delta()?;
     if journaled {
         let file = state.build_rite_file()?;
-        history::write_rite_file(Path::new(&base_path), &file)?;
+        history::write_rite_file(Path::new(&base_path), file)?;
     }
 
     *state.is_modified.lock().map_err(|e| e.to_string())? = false;
@@ -398,7 +403,7 @@ pub fn save_snapshot(state: State<AppState>) -> Result<String, String> {
     let doc = state.document.lock().map_err(|e| e.to_string())?.clone();
     let timestamp = state.append_history_snapshot(&doc)?;
     let file = state.build_rite_file()?;
-    history::write_rite_file(Path::new(&base_path), &file)?;
+    history::write_rite_file(Path::new(&base_path), file)?;
     Ok(timestamp)
 }
 
