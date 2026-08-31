@@ -10,6 +10,16 @@ export const useDocumentStore = defineStore('document', {
     isLoading: false,
     lastPath: null,
     syncTimeout: null,
+    // Save indicator state for the status bar. `saveState` tracks the last
+    // file-write attempt: 'idle' (nothing saved yet), 'saving' (a write is in
+    // flight), 'saved' (the last write succeeded), 'error' (it failed).
+    // `lastSavedAt` is the epoch-ms timestamp of the most recent successful
+    // write, used for the "Saved 2m ago" relative label. Both are driven from
+    // the two file-write paths — explicit `saveDocument` AND the background
+    // `autosaveDocument` (which rewrites the whole `.rite`, not just journals
+    // history) — so the indicator reflects every real flush to disk.
+    saveState: 'idle',
+    lastSavedAt: null,
   }),
 
   actions: {
@@ -49,6 +59,12 @@ export const useDocumentStore = defineStore('document', {
         this.doc = data
         this.lastPath = path
         this.isModified = false
+        // The on-disk file matches memory, so the doc is "saved" — but we did
+        // not write it this session, so there is no `lastSavedAt` to count
+        // from. The status bar shows a bare "Saved" (no relative time) for
+        // this case, distinct from "Saved 2m ago" after a real write.
+        this.saveState = 'saved'
+        this.lastSavedAt = null
       } catch (e) {
         // Log, then rethrow so the caller (useFileIO.openFile) can surface the
         // actual cause to the user. Previously this swallowed the error, which
@@ -139,6 +155,7 @@ export const useDocumentStore = defineStore('document', {
     },
 
     async saveDocument(path) {
+      this.saveState = 'saving'
       try {
         await invoke('save_document', { path })
         if (this.doc) {
@@ -146,17 +163,24 @@ export const useDocumentStore = defineStore('document', {
         }
         this.lastPath = path
         this.isModified = false
+        this.saveState = 'saved'
+        this.lastSavedAt = Date.now()
       } catch (e) {
+        this.saveState = 'error'
         this.notifyError(e, 'Failed to save')
       }
     },
 
     async autosaveDocument() {
       if (!this.lastPath || !this.isModified) return
+      this.saveState = 'saving'
       try {
         await invoke('autosave_document')
         this.isModified = false
+        this.saveState = 'saved'
+        this.lastSavedAt = Date.now()
       } catch (e) {
+        this.saveState = 'error'
         this.notifyError(e, 'Auto-save failed')
       }
     },

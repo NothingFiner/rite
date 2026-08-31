@@ -205,4 +205,89 @@ describe('useDocumentStore', () => {
     store.setDoc(newDoc)
     expect(store.doc).toEqual(newDoc)
   })
+
+  // --- Save indicator (saveState / lastSavedAt) ----------------------------
+  // The status bar's "Saving… / Saved Xm ago / Save failed" label is driven
+  // entirely by these two store fields, flipped by the file-write actions.
+
+  it('initializes with idle saveState and no lastSavedAt', () => {
+    const store = useDocumentStore()
+    expect(store.saveState).toBe('idle')
+    expect(store.lastSavedAt).toBeNull()
+  })
+
+  it('saveDocument transitions saving → saved and stamps lastSavedAt', async () => {
+    invoke.mockResolvedValue(undefined)
+    const store = useDocumentStore()
+    store.doc = { title: 'Save Me', sections: [] }
+    store.isModified = true
+
+    const inFlight = store.saveDocument('/save.rite')
+    // Synchronously set to 'saving' before the awaited invoke resolves, so the
+    // status bar can show "Saving…" during the write.
+    expect(store.saveState).toBe('saving')
+    await inFlight
+
+    expect(store.saveState).toBe('saved')
+    expect(typeof store.lastSavedAt).toBe('number')
+  })
+
+  it('saveDocument records error state when the write fails', async () => {
+    invoke.mockRejectedValue(new Error('disk full'))
+    const store = useDocumentStore()
+    store.doc = { title: 'Save Me', sections: [] }
+    store.isModified = true
+
+    await store.saveDocument('/save.rite')
+    expect(store.saveState).toBe('error')
+    // A failed write must NOT advance lastSavedAt — the label says "Save
+    // failed", not "Saved just now".
+    expect(store.lastSavedAt).toBeNull()
+  })
+
+  it('autosaveDocument transitions saving → saved and stamps lastSavedAt', async () => {
+    invoke.mockResolvedValue(undefined)
+    const store = useDocumentStore()
+    store.lastPath = '/test.rite'
+    store.isModified = true
+
+    await store.autosaveDocument()
+    expect(invoke).toHaveBeenCalledWith('autosave_document')
+    expect(store.saveState).toBe('saved')
+    expect(typeof store.lastSavedAt).toBe('number')
+  })
+
+  it('autosaveDocument records error state when the write fails', async () => {
+    invoke.mockRejectedValue(new Error('autosave boom'))
+    const store = useDocumentStore()
+    store.lastPath = '/test.rite'
+    store.isModified = true
+
+    await store.autosaveDocument()
+    expect(store.saveState).toBe('error')
+    expect(store.lastSavedAt).toBeNull()
+  })
+
+  it('skipping autosave (no path / not modified) leaves saveState untouched', async () => {
+    const store = useDocumentStore()
+    store.saveState = 'saved'
+    store.lastSavedAt = 1000
+    store.lastPath = null
+    store.isModified = true
+    await store.autosaveDocument()
+    // Bailed before setting 'saving' — a no-op autosave must not clobber an
+    // existing "Saved" indicator.
+    expect(store.saveState).toBe('saved')
+    expect(store.lastSavedAt).toBe(1000)
+  })
+
+  it('loadDocument marks the doc saved with no lastSavedAt (opened, not written)', async () => {
+    const mockDoc = { title: 'Opened', author: '', sections: [] }
+    invoke.mockResolvedValue(mockDoc)
+    const store = useDocumentStore()
+    await store.loadDocument('/opened.rite')
+    expect(store.saveState).toBe('saved')
+    // We did not write it this session, so there is no timestamp to count from.
+    expect(store.lastSavedAt).toBeNull()
+  })
 })
