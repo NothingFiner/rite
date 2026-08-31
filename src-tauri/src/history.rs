@@ -98,7 +98,7 @@ pub fn current_timestamp() -> String {
 
 /// Write `content` to `path` via a sibling `.tmp` file then atomic rename, so a
 /// crash mid-write cannot leave a half-written `.rite`.
-fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
+pub(crate) fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
     let tmp = format!("{}.tmp", path.to_string_lossy());
     fs::write(&tmp, content).map_err(|e| e.to_string())?;
     fs::rename(&tmp, path).map_err(|e| e.to_string())?;
