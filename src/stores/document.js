@@ -95,6 +95,15 @@ export const useDocumentStore = defineStore('document', {
 
     async undo() {
       try {
+        // Flush any pending typing batch BEFORE undoing. syncToRust ships the
+        // current doc to Rust, where sync_document journals it as the most
+        // recent history delta — so the undo below reverts the user's latest
+        // uncommitted edits instead of skipping them (the "he" vs "the" bug:
+        // the live DOM/store had run ahead of the lagging Rust copy, so undo
+        // reverted a stale snapshot). Harmless when nothing is pending:
+        // syncToRust early-returns when !isModified, and push_history_delta
+        // no-ops on an unchanged doc, so no spurious undo step is created.
+        await this.syncToRust()
         const updated = await invoke('undo')
         this.doc = updated
         this.isModified = true
@@ -105,6 +114,10 @@ export const useDocumentStore = defineStore('document', {
 
     async redo() {
       try {
+        // Same flush-before-redo rationale as undo: commit any pending typing
+        // as a fresh delta (which truncates the redo branch, correctly killing
+        // redo after a new edit) before reapplying the next forward delta.
+        await this.syncToRust()
         const updated = await invoke('redo')
         this.doc = updated
         this.isModified = true
@@ -183,6 +196,24 @@ export const useDocumentStore = defineStore('document', {
     syncSections(sections) {
       if (!this.doc) return
       this.doc.sections = sections
+      this.markModified()
+    },
+
+    /// Update ONE section in place from the editor's localized DOM readback.
+    /// The editor confines every keystroke edit to a single section (cross-
+    /// section backspace/delete is blocked), so on the typing path it reads back
+    /// only the cursor's section and emits the result here — mutating one
+    /// section instead of replacing the whole `doc.sections` array. That keeps
+    /// the pagination per-section cache and the word-count watcher touching only
+    /// the edited section rather than churning the whole document per
+    /// keystroke. `syncSections` (whole-array replace) is still used for
+    /// array-level changes like `insertSection`.
+    syncSection({ id, title, paragraphs }) {
+      if (!this.doc) return
+      const s = this.doc.sections.find(s => s.id === id)
+      if (!s) return
+      s.title = title
+      s.paragraphs = paragraphs
       this.markModified()
     },
 

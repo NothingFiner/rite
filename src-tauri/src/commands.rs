@@ -334,10 +334,23 @@ pub fn open_document(path: String, state: State<AppState>) -> Result<Document, S
 
 #[tauri::command]
 pub fn sync_document(data: Document, state: State<AppState>) -> Result<(), String> {
+    // Capture the pre-sync state so the typing batch is journaled as an undo
+    // delta. The editor's typing path lands here ~1s after typing stops
+    // (debouncedSync coalesces a burst into one call). Without this, plain
+    // typing was never journaled, so Cmd+Z only reverted the structural
+    // commands (rename/delete/change-type) — not additions or edits. The
+    // delta machinery (compute_doc_ops → UpdateParagraph{old,new}, inverts by
+    // swap) already handles both additions and deletions; we were simply not
+    // feeding it. push_history_delta no-ops when compute_doc_ops finds no
+    // change, so an unchanged re-sync (e.g. the flush store.undo performs
+    // before reverting) creates no spurious undo step.
+    let old_doc = state.document.lock().map_err(|e| e.to_string())?.clone();
     let mut doc = state.document.lock().map_err(|e| e.to_string())?;
     let mut modified = state.is_modified.lock().map_err(|e| e.to_string())?;
     *doc = data;
     *modified = true;
+    drop(doc);
+    state.push_history_delta(&old_doc);
     Ok(())
 }
 

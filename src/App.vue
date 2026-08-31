@@ -82,6 +82,7 @@
           :margin="theme.editorMargin"
           :toc-items="nav.tocItems"
           @sync-sections="store.syncSections"
+          @sync-section="store.syncSection"
           @delete-section="store.deleteSection"
           @update="store.markModified()"
           v-else-if="store.doc"
@@ -129,7 +130,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, reactive, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, reactive, nextTick, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useDocumentStore } from './stores/document.js'
 import { useTheme } from './composables/useTheme.js'
@@ -191,8 +192,19 @@ const llmSettingsRaw = useLlmSettings()
 const llmSettings = reactive(llmSettingsRaw)
 const chat = reactive(useChat(doc, llmSettingsRaw, navRaw, editorRef))
 
-const wordCount = computed(() => {
-  if (!store.doc) return 0
+// Word count for the status bar. Debounced rather than a live `computed`: a
+// computed over every paragraph's text re-runs O(document) on every keystroke
+// (each `syncSection` mutation invalidates it), which at 51k words hitched the
+// main thread while typing. A deep watcher on `store.doc.sections` is O(1) per
+// notification — Vue's deep watches hand the same reactive reference as both
+// oldValue and newValue, so there is no per-trigger clone — and the actual
+// O(document) tally runs once, ~300ms after typing stops. The status bar
+// count lagging a fraction of a second is invisible; the typing smoothness is
+// not. (Equivalent to the pagination watch's debounce pattern.)
+const wordCount = ref(0)
+let wordCountTimer = null
+function recomputeWordCount() {
+  if (!store.doc) { wordCount.value = 0; return }
   let count = 0
   for (const section of store.doc.sections || []) {
     for (const p of section.paragraphs || []) {
@@ -202,8 +214,16 @@ const wordCount = computed(() => {
       }
     }
   }
-  return count
-})
+  wordCount.value = count
+}
+watch(
+  () => store.doc?.sections,
+  () => {
+    if (wordCountTimer) clearTimeout(wordCountTimer)
+    wordCountTimer = setTimeout(recomputeWordCount, 300)
+  },
+  { deep: true, immediate: true },
+)
 
 
 function onActivitySelect(mode) {
@@ -294,6 +314,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (autosaveTimer) clearInterval(autosaveTimer)
+  if (wordCountTimer) clearTimeout(wordCountTimer)
 })
 </script>
 
