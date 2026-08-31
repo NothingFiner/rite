@@ -1,6 +1,7 @@
 import { open, save, ask, message } from '@tauri-apps/api/dialog'
 import { readBinaryFile } from '@tauri-apps/api/fs'
 import { useDocumentStore } from '../stores/document.js'
+import { useToastsStore } from '../stores/toasts.js'
 import { importDocx, importOdt } from './useImport.js'
 import { isEmptyParagraph } from '../constants/ParagraphStyle.js'
 
@@ -23,7 +24,7 @@ export function useFileIO() {
       try {
         await store.saveDocument(store.lastPath)
       } catch (e) {
-        console.error('Failed to save:', e)
+        useToastsStore().pushToast({ type: 'error', message: e?.message || String(e) })
       }
       return
     }
@@ -36,7 +37,7 @@ export function useFileIO() {
     try {
       await store.saveDocument(filePath)
     } catch (e) {
-      console.error('Failed to save:', e)
+      useToastsStore().pushToast({ type: 'error', message: e?.message || String(e) })
     }
   }
 
