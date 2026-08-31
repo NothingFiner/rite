@@ -20,7 +20,6 @@ import { ref, onMounted, onUnmounted, nextTick, watch, computed, toRef } from 'v
 import { paragraphToHTML, sectionTitleToHTML, escapeHtml } from '../../composables/useParagraphHTML.js'
 import { flattenSections, groupBlocks, computeFirstLineIndent } from '../../composables/useSectionBlocks.js'
 import { computeReconcileOps, blockKey } from '../../composables/useEditorReconcile.js'
-import { usePagination } from '../../composables/usePagination.js'
 import { applySearchHighlights, clearSearchHighlights } from '../../composables/useSearchHighlights.js'
 import { THEMES } from '../../constants/themes.js'
 import { generateParagraphId, generateSectionId, createSection, createParagraph, defaultTextStyle } from '../../constants/DocumentModel.js'
@@ -28,6 +27,11 @@ import { useSectionFormat } from '../../composables/useSectionFormat.js'
 
 const props = defineProps({
   modelValue: Object,
+  // Page breaks come from the SINGLE shared `usePagination` instance owned by
+  // App.vue (roadmap 2.5) — passed through DocumentRenderer — instead of a
+  // per-editor instance with its own cold measurement cache. Same `pageBreaks`
+  // contract: an array of flattened block indices that start a new page.
+  pageBreaks: { type: Array, default: () => [] },
   theme: { type: Number, default: 0 },
   zoom: { type: Number, default: 16 },
   margin: { type: String, default: 'compact' },
@@ -65,8 +69,7 @@ const lastSectionCount = ref(0)
 // fallback to this value. Cleared when its target node is destroyed (drift-gate
 // fallback to renderEditor) so it can never point at a missing block.
 const lastEditorSelection = ref(null)
-const docRef = toRef(props, 'modelValue')
-const { pageBreaks } = usePagination(docRef)
+const pageBreaks = toRef(props, 'pageBreaks')
 const sectionFormat = useSectionFormat()
 
 function editorApplySearchHighlights(matches, currentIndex) {
@@ -950,7 +953,13 @@ function currentPageAtCursor() {
 // Place the cursor on the first paragraph of the page whose start block is
 // `startEl` (a section-title or paragraph). If the page starts with a
 // section-title, drop into the first paragraph after it.
-function focusPageStart(startEl) {
+//
+// `behavior` defaults to 'smooth' for in-view page navigation (adjacent pages,
+// a short pleasant glide). View-switch restoration passes 'auto' (instant): a
+// switch can jump many pages, and a smooth glide there would briefly flash the
+// wrong page (the scroll-layer keeps its old pixel scrollTop until the glide
+// finishes) before settling — instant jumps straight to the target page.
+function focusPageStart(startEl, behavior = 'smooth') {
   let target = startEl
   if (startEl.classList.contains('section-title')) {
     let next = startEl.nextElementSibling
@@ -960,7 +969,7 @@ function focusPageStart(startEl) {
     if (next && next.classList.contains('paragraph')) target = next
   }
   placeCursorAtStart(target)
-  target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  target.scrollIntoView({ behavior, block: 'start' })
 }
 
 function navigatePage(direction) {
@@ -972,6 +981,27 @@ function navigatePage(direction) {
   const startEl = sheet.querySelector(`[data-page-start="${targetPage}"]`)
   if (!startEl) return
   focusPageStart(startEl)
+}
+
+// Absolute scroll-to-page for view switching (5.1b): place the cursor + scroll
+// to the start of page `n`, reusing the same focusPageStart navigatePage uses.
+// Unlike navigatePage this takes an absolute page number (captured from the
+// outgoing view) rather than a relative step. Instant ('auto') behavior — see
+// focusPageStart — so the switch doesn't glide through intermediate pages.
+function scrollToPage(n) {
+  const sheet = sheetRef.value
+  if (!sheet) return
+  const targetPage = Math.max(1, n)
+  const startEl = sheet.querySelector(`[data-page-start="${targetPage}"]`)
+  if (startEl) focusPageStart(startEl, 'auto')
+}
+
+// The page number at the caret — the editor's notion of "current page". Used by
+// App.vue when switching FROM the editor to another view so the incoming view
+// can land on the same page (page numbers agree across views because pagination
+// is shared).
+function getCurrentPage() {
+  return currentPageAtCursor()
 }
 
 // Jump the cursor to the first paragraph of the next/previous page that begins
@@ -1259,6 +1289,8 @@ defineExpose({
   insertSection,
   scrollToParagraph,
   scrollToSection,
+  scrollToPage,
+  getCurrentPage,
   selectLine,
   navigatePage,
   navigateSectionPage,

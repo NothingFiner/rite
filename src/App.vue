@@ -66,7 +66,7 @@
       </div>
     </div>
 
-    <div class="scroll-layer" :class="['mode-' + viewMode, { 'right-pad': rightDrawerOpen }]" @click="nav.selectedNavId = null">
+    <div class="scroll-layer" ref="scrollLayerRef" :class="['mode-' + viewMode, { 'right-pad': rightDrawerOpen }]" @click="nav.selectedNavId = null">
       <div class="editor-wrapper" :class="'mode-' + viewMode">
         <HistoryView
           v-if="viewMode === 'history'"
@@ -77,6 +77,8 @@
           ref="editorRef"
           :modelValue="store.doc"
           :mode="viewMode"
+          :page-breaks="pagination.pageBreaks"
+          :word-count="wordCount"
           :theme="theme.editorTheme"
           :zoom="theme.editorZoom"
           :margin="theme.editorMargin"
@@ -95,6 +97,7 @@
       :right-open="rightDrawerOpen"
       @toggle-right="rightDrawerOpen = !rightDrawerOpen"
       @set-mode="onSetMode($event)"
+      @go-to-top="onGoToTop"
     />
 
     <SearchPanel
@@ -121,6 +124,7 @@
       :selected-word-count="format.selectedWordCount"
       @open-file="fileIO.openFile"
       @save-file="fileIO.saveFile"
+      @save-file-as="fileIO.saveFileAs"
       @new-file="onNewFile"
       @import-file="fileIO.importFile"
       @export-plain-text="exportComposable.exportPlainText"
@@ -164,6 +168,7 @@ import { useVersionHistory } from './composables/useVersionHistory.js'
 import { useLlmSettings } from './composables/useLlmSettings.js'
 import { useChat } from './composables/useChat.js'
 import { useWordCount } from './composables/useWordCount.js'
+import { usePagination } from './composables/usePagination.js'
 import DocumentRenderer from './components/DocumentRenderer.vue'
 import Toolbar from './components/Toolbar.vue'
 import StatusBar from './components/StatusBar.vue'
@@ -182,6 +187,10 @@ const store = useDocumentStore()
 const { doc } = storeToRefs(store)
 
 const editorRef = ref(null)
+// The scroll container that wraps the editor/manuscript (it scrolls, not the
+// views themselves — see the .scroll-layer CSS). Used by onGoToTop to jump the
+// manuscript back to its title page.
+const scrollLayerRef = ref(null)
 const viewMode = ref('editor')
 const leftDrawerOpen = ref(false)
 const leftDrawerMode = ref('chapters')
@@ -209,7 +218,20 @@ const search = reactive(useSearchPanel(editorRef, viewMode))
 // same object, not a copy — so edits via the reactive proxy (e.g. the drawer's
 // setSettings, or the nav drawer setting selectedNavId) are seen by useChat's
 // raw refs, and vice versa.
-const navRaw = useNavigation(doc, editorRef)
+
+// THE single shared pagination instance (roadmap 2.5). Previously
+// usePagination ran in THREE places — the editor, the manuscript, AND
+// useNavigation — each with its own cold per-section measurement cache, so
+// every view switch remounted a view whose cache was empty and re-measured the
+// whole document offscreen (the multi-second "calculating pages" lag), and the
+// three could disagree on timing. Now one instance lives here, watches the
+// store doc once, and its `pageBreaks` / `getPageForBlock` are passed down to
+// the views and nav. A view switch no longer triggers any measurement — the
+// shared cache is already warm — and page numbers agree by construction.
+const paginationRaw = usePagination(doc)
+const pagination = reactive(paginationRaw)
+
+const navRaw = useNavigation(doc, editorRef, paginationRaw)
 const nav = reactive(navRaw)
 const fileIO = useFileIO()
 const exportComposable = useExport()
@@ -220,10 +242,13 @@ const llmSettingsRaw = useLlmSettings()
 const llmSettings = reactive(llmSettingsRaw)
 const chat = reactive(useChat(doc, llmSettingsRaw, navRaw, editorRef))
 
-// Whole-document word count for the status bar. Debounced (see useWordCount)
-// so a keystroke burst coalesces into one O(document) tally ~300ms after typing
-// stops, instead of re-tallying per keystroke. Shared with the manuscript title
-// page so the two counts cannot drift.
+// Whole-document word count. THE single instance (mirrors the shared-
+// pagination lift): the status bar reads it here, and the manuscript title
+// page reads the SAME count passed down as a prop (via DocumentRenderer), so
+// there is no per-view recompute and no "0 words" blink on view switch. The
+// initial count is computed synchronously (no 0→real blink on first paint);
+// subsequent typing bursts are debounced (see useWordCount) so a keystroke
+// burst coalesces into one O(document) tally ~300ms after typing stops.
 const { wordCount } = useWordCount(doc)
 
 // Save indicator for the status bar. The underlying state (saveState /
@@ -281,6 +306,20 @@ function onActivitySelect(mode) {
 // the history sidecar; clicking History while already in the view toggles the
 // list drawer. Leaving History closes the list drawer so it does not linger
 // over the editor.
+//
+// Editor ↔ Manuscript switches PRESERVE THE PAGE NUMBER, not the scroll pixel
+// (5.1b). The old behavior just flipped viewMode and let the shared
+// `.scroll-layer` keep its scrollTop in pixels — but a dense contenteditable
+// and a 960px-page manuscript disagree about how far a pixel travels, so the
+// same pixel offset landed the manuscript on a different page than the editor
+// (the user's "pg 20 → pg 29" drift). Now the outgoing view reports the page
+// it's currently showing (getCurrentPage), and after the flip + a nextTick the
+// incoming view scrolls to that same number. Because pagination is ONE shared
+// instance (Fix 1, roadmap 2.5), the same number is the same content in both
+// views. We capture the page BEFORE flipping so we read it from the outgoing
+// view's DOM; reading after the flip would query the half-mounted incoming
+// view and get garbage. nextTick waits for the incoming view to mount before
+// we scroll it.
 function onSetMode(mode) {
   if (mode === 'history') {
     if (viewMode.value === 'history') {
@@ -296,11 +335,53 @@ function onSetMode(mode) {
   if (viewMode.value === 'history' && leftDrawerMode.value === 'history') {
     leftDrawerOpen.value = false
   }
+
+  // Only editor ↔ manuscript needs page preservation. History has no page
+  // scroll to preserve, and anything → editor from history should just land
+  // where the editor last was (the editor never unmounted during a pure
+  // editor→manuscript→editor round-trip when history wasn't involved, but it
+  // does unmount for history; restoring its page from history's page makes no
+  // sense). So capture/restore only when BOTH the outgoing and incoming views
+  // are one of {editor, manuscript}.
+  const pageable = new Set(['editor', 'manuscript'])
+  const isPageableSwitch =
+    pageable.has(viewMode.value) && pageable.has(mode) && viewMode.value !== mode
+
+  let pendingPage = 1
+  if (isPageableSwitch) {
+    pendingPage = editorRef.value?.getCurrentPage?.() ?? 1
+  }
+
   viewMode.value = mode
+
+  if (isPageableSwitch) {
+    nextTick(() => {
+      editorRef.value?.scrollToPage?.(pendingPage)
+    })
+  }
 }
 
+// Nav-link scroll. View-aware (5.1): stay in the CURRENT view when a chapter is
+// clicked — clicking Chapter 4 in the manuscript keeps you in the manuscript
+// at Chapter 4 instead of yanking you to the editor. The one exception is
+// History: it has no editor/manuscript to scroll within, so a nav click from
+// History forces the editor (the original behavior) so the section is
+// actually visible.
 function onScrollTo(id) {
-  nav.scrollToSection(id, () => { viewMode.value = 'editor' })
+  const forceEditor = viewMode.value === 'history'
+  nav.scrollToSection(id, forceEditor ? () => { viewMode.value = 'editor' } : undefined)
+}
+
+// Manuscript "Go to top" button (5.1b). The manuscript's first page is the
+// title page (front matter), which sits at the very top of the scroll-layer —
+// so going to the top is just scrolling the layer back to scrollTop 0, not
+// scrolling to "content page 1" (which would skip the title/TOC/epigram). The
+// button only shows in manuscript mode (Toolbar.vue), but the handler is safe
+// in any mode.
+function onGoToTop() {
+  const layer = scrollLayerRef.value
+  if (!layer) return
+  layer.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
 // Insert is local to the editor (decision 2): force editor view, then ask the

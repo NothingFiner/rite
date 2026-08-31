@@ -41,6 +41,27 @@ export function useFileIO() {
     }
   }
 
+  /// Save a COPY of the current document to a new path, then switch to it
+  /// (Fix 3, non-destructive "Save As"). Unlike `saveFile`, this ALWAYS shows
+  /// the save dialog — it never silently writes to `lastPath`. The old file
+  /// stays on disk untouched (we never delete it); `saveDocument` then updates
+  /// `lastPath` + title + saveState so subsequent quick-saves go to the NEW
+  /// file. This is `saveFile` with the `lastPath` short-circuit removed and the
+  /// dialog path always taken — split out so "Save" stays a one-click save to
+  /// the current file and "Save As" is the explicit copy/rename-to-new-path.
+  async function saveFileAs() {
+    const filePath = await save({
+      filters: [{ name: 'Rite Document', extensions: ['rite'] }],
+      defaultPath: (store.doc?.title || 'Untitled') + '.rite',
+    })
+    if (!filePath) return
+    try {
+      await store.saveDocument(filePath)
+    } catch (e) {
+      useToastsStore().pushToast({ type: 'error', message: e?.message || String(e) })
+    }
+  }
+
   async function openFile() {
     const filePath = await open({
       filters: [{ name: 'Rite Document', extensions: ['rite'] }],
@@ -146,5 +167,5 @@ export function useFileIO() {
     }
   }
 
-  return { saveFile, openFile, importFile, newFile }
+  return { saveFile, saveFileAs, openFile, importFile, newFile }
 }

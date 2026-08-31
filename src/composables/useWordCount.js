@@ -40,13 +40,20 @@ export function useWordCount(docRef) {
     wordCount.value = count
   }
 
+  // Compute the initial count SYNCHRONOUSLY at setup so the first paint shows
+  // the real number, not 0 — there is no keystroke stream to coalesce on the
+  // very first run, so the debounce's whole purpose (avoiding an O(document)
+  // re-tally per keystroke) doesn't apply. One O(document) pass on load is
+  // fine; SUBSEQUENT changes (typing bursts) are then debounced as below.
+  recompute()
+
   watch(
     () => docRef?.value?.sections,
     () => {
       if (timer) clearTimeout(timer)
       timer = setTimeout(recompute, DEBOUNCE_MS)
     },
-    { deep: true, immediate: true },
+    { deep: true },
   )
 
   onUnmounted(() => {
