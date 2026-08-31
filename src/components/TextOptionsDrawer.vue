@@ -40,18 +40,35 @@
         >
           <option v-for="opt in format.fontOptions" :key="opt.label" :value="opt.family">{{ opt.label }}</option>
         </select>
+        <!-- Manuscript page format (Standard / Shunn / A4). This drives BOTH the
+             rendered manuscript pages and pagination's measure (usePagination),
+             which share one useManuscriptFormat instance — so picking here
+             re-flows every page live and re-measures page breaks. A full-width
+             select rather than zoom-row buttons: the preset names are long. -->
+        <div class="drawer-label">Manuscript Format</div>
+        <select
+          class="drawer-input font-select"
+          :value="manuscriptFormat.formatId"
+          @change="e => manuscriptFormat.selectFormat(e.target.value)"
+        >
+          <option v-for="f in manuscriptFormat.formats" :key="f.id" :value="f.id">{{ f.name }}</option>
+        </select>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-// Receives the theme and format composables as props and drives them directly
-// (setMargin / setZoom / setFont). See GeneralOptionsDrawer for the rationale.
+// Receives the theme, format, and manuscriptFormat composables as props and
+// drives them directly (setMargin / setZoom / setFont / selectFormat). See
+// GeneralOptionsDrawer for the rationale. manuscriptFormat is a reactive proxy
+// (see App.vue) so `manuscriptFormat.formatId` / `.formats` / `.selectFormat`
+// are the unwrapped values/functions, not refs.
 defineProps({
   open: { type: Boolean, default: false },
   theme: { type: Object, required: true },
   format: { type: Object, required: true },
+  manuscriptFormat: { type: Object, required: true },
 })
 </script>
 
