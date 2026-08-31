@@ -136,7 +136,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, reactive, nextTick, watch } from 'vue'
+import { ref, onMounted, onUnmounted, reactive, nextTick } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useDocumentStore } from './stores/document.js'
 import { useTheme } from './composables/useTheme.js'
@@ -150,6 +150,7 @@ import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts.js'
 import { useVersionHistory } from './composables/useVersionHistory.js'
 import { useLlmSettings } from './composables/useLlmSettings.js'
 import { useChat } from './composables/useChat.js'
+import { useWordCount } from './composables/useWordCount.js'
 import DocumentRenderer from './components/DocumentRenderer.vue'
 import Toolbar from './components/Toolbar.vue'
 import StatusBar from './components/StatusBar.vue'
@@ -201,38 +202,11 @@ const llmSettingsRaw = useLlmSettings()
 const llmSettings = reactive(llmSettingsRaw)
 const chat = reactive(useChat(doc, llmSettingsRaw, navRaw, editorRef))
 
-// Word count for the status bar. Debounced rather than a live `computed`: a
-// computed over every paragraph's text re-runs O(document) on every keystroke
-// (each `syncSection` mutation invalidates it), which at 51k words hitched the
-// main thread while typing. A deep watcher on `store.doc.sections` is O(1) per
-// notification — Vue's deep watches hand the same reactive reference as both
-// oldValue and newValue, so there is no per-trigger clone — and the actual
-// O(document) tally runs once, ~300ms after typing stops. The status bar
-// count lagging a fraction of a second is invisible; the typing smoothness is
-// not. (Equivalent to the pagination watch's debounce pattern.)
-const wordCount = ref(0)
-let wordCountTimer = null
-function recomputeWordCount() {
-  if (!store.doc) { wordCount.value = 0; return }
-  let count = 0
-  for (const section of store.doc.sections || []) {
-    for (const p of section.paragraphs || []) {
-      for (const el of p.elements) {
-        const text = el.textRun.content || ''
-        if (text.trim()) count += text.trim().split(/\s+/).length
-      }
-    }
-  }
-  wordCount.value = count
-}
-watch(
-  () => store.doc?.sections,
-  () => {
-    if (wordCountTimer) clearTimeout(wordCountTimer)
-    wordCountTimer = setTimeout(recomputeWordCount, 300)
-  },
-  { deep: true, immediate: true },
-)
+// Whole-document word count for the status bar. Debounced (see useWordCount)
+// so a keystroke burst coalesces into one O(document) tally ~300ms after typing
+// stops, instead of re-tallying per keystroke. Shared with the manuscript title
+// page so the two counts cannot drift.
+const { wordCount } = useWordCount(doc)
 
 
 function onActivitySelect(mode) {
@@ -323,7 +297,6 @@ onMounted(async () => {
 
 onUnmounted(() => {
   if (autosaveTimer) clearInterval(autosaveTimer)
-  if (wordCountTimer) clearTimeout(wordCountTimer)
 })
 </script>
 

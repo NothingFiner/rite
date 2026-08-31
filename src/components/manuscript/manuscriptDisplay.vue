@@ -16,6 +16,7 @@ import { paragraphToHTML, sectionTitleToHTML, escapeHtml } from '../../composabl
 import { usePagination } from '../../composables/usePagination.js'
 import { flattenSections, computeFirstLineIndent } from '../../composables/useSectionBlocks.js'
 import { useSectionFormat } from '../../composables/useSectionFormat.js'
+import { useWordCount } from '../../composables/useWordCount.js'
 import { applySearchHighlights, clearSearchHighlights } from '../../composables/useSearchHighlights.js'
 import ManuscriptPage from './manuscriptPage.vue'
 
@@ -41,18 +42,10 @@ const title = computed(() => (props.modelValue.title || '').toUpperCase())
 const author = computed(() => props.modelValue.author || 'Author Name')
 const authorContact = computed(() => props.modelValue.authorContact || '')
 
-const wordCount = computed(() => {
-  let count = 0
-  for (const section of props.modelValue?.sections || []) {
-    for (const p of section.paragraphs || []) {
-      for (const el of p.elements || []) {
-        const text = el.textRun?.content || ''
-        if (text.trim()) count += text.trim().split(/\s+/).length
-      }
-    }
-  }
-  return count
-})
+// Debounced whole-document count, shared with the editor status bar so the
+// two cannot drift. The debounce is moot in this read-only view (no keystroke
+// stream), but the shared implementation is the point. See useWordCount.
+const { wordCount } = useWordCount(docRef)
 
 function getSurname(authorName) {
   const parts = (authorName || '').trim().split(/\s+/)
