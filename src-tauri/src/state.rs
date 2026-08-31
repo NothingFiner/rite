@@ -156,6 +156,15 @@ impl AppState {
 
     /// Snapshot the live document + embedded history into a `RiteFile` for the
     /// caller to write to disk. Locks are held only long enough to clone.
+    ///
+    /// `schema_version` is set to 0 here deliberately: `write_rite_file` is the
+    /// single authority that stamps the current version on the way to disk, so
+    /// the in-memory value is irrelevant by the time the bytes land. Setting 0
+    /// (rather than the current version) keeps `build_rite_file` honest about
+    /// what it actually knows — it has not committed the file to any format
+    /// generation — and means a caller that inspects the `RiteFile` before
+    /// writing sees a neutral, pre-stamp value instead of one that could lie
+    /// about what is on disk.
     pub fn build_rite_file(&self) -> Result<RiteFile, String> {
         let document = self.document.lock().map_err(|e| e.to_string())?.clone();
         let history = self
@@ -166,6 +175,7 @@ impl AppState {
         Ok(RiteFile {
             document,
             history,
+            schema_version: 0,
         })
     }
 
@@ -525,11 +535,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         let base = tmp.join("MyNovel.rite");
-        history::write_rite_file(&base, &file).unwrap();
+        // write_rite_file takes ownership and stamps the current schema version
+        // on the way to disk, so clone for the assertion and expect the stamped
+        // version on read-back rather than build_rite_file's neutral 0.
+        history::write_rite_file(&base, file.clone()).unwrap();
 
         let json = std::fs::read_to_string(&base).unwrap();
         let back = history::read_rite_file(&json).unwrap();
-        assert_eq!(back, file);
+        assert_eq!(back.schema_version, history::CURRENT_RITE_SCHEMA_VERSION);
+        assert_eq!(back.document, file.document);
+        assert_eq!(back.history, file.history);
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
