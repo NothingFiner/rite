@@ -122,6 +122,8 @@
       @open-file="fileIO.openFile"
       @save-file="fileIO.saveFile"
       @import-file="fileIO.importFile"
+      @export-plain-text="exportComposable.exportPlainText"
+      @export-markdown="exportComposable.exportMarkdown"
       @toggle-theme-picker="theme.showThemePicker = !theme.showThemePicker"
       @select-theme="theme.selectTheme"
     />
@@ -141,6 +143,7 @@ import { useTheme } from './composables/useTheme.js'
 import { useSearchPanel } from './composables/useSearchPanel.js'
 import { useNavigation } from './composables/useNavigation.js'
 import { useFileIO } from './composables/useFileIO.js'
+import { useExport } from './composables/useExport.js'
 import { useFormat } from './composables/useFormat.js'
 import { useSectionFormat } from './composables/useSectionFormat.js'
 import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts.js'
@@ -190,6 +193,7 @@ const search = reactive(useSearchPanel(editorRef, viewMode))
 const navRaw = useNavigation(doc, editorRef)
 const nav = reactive(navRaw)
 const fileIO = useFileIO()
+const exportComposable = useExport()
 const format = reactive(useFormat(editorRef, store.markModified.bind(store)))
 const sectionFormat = reactive(useSectionFormat())
 const history = reactive(useVersionHistory(store))
