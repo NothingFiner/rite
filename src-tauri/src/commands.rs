@@ -125,7 +125,7 @@ pub fn replace_current(
     match_index: usize,
     state: State<AppState>,
 ) -> Result<ReplaceResult, String> {
-    let _old_doc = state.document.lock().map_err(|e| e.to_string())?.clone();
+    let old_doc = state.document.lock().map_err(|e| e.to_string())?.clone();
     let mut doc = state.document.lock().map_err(|e| e.to_string())?;
     let mut modified = state.is_modified.lock().map_err(|e| e.to_string())?;
 
@@ -216,6 +216,9 @@ pub fn replace_current(
     } else {
         new_matches.len() as i32 - 1
     };
+
+    drop(doc);
+    state.push_history_delta(&old_doc);
 
     Ok(ReplaceResult {
         matches: new_matches,
@@ -802,6 +805,7 @@ pub fn redo(state: State<AppState>) -> Result<Document, String> {
 mod tests {
     use super::*;
     use crate::document::{Section, SectionType, TextStyle};
+    use tauri::Manager;
 
     /// Create a paragraph with a single unstyled run of `text`.
     fn create_paragraph(id: &str, text: &str) -> Paragraph {
@@ -1058,5 +1062,86 @@ mod tests {
         ]);
         assert!(!merge_paragraphs_in_document(&mut doc, "p1", "nope"));
         assert_eq!(doc.sections[0].paragraphs.len(), 2);
+    }
+
+    // --- replace_current (history journaling) --------------------------------
+
+    /// Read the concatenated text of the first paragraph in the live document.
+    fn first_paragraph_text(state: &AppState) -> String {
+        let doc = state.document.lock().unwrap();
+        doc.sections[0].paragraphs[0]
+            .elements
+            .iter()
+            .map(|e| e.text_run.content.as_str())
+            .collect()
+    }
+
+    /// Build a Tauri mock app with a fresh `AppState` managed. Mirrors how
+    /// `main.rs` wires the real app (`main.rs` calls `.manage(AppState::new())`).
+    /// The returned `App` owns the state; tests obtain a `State` handle via
+    /// `app.state::<AppState>()` and keep the `App` alive for the test's
+    /// duration so that borrow stays valid.
+    fn mock_app_with_state() -> tauri::App<tauri::test::MockRuntime> {
+        tauri::test::mock_builder()
+            .manage(AppState::new())
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("failed to build mock app")
+    }
+
+    #[test]
+    fn replace_current_replaces_the_indexed_match() {
+        let app = mock_app_with_state();
+        let state = app.state::<AppState>();
+        *state.document.lock().unwrap() =
+            create_document(vec![create_paragraph("p1", "foo foo")]);
+
+        // Replace the first of the two "foo" matches.
+        let result =
+            replace_current("foo".to_string(), "bar".to_string(), 0, state.clone()).unwrap();
+        // One "foo" remains, so re-search finds exactly one match, and the
+        // cursor stays on the same index.
+        assert_eq!(result.matches.len(), 1);
+        assert_eq!(result.current_index, 0);
+        assert_eq!(first_paragraph_text(&state), "bar foo");
+    }
+
+    #[test]
+    fn replace_current_is_undoable() {
+        let app = mock_app_with_state();
+        let state = app.state::<AppState>();
+        let original = create_document(vec![create_paragraph("p1", "foo foo")]);
+        *state.document.lock().unwrap() = original.clone();
+
+        // A single find/replace is journaled as a history delta, so it must be
+        // reachable from `undo` (this is the regression: previously
+        // `replace_current` never called `push_history_delta`, so a single
+        // replace was not undoable).
+        replace_current("foo".to_string(), "bar".to_string(), 0, state.clone()).unwrap();
+        assert_eq!(first_paragraph_text(&state), "bar foo");
+
+        assert!(state.undo().unwrap());
+        assert_eq!(first_paragraph_text(&state), "foo foo");
+    }
+
+    #[test]
+    fn replace_current_no_match_journals_nothing() {
+        let app = mock_app_with_state();
+        let state = app.state::<AppState>();
+        *state.document.lock().unwrap() =
+            create_document(vec![create_paragraph("p1", "foo foo")]);
+
+        // An out-of-range match index performs no replacement and records no
+        // history entry, so undo is a no-op that leaves the text untouched.
+        let result = replace_current(
+            "foo".to_string(),
+            "bar".to_string(),
+            99,
+            state.clone(),
+        )
+        .unwrap();
+        assert!(result.matches.is_empty());
+        assert_eq!(result.current_index, -1);
+        assert!(!state.undo().unwrap());
+        assert_eq!(first_paragraph_text(&state), "foo foo");
     }
 }
