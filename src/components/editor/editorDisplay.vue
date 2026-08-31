@@ -2,6 +2,9 @@
   <div
     class="editor-sheet"
     contenteditable="true"
+    spellcheck="true"
+    autocorrect="off"
+    autocapitalize="off"
     ref="sheetRef"
     :style="editorStyles"
     @input="onInput"
