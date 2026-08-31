@@ -212,6 +212,41 @@ export const useDocumentStore = defineStore('document', {
       this.doc = newDoc
     },
 
+    /// Start a brand-new document with a chosen name. The name becomes the
+    /// document title and the default filename on the first Save (the Save
+    /// dialog seeds itself from `doc.title`, so prompting for a name up front
+    /// closes the old pre-first-save "untitled / no path" window). Mirrors
+    /// `importFile`'s setDoc → markModified → syncToRust shape: we clear any
+    /// pending debounced sync, install the fresh doc, then push it to Rust so
+    /// the Rust AppState holds the new document (subsequent edits/undo sync
+    /// against it, not the previous doc).
+    ///
+    /// Frontend-only by design (Phase 1.8): `sync_document` journals a delta
+    /// from the previous doc to this one, so the version history still holds
+    /// the prior document's entries and one undo reverts to it — the same
+    /// characteristic import has. A true clean-slate history would need a
+    /// Rust-side `new_document` command that also clears AppState history; that
+    /// is deliberately deferred.
+    async newDocument(title) {
+      const doc = {
+        title: (title || '').trim() || 'Untitled',
+        author: '',
+        authorContact: '',
+        hasTOC: false,
+        hasEpigram: false,
+        epigramText: '',
+        sections: [createSection()],
+      }
+      if (this.syncTimeout) clearTimeout(this.syncTimeout)
+      this.doc = doc
+      this.lastPath = null
+      this.isModified = true
+      // A never-saved doc has no save state to advertise yet.
+      this.saveState = 'idle'
+      this.lastSavedAt = null
+      await this.syncToRust()
+    },
+
     /// Adopt a document returned by `restore_version` as the live doc. Unlike
     /// `setDoc` + `markModified`, this does NOT trigger a debounced sync back to
     /// Rust: the Rust AppState already holds the restored document (the command

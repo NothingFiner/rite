@@ -121,6 +121,7 @@
       :selected-word-count="format.selectedWordCount"
       @open-file="fileIO.openFile"
       @save-file="fileIO.saveFile"
+      @new-file="onNewFile"
       @import-file="fileIO.importFile"
       @export-plain-text="exportComposable.exportPlainText"
       @export-markdown="exportComposable.exportMarkdown"
@@ -131,6 +132,18 @@
     <!-- Toast notifications overlay. Mounted once at the root so it sits above
          every drawer, panel, and the status bar. -->
     <Toaster />
+
+    <!-- Name-on-creation prompt (1.8). Custom modal: Tauri v1 has no native
+         text-input prompt and window.prompt is blocked in the WKWebView. -->
+    <PromptModal
+      :visible="showNewDocPrompt"
+      title="New Document"
+      message="Name your document. This becomes the filename on first save."
+      placeholder="Untitled"
+      confirm-label="Create"
+      @confirm="onConfirmNewDocument"
+      @cancel="showNewDocPrompt = false"
+    />
 
   </div>
 </template>
@@ -163,6 +176,7 @@ import HistoryView from './components/HistoryView.vue'
 import ActivityBar from './components/ActivityBar.vue'
 import LlmPanel from './components/LlmPanel.vue'
 import Toaster from './components/Toaster.vue'
+import PromptModal from './components/PromptModal.vue'
 
 const store = useDocumentStore()
 const { doc } = storeToRefs(store)
@@ -173,6 +187,10 @@ const leftDrawerOpen = ref(false)
 const leftDrawerMode = ref('chapters')
 const rightDrawerOpen = ref(false)
 const addExpanded = ref(false)
+// Name-on-creation (1.8): the New action opens this prompt modal so a document
+// is named before its first save. Tauri v1 has no native text-input prompt and
+// `window.prompt` is blocked in the WKWebView, so this is a custom modal.
+const showNewDocPrompt = ref(false)
 
 // How often autosave journals a delta to the on-disk history sidecar. The
 // store's autosaveDocument bails when there's no lastPath or nothing modified,
@@ -309,6 +327,21 @@ function onSearchReplaceAll() {
 function openGeneralOptions() {
   leftDrawerMode.value = 'general-options'
   leftDrawerOpen.value = true
+}
+
+// Start a new document (1.8). First the save-before guard (useFileIO.newFile
+// offers to save real unsaved content, identical check to importFile), then the
+// name-prompt modal. The name is collected AFTER the guard so we don't prompt
+// for a name and then throw it away if the user cancels the save dialog.
+async function onNewFile() {
+  await fileIO.newFile()
+  showNewDocPrompt.value = true
+}
+
+// User confirmed a name in the prompt modal → build the fresh named document.
+async function onConfirmNewDocument(name) {
+  showNewDocPrompt.value = false
+  await store.newDocument(name)
 }
 
 useKeyboardShortcuts({
