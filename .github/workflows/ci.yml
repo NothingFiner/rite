@@ -1,0 +1,123 @@
+# CI pipeline for Rite (Tauri v1 + Rust + Vue 3).
+#
+# Staged for when a remote git host is added: this workflow is committed on a
+# feature branch and is intentionally NOT pushed or wired to a remote yet. Once
+# the repository is published to a git host (e.g. GitHub), pushes/PRs targeting
+# `main` and `development` will start triggering these jobs automatically — no
+# further edits should be required.
+#
+# Runner choice: `macos-latest`. Rite targets macOS (Tauri v1 with
+# `macos-private-api`). Building/testing Tauri v1's Rust crate on Linux would
+# require pulling in webkit2gtk system dependencies, which is fragile and
+# drifts from the supported target platform. macOS runners match the dev and
+# target platform and avoid that class of system-dependency headaches.
+#
+# Jobs:
+#   1. rust       — cargo test in src-tauri (toolchain pinned to stable, which
+#                   satisfies `rust-version = "1.70"` in src-tauri/Cargo.toml).
+#   2. frontend  — vitest run + vite build.
+#   3. e2e       — Playwright against the Vite dev server (chromium, headless).
+#                   No bundled Tauri app and no display are required: the
+#                   e2e suite drives http://localhost:1420 via Playwright's
+#                   `webServer` config, which boots `npm run dev`. See
+#                   playwright.config.js and e2e/app.spec.js.
+
+name: CI
+
+on:
+  push:
+    branches: [main, development]
+  pull_request:
+    branches: [main, development]
+
+jobs:
+  rust:
+    name: Rust tests
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: src-tauri
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          # `rust-version = "1.70"` in src-tauri/Cargo.toml is the MSRV floor.
+          # Stable (currently well above 1.70) satisfies it and keeps us on a
+          # moving, supported toolchain.
+
+      - name: Ensure Cargo.lock exists
+        # Swatinem/rust-cache and reproducible CI both want a lockfile. If one
+        # is not committed (e.g. a fresh clone before the lockfile is added),
+        # generate it here so caching and `cargo test` are deterministic.
+        run: cargo generate-lockfile
+
+      - name: Cache Cargo build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          # Key on the committed lockfile so the cache invalidates exactly when
+          # dependencies change.
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+
+      - name: Run cargo test
+        run: cargo test
+
+  frontend:
+    name: Frontend tests and build
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run vitest
+        run: npm test
+
+      - name: Build frontend
+        run: npm run build
+
+  e2e:
+    name: End-to-end tests (Playwright)
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright chromium browser
+        # `npm ci` installs the @playwright/test runner, but the browser binary
+        # itself is not shipped with the npm package and must be fetched
+        # separately. We only need chromium (the single project configured in
+        # playwright.config.js). `--with-deps` is a no-op on macOS (it is
+        # intended for apt-based Linux), so we omit it.
+        run: npx playwright install chromium
+
+      - name: Run Playwright e2e suite
+        # `npm run test:e2e` invokes `playwright test`, whose config
+        # (playwright.config.js) starts `npm run dev` as a `webServer` on
+        # http://localhost:1420 and runs the chromium project headless against
+        # it. No bundled Tauri app and no display server are required.
+        run: npm run test:e2e
