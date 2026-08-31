@@ -47,6 +47,7 @@
       :open="leftDrawerOpen && leftDrawerMode === 'text-options'"
       :theme="theme"
       :format="format"
+      :manuscript-format="manuscriptFormat"
     />
     <HistoryListDrawer
       :open="leftDrawerOpen && leftDrawerMode === 'history'"
@@ -169,6 +170,7 @@ import { useLlmSettings } from './composables/useLlmSettings.js'
 import { useChat } from './composables/useChat.js'
 import { useWordCount } from './composables/useWordCount.js'
 import { usePagination } from './composables/usePagination.js'
+import { useManuscriptFormat } from './composables/useManuscriptFormat.js'
 import DocumentRenderer from './components/DocumentRenderer.vue'
 import Toolbar from './components/Toolbar.vue'
 import StatusBar from './components/StatusBar.vue'
@@ -218,6 +220,17 @@ const search = reactive(useSearchPanel(editorRef, viewMode))
 // same object, not a copy — so edits via the reactive proxy (e.g. the drawer's
 // setSettings, or the nav drawer setting selectedNavId) are seen by useChat's
 // raw refs, and vice versa.
+
+// Manuscript page format (Standard / Shunn / A4). Loaded from prefs HERE, in
+// setup and BEFORE the shared pagination instance below runs its first
+// (immediate) measure — otherwise the first measure would use the default
+// format and re-measure a moment later once the pref loaded. useManuscriptFormat
+// is a module-level singleton, so usePagination (called next) and manuscriptPage
+// read the same already-loaded instance. Wrapped in reactive() so the options
+// drawer prop sees auto-unwrapped values (e.g. `manuscriptFormat.format` is the
+// preset object, not a computed ref) — same pattern as `nav`/`theme`.
+const manuscriptFormat = reactive(useManuscriptFormat())
+manuscriptFormat.loadPrefs()
 
 // THE single shared pagination instance (roadmap 2.5). Previously
 // usePagination ran in THREE places — the editor, the manuscript, AND

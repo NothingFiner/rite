@@ -2,7 +2,7 @@ import { ref, computed, watch, onUnmounted } from 'vue'
 import { paragraphToHTML, sectionTitleToHTML } from './useParagraphHTML.js'
 import { flattenSections } from './useSectionBlocks.js'
 import { useSectionFormat } from './useSectionFormat.js'
-import { CONTENT_WIDTH, CONTENT_HEIGHT } from '../constants/page.js'
+import { useManuscriptFormat } from './useManuscriptFormat.js'
 
 /// Compute the block indices that start a new page from the per-block heights.
 /// A page break is forced before a section-title block (so a chapter/section
@@ -58,6 +58,11 @@ export function assembleGlobalBreaks(sectionResults) {
 export function usePagination(docRef) {
   const pageBreaks = ref([]) // Array of block indices that start a new page
   const sectionFormat = useSectionFormat()
+  // The active manuscript page format (page size, margins, body font). This is
+  // the SINGLE shared instance (see useManuscriptFormat) — the manuscript render
+  // and this measure read the same preset, so a visible page and a computed
+  // page break can't disagree about how wide/tall a page is.
+  const { format: manuscriptFormat } = useManuscriptFormat()
 
   /// Build the manuscript HTML for every block in order, returning the HTML
   /// string (whose `.ms-para` elements appear in the same order as `blocks`).
@@ -77,17 +82,18 @@ export function usePagination(docRef) {
   }
 
   function measureBlocks(blocks) {
+    const fmt = manuscriptFormat.value
     const measure = document.createElement('div')
     measure.className = 'ms-measure'
     measure.style.cssText = `
       position: absolute;
       visibility: hidden;
-      width: ${CONTENT_WIDTH}px;
+      width: ${fmt.contentWidth}px;
       left: -9999px;
       top: 0;
-      font-family: 'Courier New', Courier, monospace;
-      font-size: 12px;
-      line-height: 24px;
+      font-family: ${fmt.fontFamily};
+      font-size: ${fmt.fontSize}px;
+      line-height: ${fmt.lineHeight}px;
     `
 
     const style = document.createElement('style')
@@ -95,8 +101,8 @@ export function usePagination(docRef) {
       .ms-measure .ms-para {
         margin: 0;
         text-align: left;
-        text-indent: 48px;
-        color: #1a1a1a;
+        text-indent: ${fmt.textIndent}px;
+        color: ${fmt.textColor};
       }
       .ms-measure .ms-para.scene-break {
         text-indent: 0;
@@ -107,16 +113,16 @@ export function usePagination(docRef) {
         text-align: center;
         text-transform: uppercase;
         font-weight: 700;
-        font-size: 14px;
-        margin-top: 24px;
+        font-size: ${fmt.fontSize + 2}px;
+        margin-top: ${fmt.lineHeight}px;
       }
       .ms-measure .ms-para.chapter {
         text-indent: 0;
         text-align: center;
         text-transform: uppercase;
         font-weight: 600;
-        font-size: 12px;
-        margin-top: 24px;
+        font-size: ${fmt.fontSize}px;
+        margin-top: ${fmt.lineHeight}px;
       }
       .ms-measure .ms-para.no-indent {
         text-indent: 0;
@@ -192,7 +198,7 @@ export function usePagination(docRef) {
         entry = {
           signature,
           heights,
-          localBreaks: calculateBreaksFromHeights(heights, group.blocks, CONTENT_HEIGHT),
+          localBreaks: calculateBreaksFromHeights(heights, group.blocks, manuscriptFormat.value.contentHeight),
           blockCount: group.blocks.length,
         }
         sectionCache.set(group.sectionId, entry)
@@ -230,8 +236,9 @@ export function usePagination(docRef) {
   // keystroke via syncFromDOM, and page breaks shifting mid-keystroke isn't
   // useful. The per-section cache above already limits a recalc to re-measuring
   // only the changed section, but the debounce still coalesces a burst of
-  // keystrokes into a single recalc (and there are two usePagination instances
-  // — editor + manuscript — watching the same store doc, so coalescing matters).
+  // keystrokes into a single recalc. There is ONE shared usePagination instance
+  // (owned by App.vue, roadmap 2.5) watching the store doc, so a keystroke
+  // burst triggers a single recalc, not several.
   // `calculateBreaks` stays synchronous and exposed for any caller that needs an
   // immediate recalculation.
   let pendingBreaksTimer = null
@@ -258,6 +265,21 @@ export function usePagination(docRef) {
       scheduleBreaks()
     },
     { deep: true, immediate: true }
+  )
+
+  // When the manuscript page format changes (the user picks Standard / Shunn /
+  // A4 in the options drawer), every cached section height is invalid: heights
+  // depend on content width and body font, both of which come from the format.
+  // So clear the whole per-section cache and re-measure. Debounced like the
+  // sections watch so a rapid switch coalesces into one recalc. (The format is a
+  // computed over the shared useManuscriptFormat id ref, so this watch fires on
+  // any selectFormat call from anywhere.)
+  watch(
+    manuscriptFormat,
+    () => {
+      sectionCache.clear()
+      scheduleBreaks()
+    }
   )
 
   return {
