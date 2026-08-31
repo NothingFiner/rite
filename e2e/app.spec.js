@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 
-test.describe('fineWrite App', () => {
+test.describe('Rite App', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
     await page.waitForSelector('.editor-sheet, .manuscript-viewport', { timeout: 5000 })

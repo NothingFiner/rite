@@ -2,78 +2,66 @@
   <div class="drawer left" :class="{ open: open }">
     <div class="drawer-content">
       <div class="drawer-section">
-        <h3 class="drawer-heading">Navigation</h3>
+        <h3 class="drawer-heading">Sections</h3>
         <ul class="nav-tree">
-          <li v-for="group in groups" :key="group.section.id" class="nav-group">
-            <div
-              class="nav-section"
-              :class="{ active: props.activeId === group.section.id }"
-              @click="selectSection(group.section.id, group.section.level)"
-            >
-              <span v-if="group.section.editing">
-                <input
-                  ref="sectionInput"
-                  class="nav-input"
-                  :value="draftTitles[group.section.id] ?? group.section.title"
-                  @input="e => draftTitles[group.section.id] = e.target.value"
-                  @keydown.enter="confirmRename(group.section)"
-                  @click.stop
-                />
-                <button class="nav-confirm" @click.stop="confirmRename(group.section)">&#10003;</button>
-              </span>
-              <span v-else class="nav-title">
-                {{ group.section.title }}
-                <button
-                  v-if="props.activeId === group.section.id"
-                  class="nav-edit"
-                  @click.stop="startRename(group.section)"
-                >&#9998;</button>
-                <button
-                  v-if="props.activeId === group.section.id"
-                  class="nav-delete"
-                  @click.stop="onDelete(group.section.id)"
-                >&#10005;</button>
-              </span>
-              <span class="nav-page">p. {{ group.section.page }}</span>
-            </div>
-            <ul v-if="group.chapters.length > 0" class="nav-children">
-              <li
-                v-for="ch in group.chapters"
-                :key="ch.id"
-                class="nav-chapter"
-                :class="{ active: props.activeId === ch.id }"
-                @click="selectSection(ch.id, ch.level)"
-              >
-                <span class="nav-title">
-                  {{ ch.title }}
-                  <button
-                    v-if="props.activeId === ch.id"
-                    class="nav-delete"
-                    @click.stop="onDelete(ch.id)"
-                  >&#10005;</button>
-                </span>
-                <span class="nav-page">p. {{ ch.page }}</span>
-              </li>
-            </ul>
+          <li
+            v-for="item in sections"
+            :key="item.id"
+            class="nav-section"
+            :class="{ active: props.activeId === item.id }"
+            @click="selectSection(item.id)"
+          >
+            <span v-if="editingIds.has(item.id)" class="nav-edit-row">
+              <input
+                ref="sectionInput"
+                class="nav-input"
+                :value="draftTitles[item.id] ?? item.title"
+                @input="e => draftTitles[item.id] = e.target.value"
+                @keydown.enter="confirmRename(item)"
+                @click.stop
+              />
+              <button class="nav-confirm" @click.stop="confirmRename(item)">&#10003;</button>
+            </span>
+            <span v-else class="nav-title">
+              {{ item.displayTitle }}
+              <button
+                v-if="props.activeId === item.id"
+                class="nav-edit"
+                @click.stop="startRename(item)"
+                :title="item.sectionType === 'chapter' ? 'Rename subtitle' : 'Rename section'"
+              >&#9998;</button>
+              <button
+                v-if="props.activeId === item.id"
+                class="nav-delete"
+                @click.stop="onDelete(item.id)"
+              >&#10005;</button>
+            </span>
+            <button
+              class="nav-type-toggle"
+              :class="{ chapter: item.sectionType === 'chapter' }"
+              @click.stop="toggleType(item)"
+              :title="item.sectionType === 'chapter'
+                ? 'Chapter (auto-numbered). Click to make a freeform Section.'
+                : 'Section (freeform title). Click to make an auto-numbered Chapter.'"
+            >{{ item.sectionType === 'chapter' ? 'Ch' : '§' }}</button>
+            <span class="nav-page">p. {{ item.page }}</span>
           </li>
         </ul>
-        <div v-if="groups.length === 0" class="drawer-empty">
-          <p>No headings yet.</p>
-          <p class="hint">Press Cmd+Enter to add headings.</p>
+        <div v-if="sections.length === 0" class="drawer-empty">
+          <p>No sections yet.</p>
+          <p class="hint">Use Add Chapter / Add Section below.</p>
         </div>
       </div>
 
       <div class="drawer-footer">
         <div class="add-control" :class="{ expanded: props.expanded }">
-          <button class="add-btn" @click="toggleAdd" :title="props.expanded ? 'Cancel' : 'Add Heading'">
-            {{ props.expanded ? '&#10005;' : '+' }}
+          <button class="add-btn" @click="toggleAdd" :title="props.expanded ? 'Cancel' : 'Add section'">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="currentColor" viewBox="0 0 256 256"><path d="M224,128a8,8,0,0,1-8,8H136v80a8,8,0,0,1-16,0V136H40a8,8,0,0,1,0-16h80V40a8,8,0,0,1,16,0v80h80A8,8,0,0,1,224,128Z"></path></svg>
           </button>
           <transition name="slide-fade">
             <div v-if="props.expanded" class="add-options">
-              <select v-model="selectedLevel" class="heading-select">
-                <option v-for="n in 6" :key="n" :value="n">Heading {{ n }}</option>
-              </select>
-              <button class="add-confirm" @click="confirmAdd">Add</button>
+              <button class="add-confirm" @click="addChapter">+ Chapter</button>
+              <button class="add-confirm" @click="addSection">+ Section</button>
             </div>
           </transition>
         </div>
@@ -89,61 +77,34 @@ const props = defineProps({
   open: { type: Boolean, default: false },
   expanded: { type: Boolean, default: false },
   tocItems: { type: Array, default: () => [] },
-  paragraphs: { type: Array, default: () => [] },
   activeId: { type: String, default: null },
 })
 
-const emit = defineEmits(['scrollTo', 'insertHeading', 'renameSection', 'update:expanded', 'select', 'deleteItem'])
+const emit = defineEmits(['scrollTo', 'insertSection', 'renameSection', 'changeSectionType', 'update:expanded', 'select', 'deleteItem'])
 
 const sectionInput = ref(null)
 const editingIds = ref(new Set())
 const draftTitles = ref({})
-const selectedLevel = ref(1)
 
-const groups = computed(() => {
-  const result = []
-  let currentGroup = null
-  const tocItems = Array.isArray(props.tocItems) ? props.tocItems : []
-
-  for (const item of tocItems) {
-    const level = item.level || 1
-    if (level === 1) {
-      const isEditing = editingIds.value.has(item.id) || !item.title
-      if (!item.title && !editingIds.value.has(item.id)) {
-        editingIds.value.add(item.id)
-      }
-      currentGroup = {
-        section: {
-          ...item,
-          editing: isEditing,
-          draftTitle: draftTitles.value[item.id] ?? item.title,
-        },
-        chapters: [],
-      }
-      result.push(currentGroup)
-    } else if (level === 2 && currentGroup) {
-      currentGroup.chapters.push(item)
-    } else if (level === 2 && !currentGroup) {
-      currentGroup = {
-        section: { id: 'orphan-' + item.id, title: 'Untitled Section', page: item.page, editing: false, draftTitle: '', level: 1 },
-        chapters: [item],
-      }
-      result.push(currentGroup)
-    }
-  }
-  return result
-})
+// The outline is already flat (one item per section) — pass it through as the
+// row list. No Part/Chapter grouping, no orphan synthesis, no levels.
+const sections = computed(() => (Array.isArray(props.tocItems) ? props.tocItems : []))
 
 function toggleAdd() {
   emit('update:expanded', !props.expanded)
 }
 
-function confirmAdd() {
+function addChapter() {
   emit('update:expanded', false)
-  emit('insertHeading', selectedLevel.value)
+  emit('insertSection', 'chapter')
 }
 
-function selectSection(id, type) {
+function addSection() {
+  emit('update:expanded', false)
+  emit('insertSection', 'section')
+}
+
+function selectSection(id) {
   emit('select', id)
   emit('scrollTo', id)
 }
@@ -152,9 +113,16 @@ function onDelete(id) {
   emit('deleteItem', id)
 }
 
-function startRename(section) {
-  editingIds.value.add(section.id)
-  draftTitles.value[section.id] = section.title
+// Toggle a section between auto-numbered Chapter and freeform Section. The
+// round-trip change_section_type command is undoable.
+function toggleType(item) {
+  const newType = item.sectionType === 'chapter' ? 'section' : 'chapter'
+  emit('changeSectionType', item.id, newType)
+}
+
+function startRename(item) {
+  editingIds.value.add(item.id)
+  draftTitles.value[item.id] = item.title
   nextTick(() => {
     const input = document.querySelector('.nav-input')
     if (input) {
@@ -164,13 +132,15 @@ function startRename(section) {
   })
 }
 
-function confirmRename(section) {
-  const newTitle = draftTitles.value[section.id]?.trim() || ''
-  if (newTitle && newTitle !== section.title) {
-    emit('renameSection', section.id, newTitle)
+function confirmRename(item) {
+  const newTitle = draftTitles.value[item.id]?.trim() ?? ''
+  // For a Chapter, item.title is the subtitle; for a Section, the full title.
+  // Either way it is written to Section.title via rename_section.
+  if (newTitle !== item.title) {
+    emit('renameSection', item.id, newTitle)
   }
-  editingIds.value.delete(section.id)
-  delete draftTitles.value[section.id]
+  editingIds.value.delete(item.id)
+  delete draftTitles.value[item.id]
 }
 
 watch(() => props.open, (v) => {
@@ -181,7 +151,7 @@ watch(() => props.open, (v) => {
   }
 })
 
-watch(groups, () => {
+watch(sections, () => {
   nextTick(() => {
     const input = document.querySelector('.nav-input')
     if (input) {
@@ -242,10 +212,6 @@ watch(groups, () => {
   margin: 0;
 }
 
-.nav-group {
-  margin-bottom: 4px;
-}
-
 .nav-section {
   display: flex;
   justify-content: space-between;
@@ -257,6 +223,7 @@ watch(groups, () => {
   font-weight: 600;
   color: var(--text-primary);
   transition: background 0.15s;
+  margin-bottom: 2px;
 }
 
 .nav-section:hover,
@@ -270,6 +237,8 @@ watch(groups, () => {
   gap: 6px;
   flex: 1;
   overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .nav-page {
@@ -279,28 +248,33 @@ watch(groups, () => {
   margin-left: 8px;
 }
 
-.nav-children {
-  list-style: none;
-  padding: 0;
-  margin: 0 0 0 12px;
-  border-left: 1px solid var(--bg-glass-border);
-}
-
-.nav-chapter {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 5px 8px 5px 12px;
+/* Chapter/Section type toggle badge. */
+.nav-type-toggle {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
   border-radius: 4px;
-  cursor: pointer;
-  font-size: 12px;
+  border: 1px solid var(--bg-glass-border);
+  background: var(--input-bg);
   color: var(--text-secondary);
-  transition: background 0.15s;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 
-.nav-chapter:hover,
-.nav-chapter.active {
-  background: var(--hover-bg);
+.nav-type-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.nav-type-toggle.chapter {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 .nav-edit {
@@ -326,15 +300,17 @@ watch(groups, () => {
 }
 
 .nav-section:hover .nav-edit,
-.nav-section.active .nav-edit {
+.nav-section.active .nav-edit,
+.nav-section:hover .nav-delete,
+.nav-section.active .nav-delete {
   opacity: 1;
 }
 
-.nav-section:hover .nav-delete,
-.nav-section.active .nav-delete,
-.nav-chapter:hover .nav-delete,
-.nav-chapter.active .nav-delete {
-  opacity: 1;
+.nav-edit-row {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  gap: 4px;
 }
 
 .nav-input {
@@ -406,6 +382,14 @@ watch(groups, () => {
   transition: transform 0.2s ease, background 0.15s;
 }
 
+.add-btn svg {
+  transition: transform 0.2s ease;
+}
+
+.expanded svg {
+  transform: rotate(45deg);
+}
+
 .add-btn:hover {
   background: var(--accent-hover);
   transform: scale(1.05);
@@ -414,45 +398,21 @@ watch(groups, () => {
 .add-options {
   display: flex;
   gap: 8px;
-}
-
-.add-option {
-  background: var(--input-bg);
-  border: 1px solid var(--bg-glass-border);
-  border-radius: 6px;
-  color: var(--text-primary);
-  font-size: 12px;
-  padding: 5px 12px;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
-}
-
-.heading-select {
   flex: 1;
-  background: var(--input-bg);
-  border: 1px solid var(--bg-glass-border);
-  border-radius: 6px;
-  color: var(--text-primary);
-  font-size: 12px;
-  padding: 5px 8px;
-  cursor: pointer;
-  outline: none;
-}
-
-.heading-select:focus {
-  border-color: var(--accent);
 }
 
 .add-confirm {
+  flex: 1;
   background: var(--accent);
   border: none;
   border-radius: 6px;
   color: #fff;
   font-size: 12px;
   font-weight: 600;
-  padding: 5px 12px;
+  padding: 5px 8px;
   cursor: pointer;
   transition: background 0.15s;
+  white-space: nowrap;
 }
 
 .add-confirm:hover {

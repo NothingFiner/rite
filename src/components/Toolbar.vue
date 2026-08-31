@@ -19,12 +19,20 @@
       >
         Manuscript
       </button>
+      <button
+        class="tool-btn"
+        :class="{ active: mode === 'history' }"
+        @click="$emit('setMode', 'history')"
+        title="Browse, diff, and restore past versions"
+      >
+        History
+      </button>
       <div class="divider"></div>
       <button
         class="tool-btn drawer-toggle"
         :class="{ active: rightOpen }"
         @click="$emit('toggleRight')"
-        :title="rightOpen ? 'Close Info' : 'Open Info'"
+        :title="rightOpen ? 'Close Assistant' : 'Open Assistant'"
       >
         <svg width="16" height="16" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M216 80h-32V48a16 16 0 0 0-16-16H40a16 16 0 0 0-16 16v128a8 8 0 0 0 13 6.22L72 154v30a16 16 0 0 0 16 16h93.59L219 230.22a8 8 0 0 0 5 1.78a8 8 0 0 0 8-8V96a16 16 0 0 0-16-16M66.55 137.78L40 159.25V48h128v88H71.58a8 8 0 0 0-5.03 1.78M216 207.25l-26.55-21.47a8 8 0 0 0-5-1.78H88v-32h80a16 16 0 0 0 16-16V96h32Z" />

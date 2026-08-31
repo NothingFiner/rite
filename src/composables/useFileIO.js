@@ -1,7 +1,19 @@
-import { open, save } from '@tauri-apps/api/dialog'
+import { open, save, ask, message } from '@tauri-apps/api/dialog'
 import { readBinaryFile } from '@tauri-apps/api/fs'
 import { useDocumentStore } from '../stores/document.js'
 import { importDocx, importOdt } from './useImport.js'
+import { isEmptyParagraph } from '../constants/ParagraphStyle.js'
+
+/// A document is effectively empty (no real content to lose) when no section
+/// has a title and every paragraph in every section is empty. Used by importFile
+/// to decide whether to prompt "save before importing?" — a fresh untitled doc
+/// (one section, one empty paragraph, no title) is empty and should not prompt.
+function sectionListIsEmpty(sections) {
+  if (!sections || sections.length === 0) return true
+  return sections.every(
+    (s) => !s.title?.trim() && (s.paragraphs?.length ? s.paragraphs.every(isEmptyParagraph) : true)
+  )
+}
 
 export function useFileIO() {
   const store = useDocumentStore()
@@ -17,8 +29,8 @@ export function useFileIO() {
     }
 
     const filePath = await save({
-      filters: [{ name: 'rite', extensions: ['fwd'] }],
-      defaultPath: (store.doc?.title || 'Untitled') + '.fwd',
+      filters: [{ name: 'Rite Document', extensions: ['rite'] }],
+      defaultPath: (store.doc?.title || 'Untitled') + '.rite',
     })
     if (!filePath) return
     try {
@@ -30,20 +42,39 @@ export function useFileIO() {
 
   async function openFile() {
     const filePath = await open({
-      filters: [{ name: 'rite', extensions: ['fwd'] }],
+      filters: [{ name: 'Rite Document', extensions: ['rite'] }],
       multiple: false,
     })
     if (!filePath) return
     try {
       await store.loadDocument(filePath)
     } catch (e) {
+      // The store rethrows open_document failures (it used to swallow them
+      // silently with console.error, which read as "nothing happens" in the
+      // UI). Surface the actual cause — a serde schema mismatch on an older
+      // .rite, an IO error, etc. — so the user knows why the file didn't open.
       console.error('Failed to open:', e)
+      await message('Failed to open document: ' + (e?.message || String(e)), {
+        title: 'Rite',
+        type: 'error',
+      })
     }
   }
 
   async function importFile() {
-    if (store.isModified && store.doc?.body?.content?.length > 0) {
-      const shouldSave = confirm('You have unsaved changes. Save before importing?')
+    if (store.isModified && store.doc?.sections?.length > 0 && !sectionListIsEmpty(store.doc.sections)) {
+      // Use Tauri's async `ask` (a Rust-side native dialog) instead of the
+      // synchronous `window.confirm`. `window.confirm`/`window.alert` block the
+      // webview's main thread on a WKWebView JS panel that, in this app's
+      // overlay-titlebar + macOSPrivateApi window, does not render visibly — so
+      // the call never returns and the app freezes (only reachable when a doc
+      // with unsaved content is open, which is why import "hangs" then). The
+      // async Tauri dialog keeps the webview responsive and is the same dialog
+      // plugin `open`/`save` already use successfully.
+      const shouldSave = await ask('You have unsaved changes. Save before importing?', {
+        title: 'Rite',
+        type: 'warning',
+      })
       if (shouldSave) {
         await saveFile()
       }
@@ -62,11 +93,11 @@ export function useFileIO() {
       const data = await readBinaryFile(filePath)
       const arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
       const lower = filePath.toLowerCase()
-      let paragraphs
+      let sections
       if (lower.endsWith('.docx')) {
-        paragraphs = await importDocx(arrayBuffer)
+        sections = await importDocx(arrayBuffer)
       } else if (lower.endsWith('.odt')) {
-        paragraphs = await importOdt(arrayBuffer)
+        sections = await importOdt(arrayBuffer)
       } else {
         throw new Error('Unsupported file type')
       }
@@ -80,14 +111,14 @@ export function useFileIO() {
         hasTOC: false,
         hasEpigram: false,
         epigramText: '',
-        body: { content: paragraphs },
+        sections,
       })
       store.lastPath = null
       store.markModified()
       await store.syncToRust()
     } catch (e) {
       console.error('Failed to import:', e)
-      alert('Import failed: ' + e.message)
+      await message('Import failed: ' + e.message, { title: 'Rite', type: 'error' })
     }
   }
 

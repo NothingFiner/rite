@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { invoke } from '@tauri-apps/api/tauri'
+import { createSection } from '../constants/DocumentModel.js'
 
 export const useDocumentStore = defineStore('document', {
   state: () => ({
@@ -24,7 +25,7 @@ export const useDocumentStore = defineStore('document', {
           hasTOC: false,
           hasEpigram: false,
           epigramText: '',
-          body: { content: [] },
+          sections: [createSection()],
         }
       }
     },
@@ -37,39 +38,23 @@ export const useDocumentStore = defineStore('document', {
         this.lastPath = path
         this.isModified = false
       } catch (e) {
+        // Log, then rethrow so the caller (useFileIO.openFile) can surface the
+        // actual cause to the user. Previously this swallowed the error, which
+        // made a failed open look like "nothing happens."
         console.error('Failed to open document:', e)
+        throw e
       } finally {
         this.isLoading = false
       }
     },
 
-    async applyDelta(delta) {
+    async deleteSection(id) {
       try {
-        const updated = await invoke('apply_delta', { delta })
+        const updated = await invoke('delete_section', { id })
         this.doc = updated
         this.isModified = true
       } catch (e) {
-        console.error('Failed to apply delta:', e)
-      }
-    },
-
-    async insertHeading(level, afterId = null) {
-      try {
-        const updated = await invoke('insert_heading', { level, afterId })
-        this.doc = updated
-        this.isModified = true
-      } catch (e) {
-        console.error('Failed to insert heading:', e)
-      }
-    },
-
-    async deleteHeading(id) {
-      try {
-        const updated = await invoke('delete_heading', { id })
-        this.doc = updated
-        this.isModified = true
-      } catch (e) {
-        console.error('Failed to delete heading:', e)
+        console.error('Failed to delete section:', e)
       }
     },
 
@@ -83,33 +68,42 @@ export const useDocumentStore = defineStore('document', {
       }
     },
 
-    async applyFormat({ paragraphId, startOffset, endOffset, bold, italic, underline, fontSize }) {
+    async changeSectionType(id, newType) {
       try {
-        const updated = await invoke('apply_format', {
+        const updated = await invoke('change_section_type', { id, newType })
+        this.doc = updated
+        this.isModified = true
+      } catch (e) {
+        console.error('Failed to change section type:', e)
+      }
+    },
+
+    async applyTextStyle({ paragraphId, startOffset, endOffset, bold, italic, underline, fontSize }) {
+      try {
+        const updated = await invoke('apply_text_style', {
           paragraphId,
           startOffset,
           endOffset,
-          format: { bold, italic, underline, fontSize },
+          styleDelta: { bold, italic, underline, fontSize },
         })
         this.doc = updated
         this.isModified = true
       } catch (e) {
-        console.error('Failed to apply format:', e)
-      }
-    },
-
-    async setParagraphStyle({ paragraphId, style }) {
-      try {
-        const updated = await invoke('set_paragraph_style', { paragraphId, style })
-        this.doc = updated
-        this.isModified = true
-      } catch (e) {
-        console.error('Failed to set paragraph style:', e)
+        console.error('Failed to apply text style:', e)
       }
     },
 
     async undo() {
       try {
+        // Flush any pending typing batch BEFORE undoing. syncToRust ships the
+        // current doc to Rust, where sync_document journals it as the most
+        // recent history delta — so the undo below reverts the user's latest
+        // uncommitted edits instead of skipping them (the "he" vs "the" bug:
+        // the live DOM/store had run ahead of the lagging Rust copy, so undo
+        // reverted a stale snapshot). Harmless when nothing is pending:
+        // syncToRust early-returns when !isModified, and push_history_delta
+        // no-ops on an unchanged doc, so no spurious undo step is created.
+        await this.syncToRust()
         const updated = await invoke('undo')
         this.doc = updated
         this.isModified = true
@@ -120,6 +114,10 @@ export const useDocumentStore = defineStore('document', {
 
     async redo() {
       try {
+        // Same flush-before-redo rationale as undo: commit any pending typing
+        // as a fresh delta (which truncates the redo branch, correctly killing
+        // redo after a new edit) before reapplying the next forward delta.
+        await this.syncToRust()
         const updated = await invoke('redo')
         this.doc = updated
         this.isModified = true
@@ -132,7 +130,7 @@ export const useDocumentStore = defineStore('document', {
       try {
         await invoke('save_document', { path })
         if (this.doc) {
-          this.doc.title = path.split(/[\\/]/).pop().replace(/\.fwd$/, '')
+          this.doc.title = path.split(/[\\/]/).pop().replace(/\.(fwd|rite)$/, '')
         }
         this.lastPath = path
         this.isModified = false
@@ -141,10 +139,10 @@ export const useDocumentStore = defineStore('document', {
       }
     },
 
-    async autosave() {
+    async autosaveDocument() {
       if (!this.lastPath || !this.isModified) return
       try {
-        await invoke('autosave')
+        await invoke('autosave_document')
         this.isModified = false
       } catch (e) {
         console.error('Auto-save failed:', e)
@@ -178,10 +176,44 @@ export const useDocumentStore = defineStore('document', {
       this.doc = newDoc
     },
 
-    syncBodyContent(paragraphs) {
+    /// Adopt a document returned by `restore_version` as the live doc. Unlike
+    /// `setDoc` + `markModified`, this does NOT trigger a debounced sync back to
+    /// Rust: the Rust AppState already holds the restored document (the command
+    /// set it and journaled the old→restored history delta), so syncing would
+    /// just rewrite identical state. We only flag modified so the StatusBar
+    /// reflects that the .rite on disk is now stale until the next explicit
+    /// save. The editor re-renders from the new `doc.sections` via its watcher.
+    applyRestoredDocument(restoredDoc) {
+      this.doc = restoredDoc
+      this.isModified = true
+    },
+
+    /// Replace the document's sections from the editor's flat-DOM sync. The
+    /// editor owns the flat block sequence; on every edit it groups blocks
+    /// back into sections and emits the result here. This is the single
+    /// direct write into doc.sections, so it is the one place the model and
+    /// the live DOM are reconciled.
+    syncSections(sections) {
       if (!this.doc) return
-      if (!this.doc.body) this.doc.body = { content: [] }
-      this.doc.body.content = paragraphs
+      this.doc.sections = sections
+      this.markModified()
+    },
+
+    /// Update ONE section in place from the editor's localized DOM readback.
+    /// The editor confines every keystroke edit to a single section (cross-
+    /// section backspace/delete is blocked), so on the typing path it reads back
+    /// only the cursor's section and emits the result here — mutating one
+    /// section instead of replacing the whole `doc.sections` array. That keeps
+    /// the pagination per-section cache and the word-count watcher touching only
+    /// the edited section rather than churning the whole document per
+    /// keystroke. `syncSections` (whole-array replace) is still used for
+    /// array-level changes like `insertSection`.
+    syncSection({ id, title, paragraphs }) {
+      if (!this.doc) return
+      const s = this.doc.sections.find(s => s.id === id)
+      if (!s) return
+      s.title = title
+      s.paragraphs = paragraphs
       this.markModified()
     },
 

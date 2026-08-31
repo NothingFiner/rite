@@ -58,7 +58,7 @@ describe('useFormat', () => {
     format.setFont(crimson)
     expect(format.editorFont.value).toBe(crimson)
     expect(markModified).toHaveBeenCalled()
-    expect(localStorageMock.setItem).toHaveBeenCalledWith('finewrite-font', 'Crimson Text')
+    expect(localStorageMock.setItem).toHaveBeenCalledWith('rite-font', 'Crimson Text')
   })
 
   it('loads saved font preference', () => {
@@ -263,7 +263,7 @@ describe('useFormat', () => {
   it('savePrefs does nothing for unknown font family', () => {
     format.editorFont.value = 'Unknown Family'
     format.savePrefs()
-    expect(localStorageMock.setItem).not.toHaveBeenCalledWith('finewrite-font', expect.anything())
+    expect(localStorageMock.setItem).not.toHaveBeenCalledWith('rite-font', expect.anything())
   })
 
   it('loadPrefs keeps default when no saved font exists', () => {
