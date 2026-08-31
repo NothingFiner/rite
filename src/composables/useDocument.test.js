@@ -290,4 +290,39 @@ describe('useDocumentStore', () => {
     // We did not write it this session, so there is no timestamp to count from.
     expect(store.lastSavedAt).toBeNull()
   })
+
+  // --- New document (name-on-creation, 1.8) --------------------------------
+
+  it('newDocument installs a named fresh doc, unsaved, and syncs it to Rust', async () => {
+    invoke.mockResolvedValue(undefined)
+    const store = useDocumentStore()
+    store.lastPath = '/old.rite'
+    store.isModified = false
+    store.saveState = 'saved'
+    store.lastSavedAt = 12345
+
+    await store.newDocument('My Novel')
+
+    expect(store.doc.title).toBe('My Novel')
+    // One empty section to type into.
+    expect(store.doc.sections).toHaveLength(1)
+    expect(store.doc.sections[0].paragraphs).toHaveLength(1)
+    // Never saved: no path, no save state, but flagged modified so the editor
+    // knows to sync edits.
+    expect(store.lastPath).toBeNull()
+    expect(store.isModified).toBe(true)
+    expect(store.saveState).toBe('idle')
+    expect(store.lastSavedAt).toBeNull()
+    // Pushed to Rust so AppState holds the new doc, not the previous one.
+    expect(invoke).toHaveBeenCalledWith('sync_document', expect.objectContaining({
+      data: expect.objectContaining({ title: 'My Novel' }),
+    }))
+  })
+
+  it('newDocument falls back to Untitled for an empty or whitespace name', async () => {
+    invoke.mockResolvedValue(undefined)
+    const store = useDocumentStore()
+    await store.newDocument('   ')
+    expect(store.doc.title).toBe('Untitled')
+  })
 })

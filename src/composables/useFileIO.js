@@ -123,5 +123,28 @@ export function useFileIO() {
     }
   }
 
-  return { saveFile, openFile, importFile }
+  /// Guard the start of a new document. If the current doc has real unsaved
+  /// content, offer to save it first (same `ask` dialog + sectionListIsEmpty
+  /// check importFile uses). Returns once the guard is satisfied; the caller
+  /// (App.vue) then opens the name-prompt modal. The actual fresh-doc creation
+  /// lives in the store's `newDocument(title)` action, called after the user
+  /// enters a name — the name is the whole point of 1.8, so it can't be decided
+  /// here.
+  async function newFile() {
+    if (
+      store.isModified &&
+      store.doc?.sections?.length > 0 &&
+      !sectionListIsEmpty(store.doc.sections)
+    ) {
+      const shouldSave = await ask('You have unsaved changes. Save before starting a new document?', {
+        title: 'Rite',
+        type: 'warning',
+      })
+      if (shouldSave) {
+        await saveFile()
+      }
+    }
+  }
+
+  return { saveFile, openFile, importFile, newFile }
 }

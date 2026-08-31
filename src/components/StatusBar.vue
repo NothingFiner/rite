@@ -9,6 +9,7 @@
       >{{ saveStatus }}</span>
       <button class="btn-ghost" @click="$emit('openFile')">Open</button>
       <button class="btn-ghost" @click="$emit('saveFile')">Save</button>
+      <button class="btn-ghost" @click="$emit('newFile')">New</button>
       <button class="btn-ghost" @click="$emit('importFile')">Import</button>
       <button class="btn-ghost" @click="$emit('exportPlainText')">Export .txt</button>
       <button class="btn-ghost" @click="$emit('exportMarkdown')">Export .md</button>
@@ -64,7 +65,7 @@ function swatchBorder(bg) {
   return isLightColor(bg) ? 'rgba(0, 0, 0, 0.35)' : 'rgba(255, 255, 255, 0.35)'
 }
 
-defineEmits(['openFile', 'saveFile', 'importFile', 'exportPlainText', 'exportMarkdown', 'toggleThemePicker', 'selectTheme'])
+defineEmits(['openFile', 'saveFile', 'newFile', 'importFile', 'exportPlainText', 'exportMarkdown', 'toggleThemePicker', 'selectTheme'])
 </script>
 
 <style scoped>
