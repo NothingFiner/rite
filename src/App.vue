@@ -126,6 +126,10 @@
       @select-theme="theme.selectTheme"
     />
 
+    <!-- Toast notifications overlay. Mounted once at the root so it sits above
+         every drawer, panel, and the status bar. -->
+    <Toaster />
+
   </div>
 </template>
 
@@ -154,6 +158,7 @@ import HistoryListDrawer from './components/HistoryListDrawer.vue'
 import HistoryView from './components/HistoryView.vue'
 import ActivityBar from './components/ActivityBar.vue'
 import LlmPanel from './components/LlmPanel.vue'
+import Toaster from './components/Toaster.vue'
 
 const store = useDocumentStore()
 const { doc, isModified } = storeToRefs(store)

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { invoke } from '@tauri-apps/api/tauri'
 import { createSection } from '../constants/DocumentModel.js'
+import { useToastsStore } from './toasts.js'
 
 export const useDocumentStore = defineStore('document', {
   state: () => ({
@@ -12,12 +13,23 @@ export const useDocumentStore = defineStore('document', {
   }),
 
   actions: {
+    /// Surface a swallowed error to the user via the toasts store. Keeps a
+    /// console.error for dev diagnostics; the toast is the user-visible signal
+    /// that something went wrong (previously these catch sites were silent).
+    /// `label` prefixes the message so the toast says e.g. "Save failed: ..."
+    /// rather than just the raw Rust error string.
+    notifyError(error, label) {
+      const message = (label ? label + ': ' : '') + (error?.message || String(error))
+      console.error(label || 'Error:', error)
+      useToastsStore().pushToast({ type: 'error', message })
+    },
+
     async loadInitialDocument() {
       try {
         const initialDoc = await invoke('get_document')
         this.doc = initialDoc
       } catch (e) {
-        console.error('Failed to load initial document:', e)
+        this.notifyError(e, 'Failed to load initial document')
         this.doc = {
           title: 'Untitled',
           author: 'Author Name',
@@ -54,7 +66,7 @@ export const useDocumentStore = defineStore('document', {
         this.doc = updated
         this.isModified = true
       } catch (e) {
-        console.error('Failed to delete section:', e)
+        this.notifyError(e, 'Failed to delete section')
       }
     },
 
@@ -64,7 +76,7 @@ export const useDocumentStore = defineStore('document', {
         this.doc = updated
         this.isModified = true
       } catch (e) {
-        console.error('Failed to rename section:', e)
+        this.notifyError(e, 'Failed to rename section')
       }
     },
 
@@ -74,7 +86,7 @@ export const useDocumentStore = defineStore('document', {
         this.doc = updated
         this.isModified = true
       } catch (e) {
-        console.error('Failed to change section type:', e)
+        this.notifyError(e, 'Failed to change section type')
       }
     },
 
@@ -89,7 +101,7 @@ export const useDocumentStore = defineStore('document', {
         this.doc = updated
         this.isModified = true
       } catch (e) {
-        console.error('Failed to apply text style:', e)
+        this.notifyError(e, 'Failed to apply text style')
       }
     },
 
@@ -108,7 +120,7 @@ export const useDocumentStore = defineStore('document', {
         this.doc = updated
         this.isModified = true
       } catch (e) {
-        console.error('Failed to undo:', e)
+        this.notifyError(e, 'Failed to undo')
       }
     },
 
@@ -122,7 +134,7 @@ export const useDocumentStore = defineStore('document', {
         this.doc = updated
         this.isModified = true
       } catch (e) {
-        console.error('Failed to redo:', e)
+        this.notifyError(e, 'Failed to redo')
       }
     },
 
@@ -135,7 +147,7 @@ export const useDocumentStore = defineStore('document', {
         this.lastPath = path
         this.isModified = false
       } catch (e) {
-        console.error('Failed to save:', e)
+        this.notifyError(e, 'Failed to save')
       }
     },
 
@@ -145,7 +157,7 @@ export const useDocumentStore = defineStore('document', {
         await invoke('autosave_document')
         this.isModified = false
       } catch (e) {
-        console.error('Auto-save failed:', e)
+        this.notifyError(e, 'Auto-save failed')
       }
     },
 
@@ -154,7 +166,7 @@ export const useDocumentStore = defineStore('document', {
       try {
         await invoke('sync_document', { data: this.doc })
       } catch (e) {
-        console.error('Failed to sync to Rust:', e)
+        this.notifyError(e, 'Failed to sync to Rust')
       }
     },
 
