@@ -1,7 +1,12 @@
 <template>
   <div class="statusbar glass">
     <div class="status-left">
-      <span class="status-title">{{ title }}{{ modified ? ' *' : '' }}</span>
+      <span class="status-title">{{ title }}</span>
+      <span
+        v-if="saveStatus"
+        class="save-status"
+        :class="{ 'is-saving': saveStatus === 'Saving…', 'is-error': saveStatus === 'Save failed' }"
+      >{{ saveStatus }}</span>
       <button class="btn-ghost" @click="$emit('openFile')">Open</button>
       <button class="btn-ghost" @click="$emit('saveFile')">Save</button>
       <button class="btn-ghost" @click="$emit('importFile')">Import</button>
@@ -36,7 +41,7 @@ import { computed } from 'vue'
 
 const props = defineProps({
   title: { type: String, default: '' },
-  modified: { type: Boolean, default: false },
+  saveStatus: { type: String, default: '' },
   theme: { type: Number, default: 0 },
   themes: { type: Array, default: () => [] },
   showThemePicker: { type: Boolean, default: false },
@@ -96,6 +101,26 @@ defineEmits(['openFile', 'saveFile', 'importFile', 'exportPlainText', 'exportMar
 
 .status-title {
   color: var(--text-primary);
+  font-weight: 500;
+}
+
+/* Save indicator: the title's right-hand label replacing the old binary `*`.
+   Muted by default (Saved / Edited), accented while a write is in flight, red
+   when the last write failed so the writer notices their work is not on disk. */
+.save-status {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 400;
+  padding-left: 2px;
+}
+
+.save-status.is-saving {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.save-status.is-error {
+  color: #e5484d;
   font-weight: 500;
 }
 

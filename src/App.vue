@@ -113,7 +113,7 @@
 
     <StatusBar
       :title="store.doc?.title || 'Untitled'"
-      :modified="store.isModified"
+      :save-status="saveStatus"
       :theme="theme.editorTheme"
       :themes="theme.themes"
       :show-theme-picker="theme.showThemePicker"
@@ -136,7 +136,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, reactive, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, reactive, nextTick } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useDocumentStore } from './stores/document.js'
 import { useTheme } from './composables/useTheme.js'
@@ -165,7 +165,7 @@ import LlmPanel from './components/LlmPanel.vue'
 import Toaster from './components/Toaster.vue'
 
 const store = useDocumentStore()
-const { doc, isModified } = storeToRefs(store)
+const { doc } = storeToRefs(store)
 
 const editorRef = ref(null)
 const viewMode = ref('editor')
@@ -207,6 +207,46 @@ const chat = reactive(useChat(doc, llmSettingsRaw, navRaw, editorRef))
 // stops, instead of re-tallying per keystroke. Shared with the manuscript title
 // page so the two counts cannot drift.
 const { wordCount } = useWordCount(doc)
+
+// Save indicator for the status bar. The underlying state (saveState /
+// lastSavedAt) lives in the document store and is driven by BOTH file-write
+// paths — explicit save and the background autosave (which rewrites the whole
+// .rite, not just journals history). Here we only format it into a label.
+//
+// `now` is a ref bumped on a coarse 15s ticker so the "Saved 2m ago" relative
+// label drifts forward without re-running anything in the store. The computed
+// only reads `now.value` in the branch that shows a relative time, so while
+// the doc is Edited / Saving / Save-failed the ticker does NOT retrigger the
+// computed — no wasted recomputes while idle-but-unsaved. (This is Vue's
+// reactive dependency tracking: a computed only depends on the refs it
+// actually accesses during evaluation, so untaken branches cost nothing.)
+const now = ref(Date.now())
+let clockTimer = null
+
+function relativeTime(timestamp, currentMilliseconds) {
+  const seconds = Math.floor((currentMilliseconds - timestamp) / 1000)
+  if (seconds < 5) return 'just now'
+  if (seconds < 60) return `${seconds}s ago`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  return `${Math.floor(hours / 24)}d ago`
+}
+
+const saveStatus = computed(() => {
+  if (store.saveState === 'saving') return 'Saving…'
+  if (store.saveState === 'error') return 'Save failed'
+  // Pending edits take priority over the "Saved Xm ago" label — the writer
+  // cares that their latest typing is NOT yet on disk. Replaces the old binary
+  // `*` modifier on the title.
+  if (store.isModified) return 'Edited'
+  if (store.lastSavedAt) return `Saved ${relativeTime(store.lastSavedAt, now.value)}`
+  // A doc opened from disk matches memory but was never written this session:
+  // bare "Saved" with no relative time.
+  if (store.lastPath) return 'Saved'
+  return ''
+})
 
 
 function onActivitySelect(mode) {
@@ -293,10 +333,16 @@ onMounted(async () => {
   await store.loadInitialDocument()
 
   autosaveTimer = setInterval(() => { store.autosaveDocument() }, AUTOSAVE_INTERVAL_MS)
+  // Coarse tick so the "Saved Xm ago" label refreshes. 15s is well below the
+  // smallest displayed unit ("Xs ago" only shows for the first minute), so the
+  // label never feels stale during active writing without re-running per
+  // keystroke.
+  clockTimer = setInterval(() => { now.value = Date.now() }, 15_000)
 })
 
 onUnmounted(() => {
   if (autosaveTimer) clearInterval(autosaveTimer)
+  if (clockTimer) clearInterval(clockTimer)
 })
 </script>
 
