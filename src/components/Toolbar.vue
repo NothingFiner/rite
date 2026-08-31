@@ -5,28 +5,36 @@
       <span class="brand-text">rite</span>
     </div>
     <div class="toolbar-group">
-      <button
-        class="tool-btn"
-        :class="{ active: mode === 'editor' }"
-        @click="$emit('setMode', 'editor')"
-      >
-        Editor
-      </button>
-      <button
-        class="tool-btn"
-        :class="{ active: mode === 'manuscript' }"
-        @click="$emit('setMode', 'manuscript')"
-      >
-        Manuscript
-      </button>
-      <button
-        class="tool-btn"
-        :class="{ active: mode === 'history' }"
-        @click="$emit('setMode', 'history')"
-        title="Browse, diff, and restore past versions"
-      >
-        History
-      </button>
+      <div class="view-tabs" role="tablist" aria-label="View">
+        <button
+          class="tool-btn view-tab"
+          role="tab"
+          :aria-selected="mode === 'editor'"
+          :class="{ active: mode === 'editor' }"
+          @click="$emit('setMode', 'editor')"
+        >
+          Editor
+        </button>
+        <button
+          class="tool-btn view-tab"
+          role="tab"
+          :aria-selected="mode === 'manuscript'"
+          :class="{ active: mode === 'manuscript' }"
+          @click="$emit('setMode', 'manuscript')"
+        >
+          Manuscript
+        </button>
+        <button
+          class="tool-btn view-tab"
+          role="tab"
+          :aria-selected="mode === 'history'"
+          :class="{ active: mode === 'history' }"
+          @click="$emit('setMode', 'history')"
+          title="Browse, diff, and restore past versions"
+        >
+          History
+        </button>
+      </div>
       <div class="divider"></div>
       <button
         class="tool-btn drawer-toggle"
@@ -149,6 +157,47 @@ defineEmits(['toggleRight', 'setMode'])
   height: 16px;
   background: var(--bg-glass-border, rgba(255, 255, 255, 0.1));
   margin: 0 4px;
+}
+
+/* View-switch tabs: a connected, segmented tab group so the buttons read as
+   view navigation rather than generic toolbar buttons. The group container
+   supplies the shared border + outer rounding; inner dividers separate tabs.
+   Active tab is accent-filled, inactive tabs are muted — both states reuse
+   theme tokens so the look follows the active editor theme (light or dark). */
+.view-tabs {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--bg-glass-border, rgba(255, 255, 255, 0.1));
+  border-radius: 6px;
+  overflow: hidden;
+  margin-right: 4px;
+}
+
+.view-tab {
+  border-radius: 0;
+  border: none;
+  border-right: 1px solid var(--bg-glass-border, rgba(255, 255, 255, 0.1));
+  /* override the generic .tool-btn top padding so tabs fill the group height */
+  height: 26px;
+}
+
+.view-tab:last-child {
+  border-right: none;
+}
+
+.view-tab:hover {
+  background: var(--hover-bg, rgba(255, 255, 255, 0.06));
+}
+
+.view-tab.active {
+  /* The group container draws the outline; the accent fill marks the selected
+     view. Keep the inner divider at the group border color so dividers stay
+     consistent across active/inactive tabs (override .tool-btn.active, which
+     would tint the divider accent). */
+  background: var(--accent-bg, rgba(79, 142, 247, 0.25));
+  color: var(--accent, #4f8ef7);
+  border-color: var(--bg-glass-border, rgba(255, 255, 255, 0.1));
+  font-weight: 600;
 }
 
 </style>
