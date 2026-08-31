@@ -988,20 +988,59 @@ function navigatePage(direction) {
 // Unlike navigatePage this takes an absolute page number (captured from the
 // outgoing view) rather than a relative step. Instant ('auto') behavior — see
 // focusPageStart — so the switch doesn't glide through intermediate pages.
+//
+// CRITICAL: on a manuscript→editor switch the editor mounts FRESH. Its
+// data-page-start stamps are applied by layoutPageBreaks(), which renderEditor
+// defers to a nextTick. But App.vue queues this scrollToPage the instant
+// viewMode flips — BEFORE the editor's deferred layoutPageBreaks runs — so the
+// stamps are absent when we arrive, the querySelector finds nothing, and we'd
+// silently no-op, leaving the editor at the manuscript's old pixel scrollTop
+// (which in the editor's denser layout is a DIFFERENT page — the 9→13 drift,
+// same ~1.44x ratio as the original 15→23 bug). layoutPageBreaks is synchronous
+// and idempotent (clears + re-stamps from the already-populated pageBreaks
+// prop, and renderEditor has already built the content DOM by onMounted), so
+// calling it here guarantees the stamps exist before we query.
 function scrollToPage(n) {
   const sheet = sheetRef.value
   if (!sheet) return
+  layoutPageBreaks()
   const targetPage = Math.max(1, n)
   const startEl = sheet.querySelector(`[data-page-start="${targetPage}"]`)
   if (startEl) focusPageStart(startEl, 'auto')
 }
 
-// The page number at the caret — the editor's notion of "current page". Used by
-// App.vue when switching FROM the editor to another view so the incoming view
-// can land on the same page (page numbers agree across views because pagination
-// is shared).
+// The page currently at the TOP of the visible area — the editor's screen-based
+// notion of "current page" for view switching. We read the VISIBLE page, not
+// the caret's page: if the writer scrolled with the scrollbar without clicking,
+// the caret is stale (still wherever they last clicked), so currentPageAtCursor
+// would report a page they're not looking at. The manuscript side already reads
+// the visible page (getCurrentContentPage); reading the same way here makes the
+// two directions symmetric and the switch preserve what's on screen. Walks the
+// [data-page-start] markers in DOM order and picks the highest one at or above
+// the scroll-layer's visible top (its top + ~40px padding).
+function currentPageAtTop() {
+  const sheet = sheetRef.value
+  if (!sheet) return 1
+  const layer = sheet.closest('.scroll-layer')
+  const targetY = layer ? layer.getBoundingClientRect().top + 40 : 40
+  const starts = sheet.querySelectorAll('[data-page-start]')
+  let current = 1
+  for (const el of starts) {
+    if (el.getBoundingClientRect().top <= targetY) {
+      current = parseInt(el.getAttribute('data-page-start'), 10)
+    } else {
+      break // DOM order === page order; nothing further can be at/above the line
+    }
+  }
+  return current
+}
+
+// The page number at the caret — used by App.vue when switching FROM the editor
+// to another view so the incoming view can land on the same page. Screen-based
+// (see currentPageAtTop); page numbers agree across views because pagination is
+// shared.
 function getCurrentPage() {
-  return currentPageAtCursor()
+  return currentPageAtTop()
 }
 
 // Jump the cursor to the first paragraph of the next/previous page that begins
