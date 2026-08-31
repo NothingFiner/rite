@@ -32,6 +32,16 @@ export function useKeyboardShortcuts({
   function onKeydown(e) {
     const cmd = e.metaKey || e.ctrlKey
 
+    // Cmd+Shift+S → Save As (copy to a new path). Checked BEFORE plain Cmd+S
+    // so the shifted variant doesn't fall through to the quick-save branch.
+    // `e.key` is 'S' (uppercase) when Shift is held on most layouts, but lower-
+    // casing keeps it correct regardless of layout/CapsLock state.
+    if (cmd && e.shiftKey && e.key.toLowerCase() === 's') {
+      e.preventDefault()
+      fileIO.saveFileAs()
+      return
+    }
+
     if (cmd && e.key === 's') {
       e.preventDefault()
       fileIO.saveFile()

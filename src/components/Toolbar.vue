@@ -35,6 +35,14 @@
           History
         </button>
       </div>
+      <button
+        v-if="mode === 'manuscript'"
+        class="tool-btn go-top-btn"
+        title="Go to top"
+        @click="$emit('goToTop')"
+      >
+        Top
+      </button>
       <div class="divider"></div>
       <button
         class="tool-btn drawer-toggle"
@@ -56,7 +64,7 @@ defineProps({
   rightOpen: { type: Boolean, default: false },
 })
 
-defineEmits(['toggleRight', 'setMode'])
+defineEmits(['toggleRight', 'setMode', 'goToTop'])
 </script>
 
 <style scoped>

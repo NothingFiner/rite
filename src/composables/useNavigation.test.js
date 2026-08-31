@@ -2,13 +2,12 @@ import { describe, it, expect, vi } from 'vitest'
 import { ref } from 'vue'
 import { useNavigation } from './useNavigation.js'
 
-// Mock pagination to return a deterministic page per block index, so the flat
-// section-title block indices map to predictable pages.
-vi.mock('./usePagination.js', () => ({
-  usePagination: () => ({
-    getPageForBlock: (idx) => Math.floor(idx / 4) + 1,
-  }),
-}))
+// Shared pagination is now passed INTO useNavigation (roadmap 2.5) instead of
+// instantiated inside it, so we pass a plain mock object with the deterministic
+// page-per-block function the old module mock provided.
+const mockPagination = {
+  getPageForBlock: (idx) => Math.floor(idx / 4) + 1,
+}
 
 // useSectionFormat reads localStorage on loadPrefs but useNavigation calls
 // useSectionFormat() which shares a module-level ref — fine without loadPrefs.
@@ -33,7 +32,7 @@ function makePara(id, content = '') {
 describe('useNavigation', () => {
   it('generates empty TOC for empty document', () => {
     const docRef = ref({ sections: [] })
-    const nav = useNavigation(docRef, ref(null))
+    const nav = useNavigation(docRef, ref(null), mockPagination)
     expect(nav.tocItems.value).toEqual([])
   })
 
@@ -45,7 +44,7 @@ describe('useNavigation', () => {
         makeSection('s3', 'Departure', 'chapter', [makePara('p3', 'text')]),
       ],
     })
-    const nav = useNavigation(docRef, ref(null))
+    const nav = useNavigation(docRef, ref(null), mockPagination)
     expect(nav.tocItems.value).toHaveLength(3)
     expect(nav.tocItems.value[0]).toMatchObject({ id: 's1', sectionType: 'section', title: 'Prologue' })
     expect(nav.tocItems.value[1]).toMatchObject({ id: 's2', sectionType: 'chapter', title: 'The Arrival' })
@@ -60,7 +59,7 @@ describe('useNavigation', () => {
         makeSection('s4', 'Second', 'chapter', [makePara('p4')]),
       ],
     })
-    const nav = useNavigation(docRef, ref(null))
+    const nav = useNavigation(docRef, ref(null), mockPagination)
     // s1 (section) -> chapterIndex null; s2 (chapter 1); s3 (section) null; s4 (chapter 2)
     expect(nav.tocItems.value[0].chapterIndex).toBeNull()
     expect(nav.tocItems.value[1].chapterIndex).toBe(1)
@@ -71,7 +70,7 @@ describe('useNavigation', () => {
     const docRef = ref({
       sections: [makeSection('s1', 'The Arrival', 'chapter', [makePara('p1')])],
     })
-    const nav = useNavigation(docRef, ref(null))
+    const nav = useNavigation(docRef, ref(null), mockPagination)
     expect(nav.tocItems.value[0].displayTitle).toBe('Chapter 1: The Arrival')
   })
 
@@ -79,7 +78,7 @@ describe('useNavigation', () => {
     const docRef = ref({
       sections: [makeSection('s1', '', 'chapter', [makePara('p1')])],
     })
-    const nav = useNavigation(docRef, ref(null))
+    const nav = useNavigation(docRef, ref(null), mockPagination)
     expect(nav.tocItems.value[0].displayTitle).toBe('Chapter 1')
   })
 
@@ -87,7 +86,7 @@ describe('useNavigation', () => {
     const docRef = ref({
       sections: [makeSection('s1', '', 'section', [makePara('p1')])],
     })
-    const nav = useNavigation(docRef, ref(null))
+    const nav = useNavigation(docRef, ref(null), mockPagination)
     expect(nav.tocItems.value[0].displayTitle).toBe('Untitled Section')
   })
 
@@ -101,7 +100,7 @@ describe('useNavigation', () => {
         makeSection('s2', 'B', 'section', [makePara('p4')]),
       ],
     })
-    const nav = useNavigation(docRef, ref(null))
+    const nav = useNavigation(docRef, ref(null), mockPagination)
     // s1 title = block 0 → page 1; s2 title = block 4 → page 2
     expect(nav.tocItems.value[0].page).toBe(1)
     expect(nav.tocItems.value[1].page).toBe(2)

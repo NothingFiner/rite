@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { ref } from 'vue'
+import { ref, nextTick } from 'vue'
 import { useWordCount } from './useWordCount.js'
 
 // Build a one-section document whose single section has one paragraph per
@@ -58,14 +58,34 @@ describe('useWordCount', () => {
     expect(wordCount.value).toBe(5)
   })
 
-  it('populates the count after the debounce window on setup', () => {
-    // The watcher is created with `immediate: true`, so its callback runs
-    // synchronously at setup and schedules the debounced recompute. Advancing
-    // fake timers past DEBOUNCE_MS fires it.
+  it('populates the count synchronously on setup (no 0→count blink)', () => {
+    // The initial count is computed at setup, NOT debounced — there is no
+    // keystroke stream to coalesce on first run, so the first paint shows the
+    // real number. This is what kills the manuscript title-page "0 words"
+    // blink on view switch.
     const doc = ref(makeDoc('hello world foo'))
     const { wordCount } = useWordCount(doc)
-    expect(wordCount.value).toBe(0) // not yet — debounce pending
-    vi.advanceTimersByTime(300)
     expect(wordCount.value).toBe(3)
+  })
+
+  it('debounces subsequent changes (coalesces a typing burst)', async () => {
+    const doc = ref(makeDoc('hello world foo'))
+    const { wordCount } = useWordCount(doc)
+    expect(wordCount.value).toBe(3)
+
+    // A burst of edits: change the sections several times in quick succession.
+    // The count must NOT re-tally per change — it coalesces into one recompute
+    // DEBOUNCE_MS after the burst stops.
+    doc.value = makeDoc('hello world foo bar baz qux')
+    // Vue's watcher flushes on a microtask (not a timer), so let it run and
+    // schedule the debounced recompute before we advance fake timers.
+    await nextTick()
+    expect(wordCount.value).toBe(3) // still the old count — debounce pending
+
+    vi.advanceTimersByTime(299)
+    expect(wordCount.value).toBe(3) // not yet
+
+    vi.advanceTimersByTime(1)
+    expect(wordCount.value).toBe(6)
   })
 })
