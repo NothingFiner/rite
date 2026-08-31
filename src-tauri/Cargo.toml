@@ -32,3 +32,9 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # this feature is used for production builds or when `devPath` points to the filesystem
 # DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]
+
+[dev-dependencies]
+# Enables `tauri::test` (mock app/builder) so command tests can construct a
+# `State<AppState>` without spinning up the full Tauri runtime. Only active
+# during `cargo test`; never compiled into production builds.
+tauri = { version = "1.6.1", features = ["test"] }
