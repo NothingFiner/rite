@@ -40,6 +40,12 @@ pub fn document_to_text(doc: &Document, format: ExportFormat) -> String {
     let mut out = String::new();
     let mut chapter_count = 0u32;
 
+    // Front matter (title / author / epigram) leads the document in Markdown
+    // only — the `# title` is Markdown, and the plan scopes front matter to the
+    // Markdown export. Plain text keeps the bare section walk. See
+    // `document_front_matter` for the per-piece rules.
+    out.push_str(&document_front_matter(doc, format));
+
     for section in &doc.sections {
         // Header line per chapter/section.
         let header = section_header(section, format, &mut chapter_count);
@@ -114,6 +120,52 @@ fn section_header(
             }
         },
     }
+}
+
+/// Build the front matter (title / byline / epigram) that leads the document,
+/// or an empty string when there is none to emit.
+///
+/// Markdown only: the title becomes a level-1 heading (`# title`) and the
+/// author a byline (`*by author*`). The epigram, when the document has one
+/// (`has_epigram` and a non-empty `epigram_text`), becomes a Markdown
+/// blockquote — each line prefixed with `> ` — mirroring how the manuscript
+/// renders an epigram page. Plain text returns empty: the plan scopes front
+/// matter to the Markdown export, and a plain-text blockquote would just be a
+/// literal `>` with no reader recognizing it.
+///
+/// Empty pieces are skipped (no empty heading, no blank byline), so a document
+/// with only a title emits just `# title` followed by its sections.
+fn document_front_matter(doc: &Document, format: ExportFormat) -> String {
+    if format != ExportFormat::Markdown {
+        return String::new();
+    }
+    let mut out = String::new();
+
+    let title = doc.title.trim();
+    if !title.is_empty() {
+        out.push_str(&format!("# {}\n\n", title));
+    }
+    let author = doc.author.trim();
+    if !author.is_empty() {
+        out.push_str(&format!("*by {}*\n\n", author));
+    }
+    if doc.has_epigram {
+        let epigram = doc.epigram_text.trim();
+        if !epigram.is_empty() {
+            // Markdown blockquote: prefix every line with `> `. Using `.lines()`
+            // (not `.split('\n')`) collapses a trailing newline so we don't emit
+            // a bare `> ` line for the final newline.
+            for line in epigram.lines() {
+                out.push_str("> ");
+                out.push_str(line);
+                out.push('\n');
+            }
+            // A blank line separates the blockquote from the first section.
+            out.push('\n');
+        }
+    }
+
+    out
 }
 
 /// Export the live document to `path` in the requested format. Locks the
@@ -198,10 +250,13 @@ mod tests {
         let doc = sample_document();
         let rendered = document_to_text(&doc, ExportFormat::Markdown);
 
-        // Chapter header is derived-numbered (`## Chapter 1: {title}`); the
+        // The document front matter (`# title`, `*by author*`) leads, then the
+        // chapter header is derived-numbered (`## Chapter 1: {title}`); the
         // section header is verbatim (`## {title}`). Body paragraphs follow as
         // plain text, with blank lines between blocks.
-        let expected = "## Chapter 1: The Arrival\n\n\
+        let expected = "# T\n\n\
+*by A*\n\n\
+## Chapter 1: The Arrival\n\n\
 It was a dark and stormy night.\n\n\
 ## Notes\n\n\
 A section for stray thoughts.\n\n";
@@ -298,8 +353,92 @@ A section for stray thoughts.\n\n";
 
         // The two body paragraphs are separated by a blank line (a paragraph
         // is a block), with a blank line before the header and after the last
-        // paragraph. This matches the "blank line between blocks" spec.
-        let expected = "## One\n\nfirst paragraph\n\nsecond paragraph\n\n";
+        // paragraph. This matches the "blank line between blocks" spec. (The
+        // `# T` / `*by A*` front matter leads, as in every Markdown export.)
+        let expected = "# T\n\n*by A*\n\n## One\n\nfirst paragraph\n\nsecond paragraph\n\n";
         assert_eq!(rendered, expected);
+    }
+
+    /// A doc with a title, author, and epigram, for the front-matter tests.
+    fn front_matter_document(epigram: &str) -> Document {
+        Document {
+            title: "The Glass Hotel".to_string(),
+            author: "Amal El-Mohtar".to_string(),
+            author_contact: String::new(),
+            has_toc: false,
+            has_epigram: !epigram.is_empty(),
+            epigram_text: epigram.to_string(),
+            sections: vec![create_section(
+                "s1",
+                "Chapter One",
+                SectionType::Chapter,
+                vec![create_paragraph("p1", "Body of the first chapter.")],
+            )],
+        }
+    }
+
+    #[test]
+    fn markdown_prepends_title_byline_and_epigram_blockquote() {
+        let doc = front_matter_document("Lines written on\nthe back of a receipt");
+        let rendered = document_to_text(&doc, ExportFormat::Markdown);
+
+        // Title -> H1, author -> byline, epigram -> blockquote (each line
+        // prefixed `> `), then the first section's heading and body.
+        let expected = "# The Glass Hotel\n\n\
+*by Amal El-Mohtar*\n\n\
+> Lines written on\n\
+> the back of a receipt\n\
+\n\
+## Chapter 1: Chapter One\n\n\
+Body of the first chapter.\n\n";
+        assert_eq!(rendered, expected);
+    }
+
+    #[test]
+    fn markdown_omits_front_matter_pieces_that_are_empty() {
+        // No title, no author, no epigram -> nothing is prepended; the output
+        // starts at the first section. (has_epigram is false here.)
+        let doc = Document {
+            title: String::new(),
+            author: String::new(),
+            author_contact: String::new(),
+            has_toc: false,
+            has_epigram: false,
+            epigram_text: String::new(),
+            sections: vec![create_section(
+                "s1",
+                "One",
+                SectionType::Section,
+                vec![create_paragraph("p1", "body")],
+            )],
+        };
+        let rendered = document_to_text(&doc, ExportFormat::Markdown);
+        // No empty heading, no empty byline, no blockquote.
+        assert!(!rendered.contains("# \n"));
+        assert!(!rendered.contains("*by"));
+        assert!(!rendered.contains("> "));
+        assert!(rendered.starts_with("## One\n\n"));
+    }
+
+    #[test]
+    fn markdown_skips_epigram_blockquote_when_flag_set_but_text_empty() {
+        // has_epigram is true but the text is whitespace: emit no blockquote
+        // rather than a bare `> ` line. Title/byline still render.
+        let doc = front_matter_document("   \n  ");
+        let rendered = document_to_text(&doc, ExportFormat::Markdown);
+        assert!(rendered.contains("# The Glass Hotel\n\n*by Amal El-Mohtar*\n\n"));
+        assert!(!rendered.contains("> "));
+    }
+
+    #[test]
+    fn plain_text_has_no_front_matter() {
+        // Front matter is Markdown-only: the plain-text export starts straight
+        // at the first section header, with no `# title` or byline.
+        let doc = front_matter_document("an epigram");
+        let rendered = document_to_text(&doc, ExportFormat::PlainText);
+        assert!(rendered.starts_with("Chapter 1: Chapter One\n\n"));
+        assert!(!rendered.contains("# The Glass Hotel"));
+        assert!(!rendered.contains("*by"));
+        assert!(!rendered.contains("> "));
     }
 }
