@@ -2,12 +2,15 @@
   <div class="llm-panel">
     <h3 class="drawer-heading">Assistant</h3>
 
-    <!-- Tab row: one chip per chat session. Hidden until a second tab exists,
-         so a single chat looks exactly like before. Each label follows its
-         session's chosen role; the × closes a tab, + opens a new one. Only one
-         generation runs at a time (see useChatManager's stream serialization),
-         so Stop cancels the active stream regardless of which tab is selected. -->
-    <div v-if="manager.tabs.length > 1" class="llm-tabs">
+    <!-- Tab row: one chip per chat session + a "+" to open a new one. The row
+         is ALWAYS shown (even with one tab) so the "+" is discoverable from
+         launch — otherwise a single-tab start would hide the only way to add a
+         second chat. The × close only appears once 2+ tabs exist, so the lone
+         tab can't be closed by accident (use the Clear button to wipe it).
+         Each label follows its session's chosen role; only one generation runs
+         at a time (see useChatManager's stream serialization), so Stop cancels
+         the active stream regardless of which tab is selected. -->
+    <div class="llm-tabs">
       <button
         v-for="tab in manager.tabs"
         :key="tab.id"
@@ -18,6 +21,7 @@
       >
         <span class="llm-tab-label">{{ tab.label }}</span>
         <span
+          v-if="manager.tabs.length > 1"
           class="llm-tab-close"
           aria-label="Close tab"
           @click.stop="manager.closeSession(tab.id)"
