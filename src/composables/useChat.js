@@ -15,7 +15,7 @@
 // phase can prepend retrieved passages as an additional context message
 // without rewriting the chat flow.
 
-import { ref } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/tauri'
 import { listen } from '@tauri-apps/api/event'
 import { flattenSections } from './useSectionBlocks.js'
@@ -312,5 +312,175 @@ export function useChat(docRef, llmSettings, nav, editorRef) {
     stop,
     clear,
     setRole,
+  }
+}
+
+// --- Multi-chat session manager --------------------------------------------
+//
+// `useChat` (above) is the per-conversation factory — one messages array, one
+// role, one scope. `useChatManager` owns a LIST of those conversations and
+// presents them as tabs in the right drawer, so a writer can hold a Writing
+// Assistant tab and a Critic tab at the same time, each with its own history.
+//
+// `useChat` is left UNCHANGED: the existing `useChat.test.js` suite keeps
+// exercising it directly, and the manager just calls it once per tab. Each
+// session is wrapped in `reactive()` so its nested refs (`busy`, `messages`,
+// `selectedRoleName` …) auto-unwrap — exactly the way `reactive(useChat(...))`
+// worked when there was a single chat. The manager itself is wrapped in
+// `reactive()` by App.vue (same established pattern as `nav`/`theme`).
+//
+// Persistence is EPHEMERAL for v1 (matches the single-chat scoping): tabs and
+// their histories live in memory only, cleared on restart. No localStorage.
+//
+// Stream serialization (why only one generation runs at a time):
+// `useChat.send` registers a `listen('llm-token')` / `listen('llm-error')`
+// pair per send. Tauri events broadcast to EVERY active listener — there is no
+// stream/session id on the event payload. If two sessions streamed at once,
+// each listener would append every incoming token to its own message (the two
+// responses would cross-talk and interleave). We therefore serialize: the
+// panel disables Send/presets and shows Stop whenever `anyBusy` is true, and
+// Stop cancels whichever single session is streaming. With at most one live
+// listener at a time, tokens can't leak between tabs. A user can still keep
+// several chats open; they just can't run two generations simultaneously.
+
+/// Monotonic id source for sessions. Module-level so ids are unique across
+/// manager instances (and across the app's lifetime); tests don't rely on
+/// specific values, only on uniqueness within a manager.
+let sessionCounter = 0
+function nextSessionId() {
+  sessionCounter += 1
+  return `chat-${sessionCounter}`
+}
+
+/// The default persona name for a freshly created tab. Matches the persona the
+/// single-chat panel used to auto-select on mount.
+const DEFAULT_ROLE_NAME = 'Writing Assistant'
+
+export function useChatManager(docRef, llmSettings, nav, editorRef) {
+  const roles = ref([])
+  const sessions = ref([])
+  const activeId = ref('')
+
+  /// Build one chat session (a `reactive()`-wrapped `useChat` result) with a
+  /// fresh id. `reactive()` unwraps the session's nested refs so callers see
+  /// plain values (`.busy` is a boolean, `.messages` is the array) — the same
+  /// shape a single `reactive(useChat(...))` had. The underlying refs are
+  /// untouched, so `useChat`'s own `send`/`stop`/`setRole` still mutate them
+  /// and the proxy reflects the changes.
+  function makeSession() {
+    const session = useChat(docRef, llmSettings, nav, editorRef)
+    session.id = nextSessionId()
+    return reactive(session)
+  }
+
+  /// Find a role by name in the loaded list (no-op before roles have loaded).
+  function findRole(name) {
+    return roles.value.find((r) => r.name === name) || null
+  }
+
+  /// Apply a role to a session by name, only if the role exists.
+  function applyRole(session, roleName) {
+    if (!roleName) return
+    const role = findRole(roleName)
+    if (role) session.setRole(role)
+  }
+
+  /// Create a new tab, defaulting to the Writing Assistant role (when roles
+  /// have loaded), select it, and return its id.
+  function createSession(roleName = DEFAULT_ROLE_NAME) {
+    const session = makeSession()
+    applyRole(session, roleName)
+    sessions.value.push(session)
+    activeId.value = session.id
+    return session.id
+  }
+
+  /// Select an existing tab by id.
+  function selectSession(id) {
+    if (sessions.value.some((s) => s.id === id)) {
+      activeId.value = id
+    }
+  }
+
+  /// Close a tab. If it's streaming, stop it first. The last tab is never
+  /// removed — it's cleared instead — so there is always at least one tab.
+  /// Closing the active tab selects the nearest remaining one.
+  function closeSession(id) {
+    const index = sessions.value.findIndex((s) => s.id === id)
+    if (index === -1) return
+    const session = sessions.value[index]
+    if (session.busy) session.stop()
+    if (sessions.value.length <= 1) {
+      session.clear()
+      return
+    }
+    sessions.value.splice(index, 1)
+    if (activeId.value === id) {
+      const nextIndex = Math.min(index, sessions.value.length - 1)
+      activeId.value = sessions.value[nextIndex].id
+    }
+  }
+
+  /// Cancel whichever single session is currently streaming (there is at most
+  /// one, by serialization). The panel's Stop button calls this.
+  function stopActive() {
+    const session = sessions.value.find((s) => s.busy)
+    if (session) session.stop()
+  }
+
+  /// The currently selected session. Falls back to the first session so it is
+  /// never undefined (one session always exists). A computed so it tracks
+  /// `activeId` and the sessions list.
+  const activeSession = computed(
+    () =>
+      sessions.value.find((s) => s.id === activeId.value) || sessions.value[0],
+  )
+
+  /// Lightweight tab descriptors for the tab row: `label` follows the session's
+  /// chosen role (or "New chat" while role-less), so changing a tab's role
+  /// relabels it. No separate editable name for v1.
+  const tabs = computed(() =>
+    sessions.value.map((s) => ({
+      id: s.id,
+      label: s.selectedRoleName || 'New chat',
+    })),
+  )
+
+  /// True when ANY session is mid-stream. The panel uses this (not a single
+  /// session's `busy`) to disable Send/presets and show Stop — enforcing the
+  /// one-stream-at-a-time serialization described above.
+  const anyBusy = computed(() => sessions.value.some((s) => s.busy))
+
+  /// Load the persona list once (moved here from LlmPanel, where it ran on
+  /// every mount). When roles arrive, give the active session its default role
+  /// if it doesn't have one yet — mirroring the panel's old auto-select.
+  async function loadRoles() {
+    try {
+      roles.value = await invoke('list_roles')
+      const active = activeSession.value
+      if (active && !active.selectedRoleName) {
+        applyRole(active, DEFAULT_ROLE_NAME)
+      }
+    } catch (e) {
+      console.error('Failed to load roles:', e)
+    }
+  }
+
+  // Start with one default tab so the panel is never empty, then kick off the
+  // role load (which fills in the default role once it resolves).
+  createSession()
+  loadRoles()
+
+  return {
+    roles,
+    sessions,
+    activeId,
+    tabs,
+    activeSession,
+    anyBusy,
+    createSession,
+    selectSession,
+    closeSession,
+    stopActive,
   }
 }

@@ -60,8 +60,11 @@
     <div class="drawer right" :class="{ open: rightDrawerOpen }">
       <div class="drawer-content right-drawer">
         <LlmPanel
-          :chat="chat"
+          :chat="chatManager.activeSession"
           :settings="llmSettings"
+          :manager="chatManager"
+          :roles="chatManager.roles"
+          :busy="chatManager.anyBusy"
           @open-settings="openGeneralOptions"
         />
       </div>
@@ -168,7 +171,7 @@ import { useSectionFormat } from './composables/useSectionFormat.js'
 import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts.js'
 import { useVersionHistory } from './composables/useVersionHistory.js'
 import { useLlmSettings } from './composables/useLlmSettings.js'
-import { useChat } from './composables/useChat.js'
+import { useChatManager } from './composables/useChat.js'
 import { useWordCount } from './composables/useWordCount.js'
 import { usePagination } from './composables/usePagination.js'
 import { useManuscriptFormat } from './composables/useManuscriptFormat.js'
@@ -254,7 +257,10 @@ const sectionFormat = reactive(useSectionFormat())
 const history = reactive(useVersionHistory(store))
 const llmSettingsRaw = useLlmSettings()
 const llmSettings = reactive(llmSettingsRaw)
-const chat = reactive(useChat(doc, llmSettingsRaw, navRaw, editorRef))
+// Multi-chat: the manager owns the tab list + roles + the one-at-a-time
+// `anyBusy`. Each tab is its own `useChat` session; `activeSession` is the
+// selected one, passed to LlmPanel exactly as the single `chat` used to be.
+const chatManager = reactive(useChatManager(doc, llmSettingsRaw, navRaw, editorRef))
 
 // Whole-document word count. THE single instance (mirrors the shared-
 // pagination lift): the status bar reads it here, and the manuscript title

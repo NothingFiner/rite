@@ -2,6 +2,35 @@
   <div class="llm-panel">
     <h3 class="drawer-heading">Assistant</h3>
 
+    <!-- Tab row: one chip per chat session. Hidden until a second tab exists,
+         so a single chat looks exactly like before. Each label follows its
+         session's chosen role; the × closes a tab, + opens a new one. Only one
+         generation runs at a time (see useChatManager's stream serialization),
+         so Stop cancels the active stream regardless of which tab is selected. -->
+    <div v-if="manager.tabs.length > 1" class="llm-tabs">
+      <button
+        v-for="tab in manager.tabs"
+        :key="tab.id"
+        class="llm-tab"
+        :class="{ active: tab.id === manager.activeId }"
+        :title="tab.label"
+        @click="manager.selectSession(tab.id)"
+      >
+        <span class="llm-tab-label">{{ tab.label }}</span>
+        <span
+          class="llm-tab-close"
+          aria-label="Close tab"
+          @click.stop="manager.closeSession(tab.id)"
+        >×</span>
+      </button>
+      <button
+        class="llm-tab llm-tab-new"
+        aria-label="New chat"
+        title="New chat"
+        @click="manager.createSession()"
+      >+</button>
+    </div>
+
     <!-- Role selector: the chosen persona's composed body becomes the system
          prompt. Presets layer on top; they don't replace the role. -->
     <div class="llm-role-row">
@@ -25,7 +54,7 @@
         v-for="preset in PRESETS"
         :key="preset.id"
         class="llm-preset-btn"
-        :disabled="chat.busy || !chat.selectedRoleName"
+        :disabled="busy || !chat.selectedRoleName"
         @click="chat.preset(preset.id)"
         :title="preset.prompt"
       >
@@ -75,14 +104,14 @@
         v-model="chat.input"
         :placeholder="inputPlaceholder"
         rows="2"
-        @keydown.enter.exact.prevent="chat.send"
+        @keydown.enter.exact.prevent="onSend"
         @keydown.enter.shift.exact.prevent="() => {}"
-        :disabled="chat.busy"
+        :disabled="busy"
       ></textarea>
-      <button v-if="!chat.busy" class="llm-send-btn" :disabled="!chat.input.trim()" @click="chat.send">
+      <button v-if="!busy" class="llm-send-btn" :disabled="!chat.input.trim()" @click="onSend">
         Send
       </button>
-      <button v-else class="llm-send-btn llm-stop-btn" @click="chat.stop">
+      <button v-else class="llm-send-btn llm-stop-btn" @click="manager.stopActive">
         Stop
       </button>
     </div>
@@ -97,7 +126,7 @@
     <div class="llm-clear-row">
        <button
           class="llm-clear-btn"
-          :disabled="chat.busy"
+          :disabled="busy"
           :aria-expanded="clearOpen"
           aria-controls="clearConfirm"
           @click="toggleClearOpen"
@@ -107,7 +136,7 @@
       <transition name="slide-fade">
         <button
           class="llm-clear-btn"
-          :disabled="chat.busy"
+          :disabled="busy"
           v-show="clearOpen"
           @click="chat.clear"
           id="clearConfirm"
@@ -119,7 +148,6 @@
 
 <script setup>
 import { ref, computed, watch, nextTick } from 'vue'
-import { invoke } from '@tauri-apps/api/tauri'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { PRESETS } from '../composables/useChat.js'
@@ -127,6 +155,12 @@ import { PRESETS } from '../composables/useChat.js'
 const props = defineProps({
   chat: { type: Object, required: true },
   settings: { type: Object, required: true },
+  // The chat-session manager (see useChatManager): owns the tab list, role
+  // list, and stream-serialization `anyBusy`. The panel drives it directly for
+  // tab create/select/close and Stop, the same way it drives `chat` for send.
+  manager: { type: Object, required: true },
+  roles: { type: Array, default: () => [] },
+  busy: { type: Boolean, default: false },
 })
 
 defineEmits(['openSettings'])
@@ -134,7 +168,6 @@ defineEmits(['openSettings'])
 // Configure marked once: no extra HTML, compact output.
 marked.setOptions({ breaks: true, gfm: true })
 
-const roles = ref([])
 const messagesContainer = ref(null)
 const clearOpen = ref(false)
 
@@ -142,26 +175,17 @@ const clearOpen = ref(false)
 // ↔ select[id]) so clicking the label focuses the control.
 const scopeSelect = 'llm-scope-select'
 
-// Load roles from the Rust command (compile-time-embedded personas). Each
-// role's `body` is the composed system prompt (base rules + persona) — sent
-// verbatim as the system message when the role is selected.
-async function loadRoles() {
-  try {
-    roles.value = await invoke('list_roles')
-    // Auto-select Writing Assistant as the default role when present.
-    const defaultRole = roles.value.find((r) => r.name === 'Writing Assistant')
-    if (defaultRole && !props.chat.selectedRoleName) {
-      props.chat.setRole(defaultRole)
-    }
-  } catch (e) {
-    console.error('Failed to load roles:', e)
-  }
+// Send via the active session, but only when no other tab is streaming —
+// `busy` here is the manager's `anyBusy` (one generation at a time; see
+// useChatManager). The textarea/button are already disabled while busy, but
+// guarding here keeps the Enter-key path honest too.
+function onSend() {
+  if (props.busy) return
+  props.chat.send()
 }
 
-loadRoles()
-
 const currentRoleDescription = computed(() => {
-  const role = roles.value.find((r) => r.name === props.chat.selectedRoleName)
+  const role = props.roles.find((r) => r.name === props.chat.selectedRoleName)
   return role?.description || ''
 })
 
@@ -181,7 +205,7 @@ const inputPlaceholder = computed(() => {
 })
 
 function onRoleChange(event) {
-  const role = roles.value.find((r) => r.name === event.target.value)
+  const role = props.roles.find((r) => r.name === event.target.value)
   props.chat.setRole(role || null)
 }
 
@@ -222,6 +246,69 @@ watch(
   margin-bottom: 4px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+.llm-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.llm-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--bg-glass-border);
+  background: var(--input-bg);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.llm-tab:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.llm-tab.active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.llm-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.llm-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.6;
+}
+
+.llm-tab-close:hover {
+  opacity: 1;
+  background: var(--bg-glass-border);
+}
+
+.llm-tab-new {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  font-size: 13px;
+  line-height: 1;
 }
 
 .llm-role-row {
