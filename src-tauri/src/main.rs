@@ -3,6 +3,7 @@
 mod commands;
 mod diff;
 mod document;
+mod export_docx;
 mod export_text;
 mod history;
 mod llm;
@@ -14,6 +15,7 @@ use commands::{
     reconstruct_version, redo, rename_section, replace_all, replace_current, restore_version,
     save_document, save_snapshot, search_document, split_paragraph, sync_document, undo,
 };
+use export_docx::export_docx;
 use export_text::export_text;
 use llm::{llm_cancel, llm_chat, llm_chat_stream, llm_list_models, list_roles};
 use state::AppState;
@@ -44,6 +46,7 @@ fn main() {
             undo,
             redo,
             export_text,
+            export_docx,
             list_roles,
             llm_chat,
             llm_chat_stream,

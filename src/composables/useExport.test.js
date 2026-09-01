@@ -124,4 +124,39 @@ describe('useExport', () => {
       format: 'markdown',
     })
   })
+
+  it('exportDocx opens a .docx save dialog and invokes export_docx (no format arg)', async () => {
+    save.mockResolvedValue('/tmp/novel.docx')
+    invoke.mockResolvedValue(undefined)
+
+    const store = useDocumentStore()
+    store.doc = { title: 'Novel', sections: [] }
+
+    const { exportDocx } = useExport()
+    await exportDocx()
+
+    expect(save).toHaveBeenCalledWith({
+      filters: [{ name: 'Word Document', extensions: ['docx'] }],
+      defaultPath: 'Novel.docx',
+    })
+    // The DOCX command takes only a path — there is no format discriminator.
+    expect(invoke).toHaveBeenCalledWith('export_docx', { path: '/tmp/novel.docx' })
+    expect(message).not.toHaveBeenCalled()
+  })
+
+  it('exportDocx shows an error dialog when invoke rejects', async () => {
+    save.mockResolvedValue('/tmp/novel.docx')
+    invoke.mockRejectedValue(new Error('disk full'))
+
+    const store = useDocumentStore()
+    store.doc = { title: 'Novel', sections: [] }
+
+    const { exportDocx } = useExport()
+    await exportDocx()
+
+    expect(message).toHaveBeenCalledWith(
+      'Failed to export document: disk full',
+      { title: 'Rite', type: 'error' },
+    )
+  })
 })

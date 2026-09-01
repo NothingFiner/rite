@@ -55,5 +55,31 @@ export function useExport() {
     await exportFile('markdown')
   }
 
-  return { exportFile, exportPlainText, exportMarkdown }
+  /// Export the live document as a Word `.docx`. Unlike the text exports, the
+  /// Rust `export_docx` command takes only a `path` (there is no format
+  /// discriminator — DOCX is the one format it produces), so this is a separate
+  /// path rather than another `exportFile(format)` branch. The Rust side reads
+  /// the document from `AppState`, so again only the path crosses the wire.
+  /// The bytes are written atomically on the Rust side (temp file + rename),
+  /// so a crash mid-export cannot leave a half-written `.docx`.
+  async function exportDocx() {
+    const extension = 'docx'
+    const path = await save({
+      filters: [{ name: 'Word Document', extensions: [extension] }],
+      defaultPath: defaultFileName(extension),
+    })
+    if (!path) return // cancelled
+
+    try {
+      await invoke('export_docx', { path })
+    } catch (e) {
+      console.error('Failed to export docx:', e)
+      await message('Failed to export document: ' + (e?.message || String(e)), {
+        title: 'Rite',
+        type: 'error',
+      })
+    }
+  }
+
+  return { exportFile, exportPlainText, exportMarkdown, exportDocx }
 }
