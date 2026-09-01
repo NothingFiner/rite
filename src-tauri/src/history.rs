@@ -116,8 +116,11 @@ pub fn current_timestamp() -> String {
 }
 
 /// Write `content` to `path` via a sibling `.tmp` file then atomic rename, so a
-/// crash mid-write cannot leave a half-written `.rite`.
-pub(crate) fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
+/// crash mid-write cannot leave a half-written file. Generic over `AsRef<[u8]>`
+/// so it serves both the text exports (a `&str` / `&String`) and the binary DOCX
+/// export (a `&[u8]`); `&str` satisfies `AsRef<[u8]>` via its byte view, so the
+/// existing text callers are unchanged.
+pub(crate) fn atomic_write(path: &Path, content: impl AsRef<[u8]>) -> Result<(), String> {
     let tmp = format!("{}.tmp", path.to_string_lossy());
     fs::write(&tmp, content).map_err(|e| e.to_string())?;
     fs::rename(&tmp, path).map_err(|e| e.to_string())?;

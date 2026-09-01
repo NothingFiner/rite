@@ -27,6 +27,14 @@ reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], defau
 # iteration (`bytes_stream().next()`). reqwest's `stream` feature re-exports
 # the types but not the trait prelude, so this is a direct dep.
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+# DOCX export (`export_docx.rs`). A `.docx` is a ZIP of OOXML parts; we emit the
+# XML ourselves (transparent, no opaque heavy dependency) and let `zip` do the
+# deflate+archive. `deflate` is the only feature needed; `default-features =
+# false` drops the unused `aes-crypto`/`time`/`bzip2` machinery so the dep stays
+# small. Chosen over a high-level `docx-rs` crate for build reliability on this
+# Tauri v1 setup and so the output is plain readable OOXML that round-trips
+# with the existing mammoth-based import path.
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem

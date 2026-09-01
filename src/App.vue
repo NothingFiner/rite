@@ -130,6 +130,7 @@
       @import-file="fileIO.importFile"
       @export-plain-text="exportComposable.exportPlainText"
       @export-markdown="exportComposable.exportMarkdown"
+      @export-docx="exportComposable.exportDocx"
       @toggle-theme-picker="theme.showThemePicker = !theme.showThemePicker"
       @select-theme="theme.selectTheme"
     />
