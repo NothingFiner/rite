@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { documentToText, useChat, PRESETS } from './useChat.js'
+import { documentToText, useChat, PRESETS, matchSlashCommands } from './useChat.js'
 
 // Mock the Tauri bridge: `invoke` for commands, `listen` for streaming events.
 // `listen` resolves to an unlisten function; we capture the event handlers so
@@ -167,6 +167,51 @@ describe('documentToText', () => {
   it('returns empty for a doc with no sections', () => {
     expect(documentToText({ sections: [] }, 'document')).toBe('')
     expect(documentToText(null, 'document')).toBe('')
+  })
+})
+
+// --- matchSlashCommands -----------------------------------------------------
+
+describe('matchSlashCommands', () => {
+  it('returns null when the text does not start with /', () => {
+    expect(matchSlashCommands('critique this')).toBeNull()
+    expect(matchSlashCommands('')).toBeNull()
+    expect(matchSlashCommands(' /summarize')).toBeNull()
+  })
+
+  it('returns all four presets for a bare /', () => {
+    expect(matchSlashCommands('/').map((p) => p.id)).toEqual([
+      'summarize',
+      'critique',
+      'pacing',
+      'suggest',
+    ])
+  })
+
+  it('filters to presets whose id starts with the token', () => {
+    expect(matchSlashCommands('/cri').map((p) => p.id)).toEqual(['critique'])
+    expect(matchSlashCommands('/pac').map((p) => p.id)).toEqual(['pacing'])
+  })
+
+  it('returns matching presets in PRESETS order, not input order', () => {
+    // /s matches both "summarize" and "suggest"; PRESETS order is summarize
+    // then suggest (not alphabetical), so the result preserves that.
+    expect(matchSlashCommands('/s').map((p) => p.id)).toEqual([
+      'summarize',
+      'suggest',
+    ])
+  })
+
+  it('uses only the first whitespace-delimited word as the token', () => {
+    // `/critique focus on dialogue` → token is `critique`; the trailing text
+    // is for the panel to append to the inserted prompt, not for matching.
+    expect(matchSlashCommands('/critique focus on dialogue').map((p) => p.id)).toEqual([
+      'critique',
+    ])
+  })
+
+  it('returns an empty array when nothing matches', () => {
+    expect(matchSlashCommands('/xyz')).toEqual([])
   })
 })
 
