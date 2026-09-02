@@ -51,20 +51,6 @@
     </div>
     <p v-if="currentRoleDescription" class="llm-role-desc">{{ currentRoleDescription }}</p>
 
-    <!-- Preset row: quick analytical actions. Each sets a prompt + scope, then
-         sends — on top of the role's system prompt. -->
-    <div class="llm-presets">
-      <button
-        v-for="preset in PRESETS"
-        :key="preset.id"
-        class="llm-preset-btn"
-        :disabled="busy || !chat.selectedRoleName"
-        @click="chat.preset(preset.id)"
-        :title="preset.prompt"
-      >
-        {{ preset.label }}
-      </button>
-    </div>
     <!-- Message list -->
     <div class="llm-messages" ref="messagesContainer">
       <div v-if="chat.messages.length === 0" class="llm-empty">
@@ -73,10 +59,10 @@
           <button class="llm-empty-btn" @click="$emit('openSettings')">Open General Options</button>
         </template>
         <template v-else-if="!chat.selectedRoleName">
-          <p class="llm-empty-text">Pick a role above, then type a question or tap a preset.</p>
+          <p class="llm-empty-text">Pick a role above, then type a question. Type / for built-in commands.</p>
         </template>
         <template v-else>
-          <p class="llm-empty-text">Ask the assistant about your manuscript, or use a preset above.</p>
+          <p class="llm-empty-text">Ask the assistant about your manuscript, or type / for commands.</p>
         </template>
       </div>
 
@@ -101,13 +87,38 @@
       </div>
     </div>
 
-    <!-- Input row -->
+    <!-- Input row. The slash-command popup floats above the textarea, so the
+         row is the positioning context (position: relative; the popup is
+         bottom: 100%). -->
     <div class="llm-input-row">
+      <!-- Slash-command autocomplete. `@keydown.capture` on the textarea below
+           intercepts Arrow/Tab/Enter/Esc while this is open; clicking an item
+           also selects. `@mousedown.prevent` on items keeps the textarea
+           focused so the click lands without a blur/click race. -->
+      <div v-if="slashMenuOpen" class="llm-slash-menu">
+        <button
+          v-for="(preset, index) in slashMatches"
+          :key="preset.id"
+          class="llm-slash-item"
+          :class="{ active: index === selectIndex }"
+          :title="preset.prompt"
+          @mousedown.prevent
+          @click="selectSlashCommand(preset)"
+          @mouseenter="selectIndex = index"
+        >
+          <span class="llm-slash-id">/{{ preset.id }}</span>
+          <span class="llm-slash-label">{{ preset.label }}</span>
+        </button>
+      </div>
       <textarea
+        ref="inputEl"
         class="drawer-textarea llm-input"
         v-model="chat.input"
         :placeholder="inputPlaceholder"
         rows="2"
+        @focus="inputFocused = true"
+        @blur="inputFocused = false"
+        @keydown.capture="onInputKeydownCapture"
         @keydown.enter.exact.prevent="onSend"
         @keydown.enter.shift.exact.prevent="() => {}"
         :disabled="busy"
@@ -154,7 +165,7 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { PRESETS } from '../composables/useChat.js'
+import { matchSlashCommands } from '../composables/useChat.js'
 
 const props = defineProps({
   chat: { type: Object, required: true },
@@ -205,8 +216,110 @@ const toggleClearOpen = () => {
 const inputPlaceholder = computed(() => {
   if (!props.settings.settings.model) return 'Configure a model in General Options…'
   if (!props.chat.selectedRoleName) return 'Select a role first…'
-  return 'Ask about your manuscript… (Enter to send, Shift+Enter for newline)'
+  return 'Ask about your manuscript… (type / for commands)'
 })
+
+// --- Slash-command autocomplete --------------------------------------------
+//
+// The four analytical presets (Summarize / Critique / Analyze pacing / Suggest
+// improvements) used to be a button row. They're now invoked by typing the
+// preset id after a `/` in the input, with this autocomplete popup. Selecting a
+// command INSERTS the preset's curated prompt as editable text (and sets its
+// scope) rather than sending — the writer can append " — focus on dialogue"
+// before pressing Enter to send. See the plan (Phase 3.3).
+//
+// The popup is keyboard-driven. The textarea already binds Enter → onSend and
+// Shift+Enter → newline on the bubble phase; `onInputKeydownCapture` runs on the
+// CAPTURE phase (before those) so that when the popup is open, Arrow/Tab/Enter/
+// Esc drive the menu and never reach the send/newline handlers. When the popup
+// is closed it does nothing, leaving plain Enter-to-send untouched.
+const inputEl = ref(null)
+const inputFocused = ref(false)
+
+// The presets matching the current input. `null` (not `/`-prefixed) means "no
+// popup at all"; `[]` means a `/` was typed but nothing matches (still no popup
+// — see `slashMenuOpen`). `chat.input` is auto-unwrapped by the reactive proxy.
+const slashMatches = computed(() => matchSlashCommands(props.chat.input))
+
+// The popup shows only while the textarea is focused AND there are matches.
+// Tying open state to focus means a genuine blur (clicking outside) closes it;
+// `@mousedown.prevent` on the items keeps focus during a click selection so the
+// blur never fires mid-selection.
+const slashMenuOpen = computed(
+  () => inputFocused.value && slashMatches.value !== null && slashMatches.value.length > 0,
+)
+
+// Highlighted item index. Reset to the first item whenever the match set
+// changes (i.e. as the writer types), so the top match is always pre-selected.
+const selectIndex = ref(0)
+watch(slashMatches, () => {
+  selectIndex.value = 0
+})
+
+// Capture-phase keydown: handles Arrow/Tab/Enter/Esc when the popup is open.
+// Only these four keys are intercepted — every other key (letters, Backspace,
+// Space) falls through the `default` case untouched so the writer can keep
+// typing and the list keeps filtering. `preventDefault()` + `stopPropagation()`
+// live inside the handled cases (not above the switch) precisely so that
+// fall-through keystrokes still reach the textarea; and they stop the
+// bubble-phase Enter handler (onSend) from firing when Enter selects a command.
+function onInputKeydownCapture(event) {
+  if (!slashMenuOpen.value) return
+  const matches = slashMatches.value
+  switch (event.key) {
+    case 'ArrowDown':
+      event.preventDefault()
+      event.stopPropagation()
+      selectIndex.value = (selectIndex.value + 1) % matches.length
+      break
+    case 'ArrowUp':
+      event.preventDefault()
+      event.stopPropagation()
+      selectIndex.value = (selectIndex.value - 1 + matches.length) % matches.length
+      break
+    case 'Tab':
+    case 'Enter':
+      event.preventDefault()
+      event.stopPropagation()
+      selectSlashCommand(matches[selectIndex.value])
+      break
+    case 'Escape':
+      event.preventDefault()
+      event.stopPropagation()
+      inputFocused.value = false // closes the popup (slashMenuOpen is focus-tied)
+      break
+    default:
+      break
+  }
+}
+
+/// Selecting a command inserts the preset's curated prompt as editable text and
+/// sets the scope, so the next send uses it. Any text the writer typed after
+/// the `/token` (e.g. `/critique focus on dialogue`) is appended after a space,
+/// so the note rides along. Does NOT send — the writer reviews, then Enter.
+function selectSlashCommand(preset) {
+  if (!preset) return
+  // Split the input into the leading `/token` and the trailing text after it.
+  const afterSlash = props.chat.input.slice(1)
+  const firstSpace = afterSlash.search(/\s/)
+  const rest = firstSpace === -1 ? '' : afterSlash.slice(firstSpace + 1).trim()
+  props.chat.scope = preset.scope
+  props.chat.input = rest ? `${preset.prompt} ${rest}` : preset.prompt
+  inputFocused.value = true // keep the popup closed on next render (no `/` now)
+  focusInputEnd()
+}
+
+/// Refocus the textarea and place the caret at the end, ready to edit / append
+/// / Enter to send. `nextTick` waits for the input value to render.
+function focusInputEnd() {
+  nextTick(() => {
+    const textarea = inputEl.value
+    if (!textarea) return
+    textarea.focus()
+    const length = textarea.value.length
+    textarea.setSelectionRange(length, length)
+  })
+}
 
 function onRoleChange(event) {
   const role = props.roles.find((r) => r.name === event.target.value)
@@ -343,39 +456,6 @@ watch(
   color: var(--text-secondary);
   margin: 2px 0 0;
   line-height: 1.4;
-}
-
-.llm-presets {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.llm-preset-btn {
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: 5px 8px;
-  border-radius: 6px;
-  border: 1px solid var(--bg-glass-border);
-  background: var(--input-bg);
-  color: var(--text-secondary);
-  font-size: 11px;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.llm-preset-btn:hover:not(:disabled) {
-  background: var(--hover-bg);
-  color: var(--text-primary);
-  border-color: var(--accent);
-}
-
-.llm-preset-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
 }
 
 .llm-scope-row {
@@ -570,18 +650,75 @@ watch(
   to { visibility: hidden; }
 }
 
-/* Input row pinned to the bottom of the panel. */
+/* Input row pinned to the bottom of the panel. position: relative so the
+   slash-command popup can float above it (bottom: 100%). */
 .llm-input-row {
   display: flex;
   gap: 6px;
   align-items: flex-end;
   flex: 0 0 auto;
+  position: relative;
 }
 
 .llm-input {
   flex: 1 1 auto;
   min-height: 36px;
   max-height: 120px;
+}
+
+/* Slash-command autocomplete: floats above the textarea, reusing the panel's
+   existing surface/border tokens so it reads as part of the drawer. */
+.llm-slash-menu {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  margin-bottom: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: 6px;
+  border: 1px solid var(--bg-glass-border);
+  background: var(--input-bg);
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.25);
+  z-index: 10;
+}
+
+.llm-slash-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.llm-slash-item:hover,
+.llm-slash-item.active {
+  background: var(--accent-bg);
+  color: var(--text-primary);
+}
+
+.llm-slash-id {
+  font-family: ui-monospace, monospace;
+  color: var(--accent);
+  flex: 0 0 auto;
+}
+
+.llm-slash-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .llm-send-btn {

@@ -55,6 +55,36 @@ export const PRESETS = [
   },
 ]
 
+/// Match slash-commands against the input text. Used by the Assistant panel's
+/// autocomplete popup (Phase 3.3): when the input starts with `/`, the popup
+/// lists the presets the writer can invoke by id.
+///
+/// Returns:
+///   - `null`  when `text` does NOT start with `/` (no popup — normal typing).
+///   - `[]`    when it starts with `/` but no preset id is a prefix of the
+///             token (popup shows nothing, e.g. `/xyz`).
+///   - the matching presets, in `presets` order, whose id is a prefix of the
+///             token after `/`.
+///
+/// The "token" is the first whitespace-delimited word after the leading `/` —
+/// so `/critique focus on dialogue` has token `critique` (the trailing text is
+/// preserved by the panel and appended to the inserted prompt). Just `/` (or
+/// `/ ` with nothing after it) matches every preset, which is what makes the
+/// commands discoverable: type `/` and all four appear.
+///
+/// Pure on purpose: pulling the matching out of the component keeps it
+/// unit-testable without mounting Vue (the codebase tests composables, not
+/// components).
+export function matchSlashCommands(text, presets = PRESETS) {
+  if (!text.startsWith('/')) return null
+  // Everything after the leading `/`, up to the first whitespace, is the token
+  // the writer is trying to complete. `/` alone → empty token → matches all.
+  const afterSlash = text.slice(1)
+  const trimmed = afterSlash.trim()
+  const token = trimmed.split(/\s/)[0] || ''
+  return presets.filter((preset) => preset.id.startsWith(token))
+}
+
 /// Flatten a paragraph's text runs into a plain-text string (no HTML, no
 /// styling). Reused across all scopes — the model reads prose, not markup.
 function paragraphToText(paragraph) {
