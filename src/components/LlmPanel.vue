@@ -110,6 +110,12 @@
           <span class="llm-slash-label">{{ preset.label }}</span>
         </button>
       </div>
+      <!-- Enter alone sends (`.exact` = no modifiers held). Shift+Enter is
+           intentionally NOT bound here: it falls through to the textarea's
+           native default, which inserts a newline. (Binding it with `.prevent`
+           would swallow that newline — the bug this replaces.) Enter and Return
+           are the same key in the browser (`event.key` is 'Enter'), so this
+           covers both. -->
       <textarea
         ref="inputEl"
         class="drawer-textarea llm-input"
@@ -120,7 +126,6 @@
         @blur="inputFocused = false"
         @keydown.capture="onInputKeydownCapture"
         @keydown.enter.exact.prevent="onSend"
-        @keydown.enter.shift.exact.prevent="() => {}"
         :disabled="busy"
       ></textarea>
       <button v-if="!busy" class="llm-send-btn" :disabled="!chat.input.trim()" @click="onSend">
@@ -216,7 +221,7 @@ const toggleClearOpen = () => {
 const inputPlaceholder = computed(() => {
   if (!props.settings.settings.model) return 'Configure a model in General Options…'
   if (!props.chat.selectedRoleName) return 'Select a role first…'
-  return 'Ask about your manuscript… (type / for commands)'
+  return 'Ask about your manuscript… (/ for commands, Shift+Enter for newline)'
 })
 
 // --- Slash-command autocomplete --------------------------------------------
