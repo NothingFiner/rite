@@ -15,7 +15,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import ManuscriptDisplay from './manuscript/manuscriptDisplay.vue'
 import EditorDisplay from './editor/editorDisplay.vue'
 
@@ -98,6 +98,22 @@ function clearSearchHighlights() {
   activeRef()?.clearSearchHighlights?.()
 }
 
+// The Assistant panel's `selection` scope reads the editor's live text
+// selection. EditorDisplay exposes `getSelectionText`; forward it so App.vue's
+// `editorRef` (which points at THIS wrapper, not the inner editor) can reach
+// it. Without this, `useChat`'s selection scope silently sent empty context.
+function getSelectionText() {
+  return editorRef.value?.getSelectionText?.() ?? ''
+}
+
+// Reactive boolean forwarding the editor's `hasSelection`, for the Assistant
+// panel's auto-scope-to-selection (roadmap 3.2). Exposed as a COMPUTED, not a
+// method, so consumers read `editorRef.value.hasSelection` as a boolean (a
+// method would be a truthy function reference — an always-true footgun).
+// `editorRef.value` is null in manuscript mode → `?? false` (the manuscript
+// view is read-only, so there's no selection there anyway).
+const hasSelection = computed(() => editorRef.value?.hasSelection ?? false)
+
 defineExpose({
   syncFromDOM,
   renderFromDoc,
@@ -111,5 +127,7 @@ defineExpose({
   navigateSectionPage,
   applySearchHighlights,
   clearSearchHighlights,
+  getSelectionText,
+  hasSelection,
 })
 </script>

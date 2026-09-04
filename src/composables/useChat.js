@@ -175,6 +175,24 @@ export function useChat(docRef, llmSettings, nav, editorRef) {
   const selectedRoleBody = ref('') // composed system prompt from the role selector
   const selectedRoleName = ref('')
 
+  // The scope that will actually be used for the next send. `scope` is the
+  // writer's explicit dropdown choice; `effectiveScope` layers a live editor
+  // selection on top of it: "selection wins, except Whole document". A
+  // selection upgrades any non-document scope to `selection` (so highlighting a
+  // passage and asking "critique this" targets the passage, not the whole
+  // section); an explicit `document` choice short-circuits and is always
+  // respected (pacing analysis needs the whole manuscript). Separating intent
+  // (`scope`) from what's used (`effectiveScope`) means the auto-override never
+  // mutates `scope`, so there's no sticky state — clearing the selection reverts
+  // on the next read. `editorRef.value.hasSelection` is the reactive boolean
+  // forwarded through DocumentRenderer (see editorDisplay.vue).
+  const effectiveScope = computed(() => {
+    if (editorRef?.value?.hasSelection && scope.value !== 'document') {
+      return 'selection'
+    }
+    return scope.value
+  })
+
   // The active assistant message index during a stream — guards against a
   // late token from a prior turn writing into a new message.
   let activeAssistantIndex = -1
@@ -197,12 +215,12 @@ export function useChat(docRef, llmSettings, nav, editorRef) {
 
     const contextText = documentToText(
       docRef?.value || docRef,
-      scope.value,
+      effectiveScope.value,
       editorRef?.value?.getSelectionText?.() || '',
       nav?.selectedNavId?.value || null,
     )
     if (contextText.trim()) {
-      const label = scopeLabel(scope.value)
+      const label = scopeLabel(effectiveScope.value)
       out.push({
         role: 'user',
         content: `Here is the ${label} for reference:\n\n${contextText}`,
@@ -334,6 +352,7 @@ export function useChat(docRef, llmSettings, nav, editorRef) {
     messages,
     input,
     scope,
+    effectiveScope,
     busy,
     selectedRoleName,
     buildContextMessages,
