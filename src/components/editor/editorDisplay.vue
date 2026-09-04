@@ -69,6 +69,12 @@ const lastSectionCount = ref(0)
 // fallback to this value. Cleared when its target node is destroyed (drift-gate
 // fallback to renderEditor) so it can never point at a missing block.
 const lastEditorSelection = ref(null)
+// Whether the sheet currently has a non-empty text selection. Exposed so the
+// Assistant panel can auto-scope a critique to the selection (roadmap 3.2):
+// a reactive boolean lets the panel's "Using your selection" hint appear/
+// disappear live. Updated from `onSelectionChange` (see below) — same listener
+// the caret bookmark uses, so no new event wiring.
+const hasSelection = ref(false)
 const pageBreaks = toRef(props, 'pageBreaks')
 const sectionFormat = useSectionFormat()
 
@@ -605,6 +611,13 @@ function onSelectionChange() {
   if (!root.contains(document.activeElement)) return
   const bm = bookmarkSelection(root)
   if (bm) lastEditorSelection.value = bm
+  // Reflect whether there's a live, in-sheet text selection. `getSelectionText`
+  // already does the sheet-containment + collapsed check, so reuse it. Like the
+  // caret bookmark above, we only update while the sheet is focused — so a
+  // selection made in the sheet, then blurred (e.g. to click into the Assistant
+  // panel), still reads as "present" and the critique targets it. Collapsing
+  // the selection in the sheet clears it.
+  hasSelection.value = getSelectionText() !== ''
 }
 
 /// Patch the live DOM to match the new model, preserving the cursor. Falls
@@ -1339,6 +1352,9 @@ defineExpose({
   // selection. Returns the plain-text selection within the sheet, or '' when
   // nothing is selected / the selection is outside the editor.
   getSelectionText,
+  // Reactive boolean: true while the sheet has a non-empty selection. The
+  // Assistant panel uses it to auto-scope to the selection (roadmap 3.2).
+  hasSelection,
 })
 </script>
 

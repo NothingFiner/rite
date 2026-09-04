@@ -142,6 +142,15 @@
         <option value="selection">Selection</option>
         <option value="document">Whole document</option>
       </select>
+      <!-- Shows only when a live editor selection overrides the chosen scope
+           ("selection wins, except Whole document"). `scope` is the writer's
+           explicit dropdown choice (kept as-is); `effectiveScope` is what the
+           next send will actually use. See useChat.effectiveScope. -->
+      <span
+        v-if="chat.effectiveScope === 'selection' && chat.scope !== 'selection'"
+        class="llm-scope-hint"
+        >Using your selection</span
+      >
     </div>
     <div class="llm-clear-row">
        <button
@@ -465,6 +474,7 @@ watch(
 
 .llm-scope-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   align-items: center;
 }
@@ -477,6 +487,15 @@ watch(
 .llm-scope-select {
   flex: 1 1 auto;
   flex-basis: 50%;
+}
+
+/* "Using your selection" — appears when a live editor selection overrides the
+   chosen Feedback Target. Accent-colored so it reads as an active override. */
+.llm-scope-hint {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--accent);
+  font-style: italic;
 }
 
 .llm-clear-row {

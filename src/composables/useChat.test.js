@@ -279,6 +279,90 @@ describe('useChat — buildContextMessages', () => {
   })
 })
 
+// --- effectiveScope / selection-default (3.2) -----------------------------
+//
+// `effectiveScope` layers a live editor selection on top of the writer's
+// explicit dropdown choice: "selection wins, except Whole document". A mock
+// `editorRef` exposes `hasSelection` (a plain boolean — the real one is a
+// reactive ref forwarded through DocumentRenderer) + `getSelectionText`.
+
+// A mock editorRef with a controllable selection. `hasSelection` is a plain
+// boolean here; the real exposed value is a reactive ref that unwraps to one.
+function makeEditorRef({ hasSelection, selectionText = '' }) {
+  return {
+    value: {
+      hasSelection,
+      getSelectionText: () => selectionText,
+    },
+  }
+}
+
+describe('useChat — effectiveScope (selection-default)', () => {
+  it('upgrades section scope to selection when the editor has a selection', () => {
+    const doc = sampleDocument()
+    const chat = useChat(
+      docRef(doc),
+      makeLlmSettings(),
+      makeNav('s1'),
+      makeEditorRef({ hasSelection: true, selectionText: 'the chosen passage' }),
+    )
+    chat.setRole({ name: 'Critic', body: 'sys' })
+    chat.scope.value = 'section'
+
+    expect(chat.effectiveScope.value).toBe('selection')
+    const messages = chat.buildContextMessages('critique this')
+    // The context message uses the selection text, not the section body.
+    expect(messages[1].content).toContain('selected text')
+    expect(messages[1].content).toContain('the chosen passage')
+    expect(messages[1].content).not.toContain('The door opened.')
+  })
+
+  it('respects an explicit Whole-document scope even with a selection', () => {
+    const doc = sampleDocument()
+    const chat = useChat(
+      docRef(doc),
+      makeLlmSettings(),
+      makeNav(),
+      makeEditorRef({ hasSelection: true, selectionText: 'the chosen passage' }),
+    )
+    chat.setRole({ name: 'Critic', body: 'sys' })
+    chat.scope.value = 'document'
+
+    // Pacing/whole-document analysis must NOT be overridden by a stray selection.
+    expect(chat.effectiveScope.value).toBe('document')
+    const messages = chat.buildContextMessages('analyze pacing')
+    expect(messages[1].content).toContain('full manuscript')
+    expect(messages[1].content).not.toContain('the chosen passage')
+  })
+
+  it('leaves section scope unchanged when there is no selection', () => {
+    const doc = sampleDocument()
+    const chat = useChat(
+      docRef(doc),
+      makeLlmSettings(),
+      makeNav('s1'),
+      makeEditorRef({ hasSelection: false, selectionText: '' }),
+    )
+    chat.setRole({ name: 'Critic', body: 'sys' })
+    chat.scope.value = 'section'
+
+    expect(chat.effectiveScope.value).toBe('section')
+    const messages = chat.buildContextMessages('critique this')
+    expect(messages[1].content).toContain('current section')
+    expect(messages[1].content).toContain('The door opened.')
+  })
+
+  it('treats a null editorRef (no editor mounted) as no selection', () => {
+    // The existing fixtures pass { value: null }; effectiveScope must fall back
+    // to the chosen scope so prior tests' behavior is unchanged.
+    const doc = sampleDocument()
+    const chat = useChat(docRef(doc), makeLlmSettings(), makeNav('s1'), { value: null })
+    chat.setRole({ name: 'Critic', body: 'sys' })
+    chat.scope.value = 'section'
+    expect(chat.effectiveScope.value).toBe('section')
+  })
+})
+
 // --- send / streaming -------------------------------------------------------
 
 describe('useChat — send + streaming', () => {
