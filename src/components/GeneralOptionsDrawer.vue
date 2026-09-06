@@ -135,6 +135,28 @@
             }"
           />
 
+          <label class="drawer-label">Context length (tokens — used for the panel's usage readout)</label>
+          <input
+            class="drawer-input"
+            type="number"
+            min="512"
+            step="512"
+            :value="llmSettings.settings.contextLength"
+            @input="e => {
+              const v = Number(e.target.value)
+              // Empty/non-numeric input falls back to the default rather than
+              // persisting NaN or 0 (which would make the readout divide-by-zero
+              // or show a nonsensical window).
+              llmSettings.setSettings({ contextLength: v >= 512 ? v : 8192 })
+            }"
+          />
+          <p class="ai-context-hint">
+            The model's context window can't be auto-detected from the server, so
+            set it here. The Assistant panel shows how much of it your assembled
+            request consumes. 8192 fits common local models; raise it for a
+            larger-context model.
+          </p>
+
           <button class="ai-test-btn" @click="testConnection" :disabled="testingConnection">
             {{ testingConnection ? 'Testing…' : 'Test connection' }}
           </button>
@@ -402,6 +424,15 @@ watch(
   font-size: 11px;
   color: #e88;
   margin: 0;
+}
+
+/* Explanatory note under the Context length input. Muted like the error/test
+   lines but neutral (not a warning), using the secondary text token. */
+.ai-context-hint {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin: 4px 0 0 0;
+  line-height: 1.4;
 }
 
 .ai-test-btn {

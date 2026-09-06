@@ -85,6 +85,25 @@ export function matchSlashCommands(text, presets = PRESETS) {
   return presets.filter((preset) => preset.id.startsWith(token))
 }
 
+/// Rough token estimate using the chars/4 heuristic. Good enough for a v1
+/// "how full is the context window" readout — we are NOT billing on this, just
+/// showing the writer whether their assembled request is nearing the limit. A
+/// real tokenizer (Ollama /api/tokenize, or tiktoken) is deferred; at that
+/// precision the per-message framing overhead (role tags, separators) the model
+/// adds is also negligible, so we charge only for `content` here.
+export function estimateTokens(text) {
+  return Math.ceil((text || '').length / 4)
+}
+
+/// Sum the token cost of an assembled message list (`[{role, content}]`, the
+/// shape `buildContextMessages` returns). Charges only each message's content —
+/// see `estimateTokens` for why the framing overhead is ignored. Pure so it can
+/// be unit-tested and reused (Phase 4's RAG cost reasoning will want the same
+/// measure over a retrieved-passages message).
+export function estimateContextTokens(messages) {
+  return messages.reduce((sum, message) => sum + estimateTokens(message.content), 0)
+}
+
 /// Flatten a paragraph's text runs into a plain-text string (no HTML, no
 /// styling). Reused across all scopes — the model reads prose, not markup.
 function paragraphToText(paragraph) {

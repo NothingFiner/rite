@@ -151,6 +151,18 @@
         class="llm-scope-hint"
         >Using your selection</span
       >
+      <!-- Live token-usage readout: assembled request cost vs the configured
+           context window. Gated on a model being configured (matches the empty-
+           state gate above), so it never shows a misleading fraction before
+           setup. `margin-left: auto` pushes it to the right of the scope row,
+           wrapping under the hint when the hint is also present. -->
+      <p
+        v-if="settings.settings.model"
+        class="llm-context-readout"
+        :class="{ near: contextTokens > settings.settings.contextLength * 0.8 }"
+      >
+        Context: ~{{ formatTokens(contextTokens) }} / {{ formatTokens(settings.settings.contextLength) }} tokens
+      </p>
     </div>
     <div class="llm-clear-row">
        <button
@@ -179,7 +191,7 @@
 import { ref, computed, watch, nextTick } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { matchSlashCommands } from '../composables/useChat.js'
+import { matchSlashCommands, estimateContextTokens } from '../composables/useChat.js'
 
 const props = defineProps({
   chat: { type: Object, required: true },
@@ -333,6 +345,39 @@ function focusInputEnd() {
     const length = textarea.value.length
     textarea.setSelectionRange(length, length)
   })
+}
+
+// --- Context-usage readout (Phase 3.4) -------------------------------------
+//
+// Shows how much of the model's context window the *next* send will consume.
+// We reuse `buildContextMessages` — the exact assembly send ships (system role
+// + manuscript context + last 10 history turns + the current draft input) — so
+// the number the writer sees is the number the model will receive. Calling it
+// inside a `computed` tracks its reactive reads (input, scope/effectiveScope,
+// selected role, history, the doc) and recomputes live as the writer types or
+// the conversation grows. One caveat: `buildContextMessages` also reads the
+// editor selection imperatively (getSelectionText, not a reactive dep), so a
+// selection change alone won't retrigger this — acceptable for a heuristic
+// readout, and the real send still reads the live value.
+//
+// The denominator is the configured `contextLength` setting, NOT the model's
+// actual limit (which the list-models endpoints don't expose — see
+// useLlmSettings.defaultSettings). `props.settings` is the reactive-wrapped
+// useLlmSettings from App.vue, so `settings.settings.contextLength` auto-unwraps
+// the same way `settings.settings.model` does (e.g. inputPlaceholder above).
+const contextTokens = computed(() => {
+  const messages = props.chat.buildContextMessages(props.chat.input || '')
+  return estimateContextTokens(messages)
+})
+
+// Compact token formatting: 6200 → "6.2k", 8192 → "8.2k", 940 → "940". The
+// trailing ".0" is stripped so round thousands read as "8k", not "8.0k".
+function formatTokens(count) {
+  if (count >= 1000) {
+    const thousands = (count / 1000).toFixed(1)
+    return `${thousands.replace(/\.0$/, '')}k`
+  }
+  return String(count)
 }
 
 function onRoleChange(event) {
@@ -496,6 +541,23 @@ watch(
   font-size: 11px;
   color: var(--accent);
   font-style: italic;
+}
+
+/* Token-usage readout, right-aligned in the scope row. Muted by default; turns
+   accent when the assembled request passes 80% of the configured window, as a
+   soft "you're filling up the context" nudge. `flex: 0 0 auto` keeps it from
+   stretching; the scope select's `flex: 1 1 auto` already pushes it to the
+   right edge, so `margin-left: auto` is a no-op there but keeps it right-aligned
+   on a wrapped second line (when the hint is also present). */
+.llm-context-readout {
+  flex: 0 0 auto;
+  margin: 0 0 0 auto;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.llm-context-readout.near {
+  color: var(--accent);
 }
 
 .llm-clear-row {

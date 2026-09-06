@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { documentToText, useChat, PRESETS, matchSlashCommands } from './useChat.js'
+import { documentToText, useChat, PRESETS, matchSlashCommands, estimateTokens, estimateContextTokens } from './useChat.js'
 
 // Mock the Tauri bridge: `invoke` for commands, `listen` for streaming events.
 // `listen` resolves to an unlisten function; we capture the event handlers so
@@ -212,6 +212,60 @@ describe('matchSlashCommands', () => {
 
   it('returns an empty array when nothing matches', () => {
     expect(matchSlashCommands('/xyz')).toEqual([])
+  })
+})
+
+// --- estimateTokens / estimateContextTokens (3.4) -------------------------
+//
+// Pure helpers backing the panel's token-usage readout. `estimateTokens` uses
+// the chars/4 heuristic (ceil, so a 5-char string is 2 tokens — we round up so
+// the readout errs toward "more full," the safer direction for a context
+// warning). `estimateContextTokens` sums over the [{role, content}] shape
+// `buildContextMessages` returns, charging only content.
+
+describe('estimateTokens', () => {
+  it('returns 0 for empty / null / undefined', () => {
+    expect(estimateTokens('')).toBe(0)
+    expect(estimateTokens(null)).toBe(0)
+    expect(estimateTokens(undefined)).toBe(0)
+  })
+
+  it('estimates ~4 chars per token, rounding up', () => {
+    expect(estimateTokens('abcd')).toBe(1) // exactly 4 chars → 1 token
+    expect(estimateTokens('abcde')).toBe(2) // 5 chars → ceil(1.25) = 2
+    expect(estimateTokens('ab')).toBe(1) // 2 chars → ceil(0.5) = 1
+  })
+})
+
+describe('estimateContextTokens', () => {
+  it('sums the token cost of each message content', () => {
+    const messages = [
+      { role: 'system', content: 'abcd' }, // 1
+      { role: 'user', content: 'abcdefgh' }, // 2
+      { role: 'assistant', content: 'ab' }, // 1
+    ]
+    expect(estimateContextTokens(messages)).toBe(4)
+  })
+
+  it('handles an empty message list', () => {
+    expect(estimateContextTokens([])).toBe(0)
+  })
+
+  it('treats missing content as 0 tokens (defensive)', () => {
+    const messages = [
+      { role: 'user' }, // no content
+      { role: 'assistant', content: 'abcd' },
+    ]
+    expect(estimateContextTokens(messages)).toBe(1)
+  })
+
+  it('matches the sum of per-message estimateTokens calls', () => {
+    const messages = [
+      { role: 'system', content: 'You are a critic.' },
+      { role: 'user', content: 'The door opened. Rain fell softly.' },
+    ]
+    const manual = messages.reduce((sum, m) => sum + estimateTokens(m.content), 0)
+    expect(estimateContextTokens(messages)).toBe(manual)
   })
 })
 

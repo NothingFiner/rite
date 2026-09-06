@@ -19,6 +19,14 @@ function defaultSettings() {
     model: '',
     apiKey: '',
     temperature: null, // null = server default
+    // The model's context-window size in tokens. NOT auto-detected: the
+    // llm_list_models command returns model names only (Ollama's /api/tags and
+    // OpenAI's /v1/models don't expose context length), so the writer tells us.
+    // Used by the Assistant panel's token-usage readout (Phase 3.4). 8192 is a
+    // reasonable default for common local models (e.g. llama3); bump it for a
+    // larger-context model. Backward-compatible: loadPrefs merges over these
+    // defaults, so existing saved settings gain this on next load.
+    contextLength: 8192,
   }
 }
 

@@ -25,6 +25,9 @@ describe('useLlmSettings', () => {
     expect(llm.settings.value.model).toBe('')
     expect(llm.settings.value.apiKey).toBe('')
     expect(llm.settings.value.temperature).toBeNull()
+    // contextLength (Phase 3.4) — the configured model context window used by
+    // the panel's token-usage readout. Not auto-detected; 8192 is the default.
+    expect(llm.settings.value.contextLength).toBe(8192)
   })
 
   it('saves settings to localStorage', () => {
@@ -58,6 +61,10 @@ describe('useLlmSettings', () => {
     expect(llm.settings.value.model).toBe('llama3')
     // endpoint falls back to the default
     expect(llm.settings.value.endpoint).toBe('http://localhost:11434')
+    // contextLength (added in 3.4) also falls back — an older saved settings
+    // blob predates the field, so the merge must supply the default rather than
+    // leaving it undefined (which would break the panel readout's denominator).
+    expect(llm.settings.value.contextLength).toBe(8192)
   })
 
   it('setModel persists the model name', () => {
