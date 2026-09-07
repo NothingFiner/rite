@@ -7,6 +7,7 @@ mod export_docx;
 mod export_text;
 mod history;
 mod llm;
+mod retrieval;
 mod state;
 
 use commands::{
