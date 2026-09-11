@@ -112,6 +112,26 @@
           </select>
           <p v-if="modelsError" class="ai-error">{{ modelsError }}</p>
 
+          <label class="drawer-label">Embeddings model (for document-aware retrieval)</label>
+          <input
+            class="drawer-input"
+            :value="llmSettings.settings.embeddingsModel"
+            @input="e => llmSettings.setSettings({ embeddingsModel: e.target.value })"
+            placeholder="nomic-embed-text"
+          />
+          <p class="ai-context-hint">
+            A separate model that turns manuscript passages into vectors so the
+            assistant can read only the parts relevant to a question (Phase 4).
+            Pull it on the same endpoint, e.g. ollama pull nomic-embed-text. Test
+            it below before relying on it.
+          </p>
+          <button class="ai-test-btn" @click="testEmbeddings" :disabled="testingEmbeddings">
+            {{ testingEmbeddings ? 'Testing…' : 'Test embeddings' }}
+          </button>
+          <p v-if="embeddingsTestResult" class="ai-test-result" :class="{ ok: embeddingsTestOk }">
+            {{ embeddingsTestResult }}
+          </p>
+
           <label class="drawer-label">API Key (optional — required for Ollama Cloud)</label>
           <input
             class="drawer-input"
@@ -203,6 +223,9 @@ const modelsError = ref('')
 const testingConnection = ref(false)
 const testResult = ref('')
 const testOk = ref(false)
+const testingEmbeddings = ref(false)
+const embeddingsTestResult = ref('')
+const embeddingsTestOk = ref(false)
 
 async function fetchModelList() {
   modelsLoading.value = true
@@ -242,6 +265,33 @@ async function testConnection() {
     testOk.value = false
   } finally {
     testingConnection.value = false
+  }
+}
+
+async function testEmbeddings() {
+  testingEmbeddings.value = true
+  embeddingsTestResult.value = ''
+  embeddingsTestOk.value = false
+  try {
+    // Embed a one-word probe with the configured embeddings model. Unlike the
+    // chat "Test connection" (which only lists models — no model needed), this
+    // actually RUNS the embeddings model, so it confirms the model is pulled
+    // AND the endpoint serves embeddings before Phase 4.3/4.4 rely on it. The
+    // returned vector's length is the model's embedding dimension (e.g. 768 for
+    // nomic-embed-text), which is useful to see.
+    const vectors = await invoke('embed_texts', {
+      endpoint: props.llmSettings.settings.endpoint,
+      apiKey: props.llmSettings.settings.apiKey,
+      model: props.llmSettings.settings.embeddingsModel,
+      texts: ['probe'],
+    })
+    embeddingsTestResult.value = `✓ embeddings OK (${vectors[0].length}-dim)`
+    embeddingsTestOk.value = true
+  } catch (e) {
+    embeddingsTestResult.value = '✗ ' + (typeof e === 'string' ? e : String(e))
+    embeddingsTestOk.value = false
+  } finally {
+    testingEmbeddings.value = false
   }
 }
 

@@ -14,7 +14,9 @@
 //! `Serialize`-derived so 4.4 can return chunks to the frontend unchanged.
 
 use crate::document::{Document, Paragraph, Section, SectionType};
+use crate::llm::{build_headers, normalize_base};
 use serde::Serialize;
+use serde_json::{json, Value};
 
 /// Rough target size for a chunk, in words. Chunks accumulate paragraphs until
 /// adding the next would exceed this; a single paragraph longer than this
@@ -154,6 +156,154 @@ pub fn chunk_document(doc: &Document) -> Vec<Chunk> {
     }
 
     chunks
+}
+
+// --- Embedding (Phase 4.2) --------------------------------------------------
+//
+// The second link in the RAG chain: turn a chunk's text into a vector via the
+// provider's embeddings endpoint. 4.3's in-memory vector store calls
+// `embed_texts` directly from Rust; the General Options drawer's "Test
+// embeddings" button (and 4.4's retrieval) call it as a Tauri command. Like
+// the chat path, the API key is passed in per call and never stored in
+// `AppState`, keeping it out of the webview's inspectable fetch headers.
+
+/// Build the JSON body for an embeddings request. Both the OpenAI-compatible
+/// `/v1/embeddings` and Ollama's native `/api/embed` accept the same shape —
+/// `{ "model": …, "input": [ … ] }` — so this is shared across both paths.
+/// `input` is always an array (even for a single text), which keeps the return
+/// shape uniform: one vector per input text, in order.
+fn embeddings_request_body(model: &str, texts: &[String]) -> Value {
+    json!({ "model": model, "input": texts })
+}
+
+/// Parse the OpenAI-compatible embeddings response
+/// `{ "data": [{ "embedding": [f32…] }] }` into one vector per entry, in order.
+/// Errors clearly on a missing `data` array or a missing/malformed `embedding`
+/// on any entry, mirroring `llm_chat`'s `"response missing …"` style. JSON
+/// numbers come back as `f64`; we narrow to `f32` (the precision embeddings
+/// models actually use) with `as f32`.
+fn parse_openai_embeddings(json: &Value) -> Result<Vec<Vec<f32>>, String> {
+    let data = json
+        .get("data")
+        .and_then(|d| d.as_array())
+        .ok_or_else(|| "response missing data".to_string())?;
+    data.iter()
+        .map(|entry| {
+            let embedding = entry
+                .get("embedding")
+                .and_then(|e| e.as_array())
+                .ok_or_else(|| "response missing data[*].embedding".to_string())?;
+            embedding
+                .iter()
+                .map(|n| {
+                    n.as_f64()
+                        .ok_or_else(|| "response has a non-numeric embedding value".to_string())
+                        .map(|v| v as f32)
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Parse Ollama's native embeddings response `{ "embeddings": [[f32…], …] }`
+/// into one vector per row, in order. (Ollama's current embeddings endpoint is
+/// `/api/embed`, which always returns an array of arrays even for one input;
+/// the legacy `/api/embeddings` returned a single `{ "embedding": […] }` and is
+/// not used.)
+fn parse_ollama_embeddings(json: &Value) -> Result<Vec<Vec<f32>>, String> {
+    let embeddings = json
+        .get("embeddings")
+        .and_then(|e| e.as_array())
+        .ok_or_else(|| "response missing embeddings".to_string())?;
+    embeddings
+        .iter()
+        .map(|row| {
+            let row = row
+                .as_array()
+                .ok_or_else(|| "response has a non-array embedding row".to_string())?;
+            row.iter()
+                .map(|n| {
+                    n.as_f64()
+                        .ok_or_else(|| "response has a non-numeric embedding value".to_string())
+                        .map(|v| v as f32)
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Embed a batch of texts via the provider's embeddings endpoint, returning one
+/// vector per input text (same order). Registered as a Tauri command (callable
+/// from JS by the drawer's "Test embeddings" button and 4.4's retrieval) AND
+/// callable directly from Rust by 4.3's vector store
+/// (`retrieval::embed_texts(...).await`) — the `#[tauri::command]` attribute
+/// leaves the bare async fn callable, same as `llm_chat`.
+///
+/// Provider detection mirrors `llm_list_models`: try the OpenAI-compatible
+/// `/v1/embeddings` first (also served by Ollama), and fall back to Ollama's
+/// native `/api/embed` if that is non-2xx or fails to reach the server. For the
+/// target user (Ollama) the first call succeeds, so there is no double-call;
+/// the fallback only covers servers that lack the OpenAI path. The request body
+/// `{ model, input: texts }` is identical for both — only the path and response
+/// parser differ.
+///
+/// A 2xx from `/v1/embeddings` is taken as final: a malformed-but-2xx body
+/// returns its parse error rather than silently retrying on the Ollama path
+/// (the server *did* handle the request; a bad body is a real error, not "try
+/// the other endpoint"). The Ollama fallback's error is the final error
+/// surfaced — that last-resort path is the one the user most needs to see fail
+/// clearly (e.g. the embeddings model isn't pulled).
+#[tauri::command]
+pub async fn embed_texts(
+    endpoint: String,
+    api_key: Option<String>,
+    model: String,
+    texts: Vec<String>,
+) -> Result<Vec<Vec<f32>>, String> {
+    let base = normalize_base(&endpoint);
+    let headers = build_headers(&api_key)?;
+    let client = reqwest::Client::builder()
+        .build()
+        .map_err(|e| e.to_string())?;
+    let body = embeddings_request_body(&model, &texts);
+
+    // OpenAI-compatible path first.
+    let openai_url = format!("{}/v1/embeddings", base);
+    let result = client
+        .post(&openai_url)
+        .headers(headers.clone())
+        .json(&body)
+        .send()
+        .await;
+    if let Ok(response) = result {
+        if response.status().is_success() {
+            let json: Value = response
+                .json()
+                .await
+                .map_err(|e| format!("bad response: {}", e))?;
+            return parse_openai_embeddings(&json);
+        }
+    }
+
+    // Native Ollama fallback.
+    let ollama_url = format!("{}/api/embed", base);
+    let response = client
+        .post(&ollama_url)
+        .headers(headers)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {}", e))?;
+    let status = response.status();
+    if !status.is_success() {
+        let text = response.text().await.unwrap_or_default();
+        return Err(format!("endpoint returned {}: {}", status.as_u16(), text));
+    }
+    let json: Value = response
+        .json()
+        .await
+        .map_err(|e| format!("bad response: {}", e))?;
+    parse_ollama_embeddings(&json)
 }
 
 #[cfg(test)]
@@ -402,5 +552,112 @@ mod tests {
         assert_eq!(chunks[0].id, "s1:0");
         assert_eq!(chunks[1].id, "s1:1");
         assert_eq!(chunks[2].id, "s1:2");
+    }
+
+    // --- Embedding request / response (Phase 4.2) --------------------------
+    //
+    // The pure helpers are tested with hand-built JSON (via `from_str` rather
+    // than the `json!` macro to avoid any macro-rescope ambiguity in the test
+    // module). Integers in the JSON convert to exact f32 values, so the happy
+    // paths compare with `==` without float-epsilon fuss.
+
+    fn json_value(literal: &str) -> Value {
+        serde_json::from_str(literal).expect("test JSON must parse")
+    }
+
+    #[test]
+    fn embeddings_request_body_builds_model_and_input_array() {
+        let texts = vec!["one".to_string(), "two".to_string()];
+        let body = embeddings_request_body("nomic-embed-text", &texts);
+        assert_eq!(body["model"], "nomic-embed-text");
+        // `input` is always an array, in the same order as the inputs.
+        let input = body["input"].as_array().expect("input must be an array");
+        assert_eq!(input.len(), 2);
+        assert_eq!(input[0], "one");
+        assert_eq!(input[1], "two");
+    }
+
+    #[test]
+    fn embeddings_request_body_emits_an_array_even_for_one_text() {
+        // A single text still becomes `input: [text]` so the return shape
+        // (one vector per input) is uniform for callers.
+        let body = embeddings_request_body("m", &vec!["solo".to_string()]);
+        assert_eq!(body["input"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn parse_openai_embeddings_happy_path() {
+        let json = json_value(r#"{"data":[{"embedding":[1,2]},{"embedding":[3]}]}"#);
+        assert_eq!(
+            parse_openai_embeddings(&json),
+            Ok(vec![vec![1.0, 2.0], vec![3.0]])
+        );
+    }
+
+    #[test]
+    fn parse_openai_embeddings_errors_when_data_is_missing() {
+        let json = json_value(r#"{"not_data": []}"#);
+        assert_eq!(
+            parse_openai_embeddings(&json).unwrap_err(),
+            "response missing data"
+        );
+    }
+
+    #[test]
+    fn parse_openai_embeddings_errors_when_an_embedding_is_missing() {
+        let json = json_value(r#"{"data":[{"not_embedding":[1]}]}"#);
+        assert_eq!(
+            parse_openai_embeddings(&json).unwrap_err(),
+            "response missing data[*].embedding"
+        );
+    }
+
+    #[test]
+    fn parse_ollama_embeddings_happy_path() {
+        // `/api/embed` returns `{ "embeddings": [[…], …] }` (always an array of
+        // arrays, even for one input).
+        let json = json_value(r#"{"embeddings":[[1,2],[3]]}"#);
+        assert_eq!(
+            parse_ollama_embeddings(&json),
+            Ok(vec![vec![1.0, 2.0], vec![3.0]])
+        );
+    }
+
+    #[test]
+    fn parse_ollama_embeddings_errors_when_embeddings_is_missing() {
+        let json = json_value(r#"{"not_embeddings": []}"#);
+        assert_eq!(
+            parse_ollama_embeddings(&json).unwrap_err(),
+            "response missing embeddings"
+        );
+    }
+
+    #[test]
+    fn parse_ollama_embeddings_errors_when_a_row_is_not_an_array() {
+        let json = json_value(r#"{"embeddings":[[1,2],42]}"#);
+        assert_eq!(
+            parse_ollama_embeddings(&json).unwrap_err(),
+            "response has a non-array embedding row"
+        );
+    }
+
+    // Live round-trip against a real Ollama. Ignored by default (needs a
+    // running server + a pulled embeddings model); run with
+    // `cargo test embed -- --ignored`. Driven through `tauri::async_runtime`
+    // (Tauri's bundled tokio runtime) rather than a `tokio` dev-dep — no other
+    // test in the crate is async, so this avoids adding one just for one live
+    // check.
+    #[test]
+    #[ignore]
+    fn embed_texts_live_against_ollama() {
+        let vectors = tauri::async_runtime::block_on(embed_texts(
+            "http://localhost:11434".to_string(),
+            None,
+            "nomic-embed-text".to_string(),
+            vec!["The door opened onto a quiet street.".to_string()],
+        ))
+        .expect("live embed should succeed with the model pulled");
+        assert_eq!(vectors.len(), 1, "one input → one vector");
+        assert!(!vectors[0].is_empty(), "the embedding must be non-empty");
     }
 }

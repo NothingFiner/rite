@@ -28,6 +28,10 @@ describe('useLlmSettings', () => {
     // contextLength (Phase 3.4) — the configured model context window used by
     // the panel's token-usage readout. Not auto-detected; 8192 is the default.
     expect(llm.settings.value.contextLength).toBe(8192)
+    // embeddingsModel (Phase 4.2) — the model RAG retrieval uses to vectorize
+    // chunks. Separate from the chat `model` (different binary); nomic-embed-text
+    // is Ollama's standard small embeddings model.
+    expect(llm.settings.value.embeddingsModel).toBe('nomic-embed-text')
   })
 
   it('saves settings to localStorage', () => {
@@ -65,6 +69,8 @@ describe('useLlmSettings', () => {
     // blob predates the field, so the merge must supply the default rather than
     // leaving it undefined (which would break the panel readout's denominator).
     expect(llm.settings.value.contextLength).toBe(8192)
+    // embeddingsModel (added in 4.2) likewise falls back for older blobs.
+    expect(llm.settings.value.embeddingsModel).toBe('nomic-embed-text')
   })
 
   it('setModel persists the model name', () => {
