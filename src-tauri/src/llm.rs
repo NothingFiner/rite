@@ -182,8 +182,10 @@ fn build_request_body(request: &ChatRequest, stream: bool) -> Value {
 
 /// Build the HTTP headers for a provider request. `Content-Type` is always
 /// set; `Authorization: Bearer <key>` is set only when an API key is present
-/// (required for Ollama Cloud, ignored by local Ollama).
-fn build_headers(api_key: &Option<String>) -> Result<reqwest::header::HeaderMap, String> {
+/// (required for Ollama Cloud, ignored by local Ollama). `pub(crate)` so the
+/// embeddings path (`retrieval::embed_texts`, Phase 4.2) reuses the exact same
+/// header construction — one auth code path across chat, model-list, and embed.
+pub(crate) fn build_headers(api_key: &Option<String>) -> Result<reqwest::header::HeaderMap, String> {
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
         reqwest::header::CONTENT_TYPE,
@@ -204,16 +206,29 @@ fn build_headers(api_key: &Option<String>) -> Result<reqwest::header::HeaderMap,
     Ok(headers)
 }
 
-/// The full chat-completions URL: `${endpoint}/v1/chat/completions`. Trailing
-/// slashes and a trailing `/v1` or `/api` on the endpoint are stripped so users
-/// can enter either the root URL (`https://ollama.com`) or an API base
-/// (`https://ollama.com/api`) without constructing doubled paths.
-fn chat_completions_url(endpoint: &str) -> String {
-    let base = endpoint
+/// Normalize a user-entered endpoint to its base URL: strip trailing slashes,
+/// then a trailing `/v1`, then a trailing `/api`. This lets users enter either
+/// the root URL (`https://ollama.com`) or an API base (`https://ollama.com/api`)
+/// without constructing doubled paths like `/api/api/tags` or `/v1/v1/models`.
+///
+/// `pub(crate)` so `retrieval::embed_texts` (Phase 4.2) builds its embeddings
+/// URLs from the same base — every provider path (chat, models, embed, tags)
+/// shares one normalization rule. The trim is applied in this order
+/// (slashes → `/v1` → `/api`) because `trim_end_matches` strips *all* repeated
+/// matches of one pattern before moving to the next: a trailing-slash run is
+/// removed first, then any exposed `/v1`/`/api` suffix, so
+/// `https://ollama.com/api/` → `https://ollama.com` (not `…/api`).
+pub(crate) fn normalize_base(endpoint: &str) -> &str {
+    endpoint
         .trim_end_matches('/')
         .trim_end_matches("/v1")
-        .trim_end_matches("/api");
-    format!("{}/v1/chat/completions", base)
+        .trim_end_matches("/api")
+}
+
+/// The full chat-completions URL: `${base}/v1/chat/completions`. See
+/// `normalize_base` for the endpoint trimming.
+fn chat_completions_url(endpoint: &str) -> String {
+    format!("{}/v1/chat/completions", normalize_base(endpoint))
 }
 
 // --- SSE parsing (pure, testable) -------------------------------------------
@@ -399,12 +414,8 @@ pub async fn llm_list_models(endpoint: String, api_key: Option<String>) -> Resul
     let client = reqwest::Client::builder()
         .build()
         .map_err(|e| e.to_string())?;
-    // Strip trailing slashes AND a trailing /v1 or /api so we don't construct
-    // doubled paths like `/api/api/tags` or `/v1/v1/models`.
-    let base = endpoint
-        .trim_end_matches('/')
-        .trim_end_matches("/v1")
-        .trim_end_matches("/api");
+    // Same base normalization as the chat path — see `normalize_base`.
+    let base = normalize_base(&endpoint);
 
     // OpenAI-compatible path first.
     let url = format!("{}/v1/models", base);
@@ -683,5 +694,39 @@ mod tests {
         let (events, leftover) = drain_sse_buffer(buffer);
         assert_eq!(events, vec![SseEvent::Token("X".to_string())]);
         assert_eq!(leftover, "");
+    }
+
+    // --- Endpoint normalization (shared by chat, model-list, embed) --------
+
+    #[test]
+    fn normalize_base_leaves_a_bare_host_unchanged() {
+        assert_eq!(normalize_base("https://ollama.com"), "https://ollama.com");
+        assert_eq!(normalize_base("http://localhost:11434"), "http://localhost:11434");
+    }
+
+    #[test]
+    fn normalize_base_strips_trailing_slashes() {
+        // A run of trailing slashes collapses to the bare host (this is what
+        // keeps `/api/api/tags` from forming when a user pastes a URL ending
+        // in `/`).
+        assert_eq!(normalize_base("https://ollama.com///"), "https://ollama.com");
+    }
+
+    #[test]
+    fn normalize_base_strips_a_trailing_v1_or_api() {
+        assert_eq!(normalize_base("https://ollama.com/v1"), "https://ollama.com");
+        assert_eq!(normalize_base("https://ollama.com/api"), "https://ollama.com");
+        // A trailing slash between host and suffix is handled too: the slash
+        // is stripped first, then the exposed `/v1`/`/api`.
+        assert_eq!(normalize_base("https://ollama.com/api/"), "https://ollama.com");
+        assert_eq!(normalize_base("https://ollama.com/v1/"), "https://ollama.com");
+    }
+
+    #[test]
+    fn normalize_base_does_not_strip_v1_or_api_in_the_middle() {
+        // Only a *trailing* `/v1`/`/api` is stripped — a path segment that
+        // merely contains those strings is left alone.
+        assert_eq!(normalize_base("https://host.example/v1/api"), "https://host.example/v1");
+        assert_eq!(normalize_base("https://host.example/ollama/api"), "https://host.example/ollama");
     }
 }

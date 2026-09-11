@@ -27,6 +27,13 @@ function defaultSettings() {
     // larger-context model. Backward-compatible: loadPrefs merges over these
     // defaults, so existing saved settings gain this on next load.
     contextLength: 8192,
+    // The embeddings model used by RAG retrieval (Phase 4.2 embed → 4.3 store →
+    // 4.4 retrieve). Kept SEPARATE from the chat `model` because an embeddings
+    // model and a chat model are different binaries you pull independently
+    // (nomic-embed-text turns text into vectors; llama3 answers questions).
+    // Same backward-compatibility story as contextLength: older saved settings
+    // blobs predate this field, so loadPrefs's merge-over-defaults supplies it.
+    embeddingsModel: 'nomic-embed-text',
   }
 }
 
