@@ -13,7 +13,7 @@
 //! store) / 4.4 (retrieval + injection) build on, so it is defined here and
 //! `Serialize`-derived so 4.4 can return chunks to the frontend unchanged.
 
-use crate::document::{Document, Paragraph, Section, SectionType};
+use crate::document::{Document, Paragraph, SectionType};
 use crate::llm::{build_headers, normalize_base};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -24,6 +24,14 @@ use serde_json::{json, Value};
 /// balance: small enough to keep each embedded passage focused on one beat,
 /// large enough that short paragraphs coalesce instead of fragmenting into
 /// near-empty chunks. Tunable.
+//
+// `chunk_document` and its helpers below are not yet called from production
+// code — 4.3's vector store will be the first caller (it chunks the doc on
+// open, then embeds). Until then they'd be dead-code warnings in the non-test
+// binary (the tests use them, so `cargo test` stays quiet, but `cargo build`
+// does not compile the tests). `#[allow(dead_code)]` silences that until 4.3
+// wires them up; remove these attributes then.
+#[allow(dead_code)]
 const TARGET_CHUNK_WORDS: u32 = 256;
 
 /// A contiguous slice of one section's prose, ready to embed.
@@ -47,6 +55,7 @@ const TARGET_CHUNK_WORDS: u32 = 256;
 /// chunk.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // wired up in 4.3 (vector store) / 4.4 (returned to JS)
 pub struct Chunk {
     pub id: String,
     pub section_id: String,
@@ -59,6 +68,7 @@ pub struct Chunk {
 /// export module inline; it isn't worth cross-module coupling to share, so it
 /// is re-implemented here. A paragraph's text is the concatenation of its
 /// elements' `text_run.content` fields.
+#[allow(dead_code)] // used by chunk_document, which 4.3 wires up
 fn paragraph_text(paragraph: &Paragraph) -> String {
     paragraph
         .elements
@@ -70,6 +80,7 @@ fn paragraph_text(paragraph: &Paragraph) -> String {
 /// Whitespace-delimited word count of a string. `str::split_whitespace` treats
 /// any run of whitespace as a single separator and ignores leading/trailing
 /// whitespace, which is what we want for a chunk-size estimate.
+#[allow(dead_code)] // used by chunk_document, which 4.3 wires up
 fn count_words(text: &str) -> u32 {
     text.split_whitespace().count() as u32
 }
@@ -86,6 +97,7 @@ fn count_words(text: &str) -> u32 {
 /// fresh buffer. Empty paragraphs are skipped (they add embedding noise). The
 /// buffer is also flushed at every section boundary, so a chunk never crosses
 /// a section — keeping each chunk's `section_id` / `chapter_index` clean.
+#[allow(dead_code)] // first production caller is 4.3's vector store
 pub fn chunk_document(doc: &Document) -> Vec<Chunk> {
     let mut chunks = Vec::new();
     // None until the first Chapter is seen; Some(n) thereafter, advancing only
@@ -267,8 +279,13 @@ pub async fn embed_texts(
         .map_err(|e| e.to_string())?;
     let body = embeddings_request_body(&model, &texts);
 
-    // OpenAI-compatible path first.
+    // OpenAI-compatible path first. Record its status (if non-2xx) so the
+    // fallback's error can report BOTH paths: a 401 on both means auth/access
+    // is rejected; a 404 on /api/embed alone means the native endpoint isn't
+    // served (some Cloud setups are /v1-only); a non-2xx on /v1/embeddings
+    // with a 2xx fallback means the OpenAI embeddings shape just isn't there.
     let openai_url = format!("{}/v1/embeddings", base);
+    let mut openai_status: Option<u16> = None;
     let result = client
         .post(&openai_url)
         .headers(headers.clone())
@@ -283,6 +300,7 @@ pub async fn embed_texts(
                 .map_err(|e| format!("bad response: {}", e))?;
             return parse_openai_embeddings(&json);
         }
+        openai_status = Some(response.status().as_u16());
     }
 
     // Native Ollama fallback.
@@ -297,7 +315,18 @@ pub async fn embed_texts(
     let status = response.status();
     if !status.is_success() {
         let text = response.text().await.unwrap_or_default();
-        return Err(format!("endpoint returned {}: {}", status.as_u16(), text));
+        // Name both paths so the failure is diagnosable from this string alone
+        // — the request runs through Rust (reqwest), so the webview's network
+        // panel never shows it and this error is the only signal.
+        return Err(match openai_status {
+            Some(openai) => format!(
+                "embeddings failed — /v1/embeddings returned {} and /api/embed returned {}: {}",
+                openai,
+                status.as_u16(),
+                text
+            ),
+            None => format!("endpoint returned {}: {}", status.as_u16(), text),
+        });
     }
     let json: Value = response
         .json()
@@ -309,7 +338,7 @@ pub async fn embed_texts(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::document::{Element, TextRun, TextStyle};
+    use crate::document::{Element, Section, TextRun, TextStyle};
 
     // --- test fixtures (mirror diff.rs:240-274) -----------------------------
 
