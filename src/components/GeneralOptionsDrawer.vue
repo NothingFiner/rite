@@ -112,7 +112,26 @@
           </select>
           <p v-if="modelsError" class="ai-error">{{ modelsError }}</p>
 
-          <label class="drawer-label">Embeddings model (for document-aware retrieval)</label>
+          <!-- Embeddings (RAG retrieval, Phase 4) have their OWN endpoint + key,
+               separate from chat: Ollama Cloud hosts only large chat models, not
+               embeddings models, so a writer on Cloud for chat runs a local
+               Ollama for embeddings. Defaulted to local Ollama (no key). -->
+          <label class="drawer-label">Embeddings endpoint</label>
+          <input
+            class="drawer-input"
+            :value="llmSettings.settings.embeddingsEndpoint"
+            @input="e => llmSettings.setSettings({ embeddingsEndpoint: e.target.value })"
+            placeholder="http://localhost:11434"
+          />
+          <label class="drawer-label">Embeddings API key (optional — empty for local Ollama)</label>
+          <input
+            class="drawer-input"
+            type="password"
+            :value="llmSettings.settings.embeddingsApiKey"
+            @input="e => llmSettings.setSettings({ embeddingsApiKey: e.target.value })"
+            placeholder="Empty for local Ollama"
+          />
+          <label class="drawer-label">Embeddings model</label>
           <input
             class="drawer-input"
             :value="llmSettings.settings.embeddingsModel"
@@ -120,10 +139,11 @@
             placeholder="nomic-embed-text"
           />
           <p class="ai-context-hint">
-            A separate model that turns manuscript passages into vectors so the
-            assistant can read only the parts relevant to a question (Phase 4).
-            Pull it on the same endpoint, e.g. ollama pull nomic-embed-text. Test
-            it below before relying on it.
+            Turns manuscript passages into vectors so the assistant can read only
+            the parts relevant to a question (Phase 4). Ollama Cloud doesn't host
+            embeddings models — point the endpoint above at a local Ollama and
+            pull the model there (e.g. ollama pull nomic-embed-text). Test it
+            below before relying on it.
           </p>
           <button class="ai-test-btn" @click="testEmbeddings" :disabled="testingEmbeddings">
             {{ testingEmbeddings ? 'Testing…' : 'Test embeddings' }}
@@ -279,9 +299,13 @@ async function testEmbeddings() {
     // AND the endpoint serves embeddings before Phase 4.3/4.4 rely on it. The
     // returned vector's length is the model's embedding dimension (e.g. 768 for
     // nomic-embed-text), which is useful to see.
+    //
+    // Uses the SEPARATE embeddings endpoint/key (not the chat endpoint/key):
+    // a writer on Ollama Cloud for chat runs a local Ollama for embeddings,
+    // since Cloud doesn't host embeddings models.
     const vectors = await invoke('embed_texts', {
-      endpoint: props.llmSettings.settings.endpoint,
-      apiKey: props.llmSettings.settings.apiKey,
+      endpoint: props.llmSettings.settings.embeddingsEndpoint,
+      apiKey: props.llmSettings.settings.embeddingsApiKey,
       model: props.llmSettings.settings.embeddingsModel,
       texts: ['probe'],
     })
