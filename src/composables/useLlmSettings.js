@@ -27,6 +27,17 @@ function defaultSettings() {
     // larger-context model. Backward-compatible: loadPrefs merges over these
     // defaults, so existing saved settings gain this on next load.
     contextLength: 8192,
+    // Embeddings (RAG retrieval, Phase 4.2+) need their OWN endpoint + key,
+    // separate from chat. Reason: Ollama Cloud hosts only large
+    // chat/generation models — it does NOT host embeddings models
+    // (nomic-embed-text and friends are small and run locally). So a writer on
+    // Cloud for chat still runs a LOCAL Ollama for embeddings. Defaulting the
+    // embeddings endpoint to local Ollama (no key) makes that work out of the
+    // box; a writer whose chat is also local just has two identical endpoints.
+    // Backward-compatible: loadPrefs merges over these defaults, so older saved
+    // settings blobs gain both fields on next load.
+    embeddingsEndpoint: 'http://localhost:11434',
+    embeddingsApiKey: '',
     // The embeddings model used by RAG retrieval (Phase 4.2 embed → 4.3 store →
     // 4.4 retrieve). Kept SEPARATE from the chat `model` because an embeddings
     // model and a chat model are different binaries you pull independently

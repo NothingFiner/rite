@@ -32,6 +32,11 @@ describe('useLlmSettings', () => {
     // chunks. Separate from the chat `model` (different binary); nomic-embed-text
     // is Ollama's standard small embeddings model.
     expect(llm.settings.value.embeddingsModel).toBe('nomic-embed-text')
+    // embeddingsEndpoint / embeddingsApiKey (Phase 4.2 follow-up) — separate
+    // from the chat endpoint/key because Ollama Cloud doesn't host embeddings
+    // models; embeddings default to a local Ollama (no key).
+    expect(llm.settings.value.embeddingsEndpoint).toBe('http://localhost:11434')
+    expect(llm.settings.value.embeddingsApiKey).toBe('')
   })
 
   it('saves settings to localStorage', () => {
@@ -71,6 +76,9 @@ describe('useLlmSettings', () => {
     expect(llm.settings.value.contextLength).toBe(8192)
     // embeddingsModel (added in 4.2) likewise falls back for older blobs.
     expect(llm.settings.value.embeddingsModel).toBe('nomic-embed-text')
+    // embeddingsEndpoint / embeddingsApiKey (4.2 follow-up) fall back too.
+    expect(llm.settings.value.embeddingsEndpoint).toBe('http://localhost:11434')
+    expect(llm.settings.value.embeddingsApiKey).toBe('')
   })
 
   it('setModel persists the model name', () => {
