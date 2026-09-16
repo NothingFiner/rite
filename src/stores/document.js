@@ -20,6 +20,17 @@ export const useDocumentStore = defineStore('document', {
     // history) — so the indicator reflects every real flush to disk.
     saveState: 'idle',
     lastSavedAt: null,
+    // A cheap monotonic counter bumped whenever the document changes AND Rust's
+    // copy is/became current — i.e. at every point the in-memory vector store
+    // (Phase 4.3) would need to re-diff. `useRetrieval` watches this scalar
+    // (debounced 1500ms) instead of deep-watching the whole `doc`: same trigger
+    // coverage, no per-edit traversal of a large manuscript. Bumped at:
+    // `syncToRust` (typing / new / import — after the sync lands), `undo`,
+    // `redo`, `loadDocument`, and `applyRestoredDocument` (the restore path
+    // skips syncToRust because Rust is already current there). NOT bumped on a
+    // failed sync: Rust wouldn't have the new doc, so re-embedding would index
+    // stale state.
+    docVersion: 0,
   }),
 
   actions: {
@@ -65,6 +76,10 @@ export const useDocumentStore = defineStore('document', {
         // this case, distinct from "Saved 2m ago" after a real write.
         this.saveState = 'saved'
         this.lastSavedAt = null
+        // A different document was installed in Rust by `open_document`; bump
+        // so `useRetrieval` triggers a full re-build of the index (the old
+        // vectors belong to the previous manuscript).
+        this.docVersion++
       } catch (e) {
         // Log, then rethrow so the caller (useFileIO.openFile) can surface the
         // actual cause to the user. Previously this swallowed the error, which
@@ -135,6 +150,7 @@ export const useDocumentStore = defineStore('document', {
         const updated = await invoke('undo')
         this.doc = updated
         this.isModified = true
+        this.docVersion++
       } catch (e) {
         this.notifyError(e, 'Failed to undo')
       }
@@ -149,6 +165,7 @@ export const useDocumentStore = defineStore('document', {
         const updated = await invoke('redo')
         this.doc = updated
         this.isModified = true
+        this.docVersion++
       } catch (e) {
         this.notifyError(e, 'Failed to redo')
       }
@@ -189,6 +206,10 @@ export const useDocumentStore = defineStore('document', {
       if (!this.doc || !this.isModified) return
       try {
         await invoke('sync_document', { data: this.doc })
+        // Rust now holds the edited doc; bump so `useRetrieval` re-diffs the
+        // index against it. Inside the try so a failed sync does NOT bump
+        // (Rust wouldn't have the new state).
+        this.docVersion++
       } catch (e) {
         this.notifyError(e, 'Failed to sync to Rust')
       }
@@ -257,6 +278,9 @@ export const useDocumentStore = defineStore('document', {
     applyRestoredDocument(restoredDoc) {
       this.doc = restoredDoc
       this.isModified = true
+      // Rust already holds the restored doc (the command set it); bump so the
+      // index re-builds against the restored manuscript.
+      this.docVersion++
     },
 
     /// Replace the document's sections from the editor's flat-DOM sync. The

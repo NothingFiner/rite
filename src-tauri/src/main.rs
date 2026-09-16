@@ -19,7 +19,7 @@ use commands::{
 use export_docx::export_docx;
 use export_text::export_text;
 use llm::{llm_cancel, llm_chat, llm_chat_stream, llm_list_models, list_roles};
-use retrieval::embed_texts;
+use retrieval::{embed_texts, reembed_document};
 use state::AppState;
 
 fn main() {
@@ -55,6 +55,7 @@ fn main() {
             llm_list_models,
             llm_cancel,
             embed_texts,
+            reembed_document,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

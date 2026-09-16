@@ -37,6 +37,10 @@ describe('useLlmSettings', () => {
     // models; embeddings default to a local Ollama (no key).
     expect(llm.settings.value.embeddingsEndpoint).toBe('http://localhost:11434')
     expect(llm.settings.value.embeddingsApiKey).toBe('')
+    // embeddingsEnabled (Phase 4.3) — the manuscript-index opt-in. Off by
+    // default so a writer without a local Ollama isn't peppered with failing
+    // embedding calls; turned on explicitly when they want document-aware chat.
+    expect(llm.settings.value.embeddingsEnabled).toBe(false)
   })
 
   it('saves settings to localStorage', () => {
@@ -79,6 +83,10 @@ describe('useLlmSettings', () => {
     // embeddingsEndpoint / embeddingsApiKey (4.2 follow-up) fall back too.
     expect(llm.settings.value.embeddingsEndpoint).toBe('http://localhost:11434')
     expect(llm.settings.value.embeddingsApiKey).toBe('')
+    // embeddingsEnabled (4.3) falls back too — older blobs predate the toggle
+    // and must gain `false`, not `undefined` (which would make the watcher's
+    // `embeddingsEnabled &&` truthiness check misbehave).
+    expect(llm.settings.value.embeddingsEnabled).toBe(false)
   })
 
   it('setModel persists the model name', () => {

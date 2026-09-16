@@ -13,10 +13,16 @@
 //! store) / 4.4 (retrieval + injection) build on, so it is defined here and
 //! `Serialize`-derived so 4.4 can return chunks to the frontend unchanged.
 
-use crate::document::{Document, Paragraph, SectionType};
+use crate::document::{Document, Paragraph, Section, SectionType};
 use crate::llm::{build_headers, normalize_base};
+use crate::state::AppState;
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
+use std::sync::atomic::Ordering;
+use tauri::State;
 
 /// Rough target size for a chunk, in words. Chunks accumulate paragraphs until
 /// adding the next would exceed this; a single paragraph longer than this
@@ -24,22 +30,16 @@ use serde_json::{json, Value};
 /// balance: small enough to keep each embedded passage focused on one beat,
 /// large enough that short paragraphs coalesce instead of fragmenting into
 /// near-empty chunks. Tunable.
-//
-// `chunk_document` and its helpers below are not yet called from production
-// code — 4.3's vector store will be the first caller (it chunks the doc on
-// open, then embeds). Until then they'd be dead-code warnings in the non-test
-// binary (the tests use them, so `cargo test` stays quiet, but `cargo build`
-// does not compile the tests). `#[allow(dead_code)]` silences that until 4.3
-// wires them up; remove these attributes then.
-#[allow(dead_code)]
 const TARGET_CHUNK_WORDS: u32 = 256;
 
 /// A contiguous slice of one section's prose, ready to embed.
 ///
 /// `id` is `"{section_id}:{ordinal}"`, where `ordinal` is the 0-based position
-/// of this chunk among the chunks produced from its section. It is stable
-/// within a single `chunk_document` call (4.3 keys the in-memory vector store
-/// by `id` + a content hash).
+/// of this chunk among the chunks produced from its section. It identifies a
+/// chunk within a single `chunk_document` pass; 4.3's vector store does NOT key
+/// off it for the differential (inserting a paragraph mid-section shifts every
+/// following ordinal), but keeps it for 4.4 to reference a passage back to its
+/// source section.
 ///
 /// `section_id` + `chapter_index` carry the chunk's structural context so
 /// retrieval (4.4) can label a passage ("from Chapter 3") without re-walking
@@ -55,7 +55,6 @@ const TARGET_CHUNK_WORDS: u32 = 256;
 /// chunk.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(dead_code)] // wired up in 4.3 (vector store) / 4.4 (returned to JS)
 pub struct Chunk {
     pub id: String,
     pub section_id: String,
@@ -68,7 +67,6 @@ pub struct Chunk {
 /// export module inline; it isn't worth cross-module coupling to share, so it
 /// is re-implemented here. A paragraph's text is the concatenation of its
 /// elements' `text_run.content` fields.
-#[allow(dead_code)] // used by chunk_document, which 4.3 wires up
 fn paragraph_text(paragraph: &Paragraph) -> String {
     paragraph
         .elements
@@ -80,7 +78,6 @@ fn paragraph_text(paragraph: &Paragraph) -> String {
 /// Whitespace-delimited word count of a string. `str::split_whitespace` treats
 /// any run of whitespace as a single separator and ignores leading/trailing
 /// whitespace, which is what we want for a chunk-size estimate.
-#[allow(dead_code)] // used by chunk_document, which 4.3 wires up
 fn count_words(text: &str) -> u32 {
     text.split_whitespace().count() as u32
 }
@@ -97,7 +94,6 @@ fn count_words(text: &str) -> u32 {
 /// fresh buffer. Empty paragraphs are skipped (they add embedding noise). The
 /// buffer is also flushed at every section boundary, so a chunk never crosses
 /// a section — keeping each chunk's `section_id` / `chapter_index` clean.
-#[allow(dead_code)] // first production caller is 4.3's vector store
 pub fn chunk_document(doc: &Document) -> Vec<Chunk> {
     let mut chunks = Vec::new();
     // None until the first Chapter is seen; Some(n) thereafter, advancing only
@@ -335,10 +331,320 @@ pub async fn embed_texts(
     parse_ollama_embeddings(&json)
 }
 
+// --- Vector store + differential re-embed (Phase 4.3) ----------------------
+//
+// The third link in the RAG chain: KEEP the vectors 4.2 produced, tied back to
+// the chunks they came from, and keep the store CURRENT as the manuscript
+// changes — cheaply. The store lives in `AppState` (see `state.rs`):
+// `vectors: Mutex<Vec<StoredChunk>>` is the flat store 4.4 scans, and
+// `section_hashes: Mutex<HashMap<String, u64>>` is the differential baseline.
+// This module owns the logic that mutates them; `reembed_document` is the
+// Tauri command the frontend fires ~1.5s after each edit (when the index is
+// enabled).
+//
+// **Section-level differential.** Rather than tracking which paragraphs changed
+// (chunks don't record paragraph ids, and a mid-section insert shifts every
+// following chunk's ordinal — see the plan), we hash each section's full
+// paragraph text and re-embed only sections whose hash changed (plus drop
+// deleted ones). A typical edit touches one section, so one section's few
+// chunks are re-embedded in a single batched `embed_texts` call — not the whole
+// manuscript.
+
+/// One entry in the in-memory vector store: a chunk paired with the vector
+/// `embed_texts` produced for its text. Stored flat in `AppState::vectors` for
+/// 4.4's linear cosine scan. Not `Serialize` — 4.4 builds its own response from
+/// the `Chunk` (which is `Serialize`); the raw vector never crosses to JS.
+#[derive(Clone)]
+pub struct StoredChunk {
+    pub chunk: Chunk,
+    // 4.3 writes vectors but does not yet read them — the first reader is 4.4's
+    // `retrieve_passages`, which cosine-similarity-ranks the stored vectors
+    // against the query vector. Allow dead code until that lands; removing this
+    // early would re-warn the moment 4.3 merges.
+    #[allow(dead_code)]
+    pub vector: Vec<f32>,
+}
+
+/// The result of one `reembed_document` pass, surfaced to the frontend's
+/// index-status readout. `built_from_scratch` is true when the store had no
+/// baseline and every section was embedded (an open / toggle-on). `camelCase`
+/// so the JS side reads `builtFromScratch` etc., matching `Chunk`.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReembedReport {
+    pub built_from_scratch: bool,
+    pub sections_embedded: u32,
+    pub chunks_embedded: u32,
+    pub chunks_total: u32,
+}
+
+/// Which sections need work this pass, derived purely from the stored baseline
+/// hashes vs the current document's section hashes. `to_embed` = sections whose
+/// hash changed or are new (their chunks must be re-embedded); `to_drop` =
+/// sections that no longer exist (their stored vectors are stale). `full` = the
+/// store had no baseline, so `to_embed` is every current section and nothing is
+/// dropped. Used only as a membership set by `reembed_pass` (chunk order comes
+/// from `chunk_document`, not from here), so the `Vec` order is unspecified.
+#[derive(Debug, PartialEq)]
+struct ReembedPlan {
+    full: bool,
+    to_embed: Vec<String>,
+    to_drop: Vec<String>,
+}
+
+/// Compute the differential plan from the stored baseline hashes vs the current
+/// document's section hashes. Pure — no I/O, no state — so it is the
+/// unit-testable core of the re-embed. See `ReembedPlan` for the meaning of each
+/// field.
+fn plan_reembed(stored: &HashMap<String, u64>, current: &HashMap<String, u64>) -> ReembedPlan {
+    // No baseline → full build: embed every current section, drop nothing. The
+    // store is empty on first enable / on opening a document.
+    if stored.is_empty() {
+        return ReembedPlan {
+            full: true,
+            to_embed: current.keys().cloned().collect(),
+            to_drop: Vec::new(),
+        };
+    }
+    // A section needs re-embedding if it is new (absent from `stored`) or its
+    // hash differs. `stored.get(id) != Some(hash)` covers both: `get` returns
+    // `None` for a new id, which is never `== Some(hash)`.
+    let to_embed: Vec<String> = current
+        .iter()
+        .filter(|(id, hash)| stored.get(*id) != Some(*hash))
+        .map(|(id, _)| id.clone())
+        .collect();
+    // A stored section that is gone from the current document is stale: drop its
+    // vectors and its baseline hash entry.
+    let to_drop: Vec<String> = stored
+        .keys()
+        .filter(|id| !current.contains_key(*id))
+        .cloned()
+        .collect();
+    ReembedPlan {
+        full: false,
+        to_embed,
+        to_drop,
+    }
+}
+
+/// Hash a section's full paragraph text (paragraphs joined by `\n`) into a
+/// `u64`. This is the differential signal: if a section's text is unchanged
+/// between two passes, its hash matches and its stored vectors are kept
+/// untouched. `DefaultHasher` (SipHash) is deterministic within a process —
+/// enough, because the baseline lives in memory for the session and is never
+/// persisted (persistence is deferred to after 2.1's schema versioning). Uses
+/// `paragraph_text` (the same run concatenation `chunk_document` uses), so a
+/// section hashes the same prose that gets chunked + embedded — a hash match
+/// guarantees the vectors are still valid for that section's text.
+fn section_text_hash(section: &Section) -> u64 {
+    let mut text = String::new();
+    for (i, paragraph) in section.paragraphs.iter().enumerate() {
+        if i > 0 {
+            text.push('\n');
+        }
+        text.push_str(&paragraph_text(paragraph));
+    }
+    let mut hasher = DefaultHasher::new();
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// One differential pass: read the current document, plan against the baseline,
+/// embed only the changed sections' chunks, and apply on success. Not a Tauri
+/// command — the testable async core that `reembed_document` (the command)
+/// delegates to and re-loops. Taking `&AppState` (not `State`) keeps it callable
+/// from a plain `AppState` in tests via `tauri::async_runtime::block_on`.
+async fn reembed_pass(
+    endpoint: &str,
+    api_key: Option<&str>,
+    model: &str,
+    state: &AppState,
+) -> Result<ReembedReport, String> {
+    // Snapshot the current document out of its Mutex so the embed (an async HTTP
+    // call) does not hold the document lock across I/O — other commands
+    // (sync_document, undo, etc.) could be waiting on it.
+    let doc = state
+        .document
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
+
+    // Current section hashes, straight from the live document. Order doesn't
+    // matter here — `plan_reembed` treats these as a lookup, and chunk order
+    // comes from `chunk_document` below.
+    let current_hashes: HashMap<String, u64> = doc
+        .sections
+        .iter()
+        .map(|section| (section.id.clone(), section_text_hash(section)))
+        .collect();
+
+    let stored = state
+        .section_hashes
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
+    let plan = plan_reembed(&stored, &current_hashes);
+    let built_from_scratch = plan.full;
+
+    // Gather the chunks to embed: all of them for a full build, otherwise only
+    // those whose section is in the plan's embed set. `chunk_document` preserves
+    // manuscript order, so the gathered texts are in order → `embed_texts`
+    // returns vectors in the same order → the zip below pairs each vector with
+    // the right chunk.
+    let embed_set: HashSet<String> = plan.to_embed.iter().cloned().collect();
+    let chunks_to_embed: Vec<Chunk> = chunk_document(&doc)
+        .into_iter()
+        .filter(|chunk| plan.full || embed_set.contains(&chunk.section_id))
+        .collect();
+    let texts: Vec<String> = chunks_to_embed.iter().map(|c| c.text.clone()).collect();
+
+    let sections_embedded = if plan.full {
+        current_hashes.len() as u32
+    } else {
+        embed_set.len() as u32
+    };
+
+    // Embed the gathered texts in one batched call. If there is nothing to embed
+    // (empty document, or no changes this pass) we still apply drops below so
+    // deleted sections' vectors are removed.
+    let mut new_stored: Vec<StoredChunk> = Vec::new();
+    if !texts.is_empty() {
+        let vectors = embed_texts(
+            endpoint.to_string(),
+            api_key.map(|key| key.to_string()),
+            model.to_string(),
+            texts,
+        )
+        .await?;
+        // The provider must return exactly one vector per input text. A mismatch
+        // would silently misalign vectors and chunks, so surface it as an error
+        // rather than guessing — and do NOT mutate the store (the failed
+        // sections keep their old vectors and retry next time).
+        if vectors.len() != chunks_to_embed.len() {
+            return Err(format!(
+                "embeddings returned {} vectors for {} chunks",
+                vectors.len(),
+                chunks_to_embed.len()
+            ));
+        }
+        new_stored = chunks_to_embed
+            .into_iter()
+            .zip(vectors)
+            .map(|(chunk, vector)| StoredChunk { chunk, vector })
+            .collect();
+    }
+    let chunks_embedded = new_stored.len() as u32;
+
+    // Apply on success, in one critical section so a 4.4 retrieval reader never
+    // sees a half-applied store. Remove stale vectors for changed + deleted
+    // sections, push the new ones, and advance the baseline hashes for the
+    // changed sections / drop the deleted ones. On a full build `to_embed` is
+    // every current section and `to_drop` is empty, so this also rebuilds the
+    // baseline from scratch.
+    let chunks_total = {
+        let drop_set: HashSet<&str> = plan
+            .to_embed
+            .iter()
+            .map(|id| id.as_str())
+            .chain(plan.to_drop.iter().map(|id| id.as_str()))
+            .collect();
+        let mut vectors_lock = state.vectors.lock().map_err(|e| e.to_string())?;
+        let mut hashes_lock = state.section_hashes.lock().map_err(|e| e.to_string())?;
+        vectors_lock.retain(|stored| !drop_set.contains(stored.chunk.section_id.as_str()));
+        vectors_lock.extend(new_stored);
+        for id in &plan.to_embed {
+            if let Some(hash) = current_hashes.get(id) {
+                hashes_lock.insert(id.clone(), *hash);
+            }
+        }
+        for id in &plan.to_drop {
+            hashes_lock.remove(id);
+        }
+        vectors_lock.len() as u32
+    };
+
+    Ok(ReembedReport {
+        built_from_scratch,
+        sections_embedded,
+        chunks_embedded,
+        chunks_total,
+    })
+}
+
+/// Rebuild / refresh the in-memory vector store against the current document.
+///
+/// Triggered from JS (which holds the embeddings endpoint/key/model) ~1.5s after
+/// each edit, and on toggle-on. Reads the already-current `state.document`
+/// (synced by `sync_document` for typing, or installed by `open_document` /
+/// `undo` / `redo` / `restore_version` for the other paths) — it does NOT take a
+/// document argument. The embeddings triple is passed per call and never stored
+/// in `AppState`, matching the chat/embed convention (keeps the key out of the
+/// webview's inspectable fetch headers — the proxy's reason for existing).
+///
+/// **Concurrency.** `embed_texts` is async (an HTTP round-trip). If a second
+/// trigger arrives while one is in flight, it is dropped and `repending` is set;
+/// the in-flight pass re-loops and re-reads the (possibly newer) document, so
+/// the last trigger always wins — no lost updates, and never two concurrent
+/// embeds. On embed failure the store is left untouched for the failed sections
+/// (their old vectors stay, their hashes are not advanced) so they retry next
+/// time; `reembedding` is always reset before returning, success or error.
+#[tauri::command]
+pub async fn reembed_document(
+    endpoint: String,
+    api_key: Option<String>,
+    model: String,
+    state: State<'_, AppState>,
+) -> Result<ReembedReport, String> {
+    // Guard: claim the re-embed slot. `swap` returns the OLD value; if it was
+    // already true, another pass is in flight — mark pending and return a
+    // skipped report. AcqRel pairs the claim with the loop's reads. The skipped
+    // report carries the current `chunks_total` so the status readout doesn't
+    // blank out while a re-embed is pending.
+    if state.reembedding.swap(true, Ordering::AcqRel) {
+        state.repending.store(true, Ordering::Release);
+        let chunks_total = state.vectors.lock().map_err(|e| e.to_string())?.len() as u32;
+        return Ok(ReembedReport {
+            built_from_scratch: false,
+            sections_embedded: 0,
+            chunks_embedded: 0,
+            chunks_total,
+        });
+    }
+
+    // Run passes until no trigger arrived during the last one. Each pass
+    // re-reads the current document, so this converges to the latest state. We
+    // handle errors inline (rather than `?`) so `reembedding` is ALWAYS reset
+    // before returning — an early `?` would leave it stuck `true` and deadlock
+    // every future re-embed.
+    let mut report = match reembed_pass(&endpoint, api_key.as_deref(), &model, &state).await {
+        Ok(report) => report,
+        Err(error) => {
+            state.repending.store(false, Ordering::Release);
+            state.reembedding.store(false, Ordering::Release);
+            return Err(error);
+        }
+    };
+    while state.repending.swap(false, Ordering::AcqRel) {
+        match reembed_pass(&endpoint, api_key.as_deref(), &model, &state).await {
+            Ok(next) => report = next,
+            Err(error) => {
+                state.repending.store(false, Ordering::Release);
+                state.reembedding.store(false, Ordering::Release);
+                return Err(error);
+            }
+        }
+    }
+
+    state.reembedding.store(false, Ordering::Release);
+    Ok(report)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::document::{Element, Section, TextRun, TextStyle};
+    use crate::state::AppState;
 
     // --- test fixtures (mirror diff.rs:240-274) -----------------------------
 
@@ -688,5 +994,185 @@ mod tests {
         .expect("live embed should succeed with the model pulled");
         assert_eq!(vectors.len(), 1, "one input → one vector");
         assert!(!vectors[0].is_empty(), "the embedding must be non-empty");
+    }
+
+    // --- Differential re-embed planning (Phase 4.3) -------------------------
+    //
+    // `plan_reembed` is pure — no I/O, no state — so the differential logic is
+    // tested with hand-built hash maps. Helper keeps the section ids short.
+
+    fn hashes(ids_and_hashes: &[(&str, u64)]) -> HashMap<String, u64> {
+        ids_and_hashes
+            .iter()
+            .map(|(id, hash)| (id.to_string(), *hash))
+            .collect()
+    }
+
+    #[test]
+    fn plan_reembed_full_build_when_store_is_empty() {
+        // No baseline → every current section is embedded, nothing dropped.
+        let current = hashes(&[("s1", 10), ("s2", 20)]);
+        let plan = plan_reembed(&HashMap::new(), &current);
+        assert!(plan.full);
+        assert_eq!(plan.to_drop, Vec::<String>::new());
+        // Order of to_embed is unspecified (HashMap keys); compare as a set.
+        let mut got: Vec<&str> = plan.to_embed.iter().map(|s| s.as_str()).collect();
+        got.sort_unstable();
+        assert_eq!(got, vec!["s1", "s2"]);
+    }
+
+    #[test]
+    fn plan_reembed_nothing_when_hashes_match() {
+        // Identical baseline + current → no embeds, no drops.
+        let stored = hashes(&[("s1", 10), ("s2", 20)]);
+        let current = hashes(&[("s1", 10), ("s2", 20)]);
+        let plan = plan_reembed(&stored, &current);
+        assert!(!plan.full);
+        assert!(plan.to_embed.is_empty());
+        assert!(plan.to_drop.is_empty());
+    }
+
+    #[test]
+    fn plan_reembed_flags_a_changed_section_as_to_embed() {
+        // s2's hash changed → it is re-embedded; s1 (unchanged) is left alone.
+        let stored = hashes(&[("s1", 10), ("s2", 20)]);
+        let current = hashes(&[("s1", 10), ("s2", 99)]);
+        let plan = plan_reembed(&stored, &current);
+        assert!(!plan.full);
+        assert_eq!(plan.to_embed, vec!["s2"]);
+        assert!(plan.to_drop.is_empty());
+    }
+
+    #[test]
+    fn plan_reembed_flags_a_new_section_as_to_embed() {
+        // s3 is new (absent from stored) → it is embedded. `stored.get` returns
+        // None, which is never == Some(hash), so the new-section case is the same
+        // branch as a changed hash.
+        let stored = hashes(&[("s1", 10)]);
+        let current = hashes(&[("s1", 10), ("s3", 30)]);
+        let plan = plan_reembed(&stored, &current);
+        assert_eq!(plan.to_embed, vec!["s3"]);
+        assert!(plan.to_drop.is_empty());
+    }
+
+    #[test]
+    fn plan_reembed_flags_a_deleted_section_as_to_drop() {
+        // s2 is gone from the current document → drop its vectors + baseline.
+        let stored = hashes(&[("s1", 10), ("s2", 20)]);
+        let current = hashes(&[("s1", 10)]);
+        let plan = plan_reembed(&stored, &current);
+        assert_eq!(plan.to_drop, vec!["s2"]);
+        assert!(plan.to_embed.is_empty());
+    }
+
+    #[test]
+    fn plan_reembed_handles_change_and_delete_together() {
+        // s1 changed, s2 deleted, s3 new — all three flagged correctly in one
+        // pass.
+        let stored = hashes(&[("s1", 10), ("s2", 20)]);
+        let current = hashes(&[("s1", 11), ("s3", 30)]);
+        let plan = plan_reembed(&stored, &current);
+        assert_eq!(plan.to_embed, vec!["s1", "s3"]);
+        assert_eq!(plan.to_drop, vec!["s2"]);
+    }
+
+    // --- Section hashing (Phase 4.3) ---------------------------------------
+
+    #[test]
+    fn section_text_hash_is_stable_for_identical_text() {
+        let section = create_section(
+            "s1",
+            "Intro",
+            SectionType::Section,
+            vec![create_paragraph("p1", "The door opened."), create_paragraph("p2", "Cold air.")],
+        );
+        // Same text → same hash, twice. Determinism within a process is all the
+        // baseline needs (it lives in memory for the session).
+        let h1 = section_text_hash(&section);
+        let h2 = section_text_hash(&section);
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn section_text_hash_differs_when_text_changes() {
+        let before = create_section(
+            "s1",
+            "Intro",
+            SectionType::Section,
+            vec![create_paragraph("p1", "The door opened.")],
+        );
+        let after = create_section(
+            "s1",
+            "Intro",
+            SectionType::Section,
+            vec![create_paragraph("p1", "The door slammed.")],
+        );
+        assert_ne!(section_text_hash(&before), section_text_hash(&after));
+    }
+
+    #[test]
+    fn section_text_hash_ignores_the_section_title() {
+        // The hash is over paragraph TEXT only, not the title — renaming a
+        // section does NOT re-embed it (its passages are unchanged). Two sections
+        // with identical paragraphs but different titles hash the same.
+        let a = create_section("s1", "Original", SectionType::Section, vec![create_paragraph("p1", "same body")]);
+        let b = create_section("s1", "Renamed", SectionType::Section, vec![create_paragraph("p1", "same body")]);
+        assert_eq!(section_text_hash(&a), section_text_hash(&b));
+    }
+
+    // Live differential round-trip against a real Ollama. Ignored by default
+    // (needs a running server + `nomic-embed-text` pulled); run with
+    // `cargo test reembed -- --ignored`. Drives `reembed_pass` directly through
+    // `tauri::async_runtime` so it can build an `AppState` by hand rather than a
+    // Tauri `State` wrapper.
+    #[test]
+    #[ignore]
+    fn reembed_pass_live_differential_against_ollama() {
+        let state = AppState::new();
+        // First doc: two one-paragraph sections.
+        let doc = create_document(vec![
+            create_section("s1", "One", SectionType::Section, vec![create_paragraph("p1", "The door opened onto a quiet street.")]),
+            create_section("s2", "Two", SectionType::Section, vec![create_paragraph("p2", "Rain fell in silver lines.")]),
+        ]);
+        *state.document.lock().unwrap() = doc;
+
+        let endpoint = "http://localhost:11434";
+        let model = "nomic-embed-text";
+
+        // First pass: full build from an empty store.
+        let report = tauri::async_runtime::block_on(reembed_pass(endpoint, None, model, &state))
+            .expect("first embed should succeed with the model pulled");
+        assert!(report.built_from_scratch, "empty store → full build");
+        assert!(report.chunks_total > 0, "vectors should be stored");
+        let initial_total = report.chunks_total;
+        assert_eq!(
+            state.section_hashes.lock().unwrap().len(),
+            2,
+            "baseline records both sections"
+        );
+
+        // Mutate one section's text; leave the other untouched.
+        let mut doc2 = create_document(vec![
+            create_section("s1", "One", SectionType::Section, vec![create_paragraph("p1", "The door slammed shut behind her.")]),
+            create_section("s2", "Two", SectionType::Section, vec![create_paragraph("p2", "Rain fell in silver lines.")]),
+        ]);
+        *state.document.lock().unwrap() = doc2.clone();
+
+        let report2 = tauri::async_runtime::block_on(reembed_pass(endpoint, None, model, &state))
+            .expect("second embed should succeed");
+        assert!(!report2.built_from_scratch, "store had a baseline → not a full build");
+        assert_eq!(report2.sections_embedded, 1, "only the changed section re-embedded");
+        assert_eq!(report2.chunks_total, initial_total, "same section count → same chunk total");
+        // The unchanged section's baseline hash is unchanged; the changed one advanced.
+        let hashes = state.section_hashes.lock().unwrap();
+        assert_eq!(hashes.len(), 2);
+
+        // Delete a section: s2 gone → its vectors dropped, baseline shrinks.
+        doc2.sections.retain(|s| s.id != "s2");
+        *state.document.lock().unwrap() = doc2;
+        let report3 = tauri::async_runtime::block_on(reembed_pass(endpoint, None, model, &state))
+            .expect("third embed should succeed");
+        assert_eq!(report3.chunks_total, initial_total - 1, "deleted section's chunk dropped");
+        assert_eq!(state.section_hashes.lock().unwrap().len(), 1, "baseline shrunk to one section");
     }
 }
