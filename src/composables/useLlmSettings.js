@@ -45,6 +45,15 @@ function defaultSettings() {
     // Same backward-compatibility story as contextLength: older saved settings
     // blobs predate this field, so loadPrefs's merge-over-defaults supplies it.
     embeddingsModel: 'nomic-embed-text',
+    // Opt-in toggle for the manuscript index (Phase 4.3). When off, no
+    // `reembed_document` calls are ever fired — a writer without a local
+    // Ollama isn't peppered with failing embedding requests. When on, the
+    // index refreshes ~1.5s after each edit (debounced in `useRetrieval`) so
+    // it's always current for 4.4's retrieval. Default off for the same
+    // backward-compat reason as the fields above: older saved blobs gain
+    // `false` on next load, so embeddings stay off until the writer turns it
+    // on explicitly.
+    embeddingsEnabled: false,
   }
 }
 

@@ -42,6 +42,7 @@
       :store="store"
       :section-format="sectionFormat"
       :llm-settings="llmSettings"
+      :retrieval="retrieval"
     />
     <TextOptionsDrawer
       :open="leftDrawerOpen && leftDrawerMode === 'text-options'"
@@ -172,6 +173,7 @@ import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts.js'
 import { useVersionHistory } from './composables/useVersionHistory.js'
 import { useLlmSettings } from './composables/useLlmSettings.js'
 import { useChatManager } from './composables/useChat.js'
+import { useRetrieval } from './composables/useRetrieval.js'
 import { useWordCount } from './composables/useWordCount.js'
 import { usePagination } from './composables/usePagination.js'
 import { useManuscriptFormat } from './composables/useManuscriptFormat.js'
@@ -261,6 +263,14 @@ const llmSettings = reactive(llmSettingsRaw)
 // `anyBusy`. Each tab is its own `useChat` session; `activeSession` is the
 // selected one, passed to LlmPanel exactly as the single `chat` used to be.
 const chatManager = reactive(useChatManager(doc, llmSettingsRaw, navRaw, editorRef))
+// Manuscript index for RAG (Phase 4.3): keeps Rust's in-memory vector store
+// current by watching `store.docVersion` (debounced 1500ms) when the index is
+// enabled. Takes the RAW llm-settings composable (reads `settings.value.*`,
+// like useChatManager) and the Pinia store (for `docVersion`). Wrapped in
+// reactive() so the drawer's status readout auto-unwraps its ref members. The
+// status is passed to GeneralOptionsDrawer; retrieval itself is wired into the
+// chat context in 4.4.
+const retrieval = reactive(useRetrieval(store, llmSettingsRaw))
 
 // Whole-document word count. THE single instance (mirrors the shared-
 // pagination lift): the status bar reads it here, and the manuscript title

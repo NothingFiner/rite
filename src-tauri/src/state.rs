@@ -1,5 +1,8 @@
 use crate::document::{apply_doc_ops, compute_doc_ops, DocOp, Document};
 use crate::history::{self, HistoryRecord, RiteFile};
+use crate::retrieval::StoredChunk;
+use std::collections::HashMap;
+use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
 
 pub struct AppState {
@@ -29,6 +32,29 @@ pub struct AppState {
     pub version_history: Mutex<Vec<HistoryRecord>>,
     pub max_snapshots: usize,
     pub max_deltas_per_snapshot: usize,
+    /// Phase 4.3 in-memory RAG vector store. The flat list of (chunk, vector)
+    /// pairs that 4.4's `retrieve_passages` does a linear cosine scan over. Flat
+    /// (not a `HashMap`) because retrieval touches every entry anyway. Rebuilt
+    /// on open and updated by the differential `reembed_document` command. Lives
+    /// only in memory for the session — persistence as a `.rite` sidecar is
+    /// deferred until after 2.1 schema versioning.
+    pub vectors: Mutex<Vec<StoredChunk>>,
+    /// The differential baseline for `reembed_document`: `section_id → hash of
+    /// that section's concatenated paragraph text` as of the last successful
+    /// embed. Empty = no index yet, so the next call is a full build. A typical
+    /// edit changes one section's hash, so only that section's chunks are
+    /// re-embedded (section-level differential — see 4.3 plan for why not
+    /// paragraph-level).
+    pub section_hashes: Mutex<HashMap<String, u64>>,
+    /// Guards `reembed_document` against overlapping calls. The command does an
+    /// async HTTP embed; if a second trigger arrives while one is in flight, it
+    /// is dropped via `swap(true)` and `repending` is set instead, so the
+    /// in-flight pass re-loops and picks up the latest document. The last
+    /// trigger always wins — no lost updates.
+    pub reembedding: AtomicBool,
+    /// Set when a `reembed_document` call arrived while one was already in
+    /// flight; the in-flight loop checks this after each pass and re-runs if set.
+    pub repending: AtomicBool,
 }
 
 impl AppState {
@@ -44,6 +70,10 @@ impl AppState {
             version_history: Mutex::new(Vec::new()),
             max_snapshots: 4,
             max_deltas_per_snapshot: 50,
+            vectors: Mutex::new(Vec::new()),
+            section_hashes: Mutex::new(HashMap::new()),
+            reembedding: AtomicBool::new(false),
+            repending: AtomicBool::new(false),
         }
     }
 

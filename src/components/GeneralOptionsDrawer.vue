@@ -152,6 +152,27 @@
             {{ embeddingsTestResult }}
           </p>
 
+          <!-- Manuscript index opt-in (Phase 4.3). When on, the manuscript is
+               chunked + embedded in the background ~1.5s after each edit and
+               kept current in Rust's in-memory vector store, so 4.4 can feed
+               the assistant only the passages relevant to a question instead of
+               the whole manuscript. Off by default: a writer without a local
+               Ollama isn't peppered with failing embedding calls. The status
+               line below makes the index observable before retrieval is wired
+               in. Toggling on triggers an immediate full build. -->
+          <div class="drawer-check">
+            <input
+              id="embeddings-enabled"
+              type="checkbox"
+              :checked="llmSettings.settings.embeddingsEnabled"
+              @change="e => llmSettings.setSettings({ embeddingsEnabled: e.target.checked })"
+            />
+            <label for="embeddings-enabled">Enable manuscript index for document-aware chat</label>
+          </div>
+          <p class="ai-context-hint index-status" :class="indexStatusClass">
+            {{ indexStatusText }}
+          </p>
+
           <label class="drawer-label">API Key (optional — required for Ollama Cloud)</label>
           <input
             class="drawer-input"
@@ -224,6 +245,11 @@ const props = defineProps({
   store: { type: Object, required: true },
   sectionFormat: { type: Object, required: true },
   llmSettings: { type: Object, required: true },
+  // The useRetrieval composable (reactive) from App.vue — exposes
+  // `reembedStatus` / `reembedReport` / `reembedError` for the index-status
+  // readout. May be absent in contexts that don't wire retrieval, so it is
+  // optional and the status computed guards against that.
+  retrieval: { type: Object, default: null },
 })
 
 const expandedSections = ref({ 'chapter-naming': true, 'document-info': false, 'ai-assistant': false })
@@ -233,6 +259,42 @@ const expandedSections = ref({ 'chapter-naming': true, 'document-info': false, '
 const previewTitle = computed(() => {
   const prefix = props.sectionFormat.formatChapter(3)
   return prefix + 'The Arrival'
+})
+
+// Index-status readout for the manuscript index (Phase 4.3). Maps the four
+// `reembedStatus` states to a one-line, human-readable status, pulling the
+// "ready" counts from the last `ReembedReport`. Reactive through
+// `props.retrieval` — App.vue wraps useRetrieval in `reactive()`, so its ref
+// members (`reembedStatus` / `reembedReport` / `reembedError`) auto-unwrap and
+// the computed re-evaluates as they change. When indexing is off (or the
+// composable isn't wired), the line just reads "Index: off".
+const indexStatusText = computed(() => {
+  const retrieval = props.retrieval
+  if (!retrieval || !props.llmSettings.settings.embeddingsEnabled) return 'Index: off'
+  switch (retrieval.reembedStatus) {
+    case 'indexing':
+      return 'Indexing…'
+    case 'error':
+      return 'Index error: ' + (retrieval.reembedError || 'unknown')
+    case 'ready': {
+      const report = retrieval.reembedReport
+      if (!report) return 'Index: up to date'
+      return `Index: ${report.chunksTotal} chunks · ${report.sectionsEmbedded} sections · up to date`
+    }
+    default:
+      return 'Index: off'
+  }
+})
+
+// Color cue for the status line: green when ready, red on error, neutral
+// otherwise (off / indexing). Reuses `.ai-context-hint` as the base style and
+// only overrides the color via these classes.
+const indexStatusClass = computed(() => {
+  const retrieval = props.retrieval
+  if (!retrieval) return ''
+  if (retrieval.reembedStatus === 'error') return 'is-error'
+  if (retrieval.reembedStatus === 'ready') return 'is-ok'
+  return ''
 })
 
 // --- AI Assistant model discovery + test connection ---
@@ -538,5 +600,16 @@ watch(
 
 .ai-test-result.ok {
   color: #6c6;
+}
+
+/* Index-status line (Phase 4.3). Built on `.ai-context-hint` (muted neutral);
+   these modifiers only recolor it — green when the index is current, red when
+   the last re-embed failed — so it reads at a glance like the test-result lines. */
+.index-status.is-ok {
+  color: #6c6;
+}
+
+.index-status.is-error {
+  color: #e88;
 }
 </style>
