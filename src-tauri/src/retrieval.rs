@@ -1072,7 +1072,14 @@ mod tests {
         let stored = hashes(&[("s1", 10), ("s2", 20)]);
         let current = hashes(&[("s1", 11), ("s3", 30)]);
         let plan = plan_reembed(&stored, &current);
-        assert_eq!(plan.to_embed, vec!["s1", "s3"]);
+        // `to_embed` is built from `HashMap::iter()`, whose order is randomized
+        // per process (Rust's `RandomState` seed), so compare it as a sorted
+        // set rather than a literal `vec!` — the order is unspecified by design
+        // (the command uses `to_embed` only as a membership set). `to_drop` has
+        // a single element, so its order is unambiguous.
+        let mut embed: Vec<&str> = plan.to_embed.iter().map(|s| s.as_str()).collect();
+        embed.sort_unstable();
+        assert_eq!(embed, vec!["s1", "s3"]);
         assert_eq!(plan.to_drop, vec!["s2"]);
     }
 
