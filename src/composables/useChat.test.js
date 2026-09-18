@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { documentToText, useChat, PRESETS, matchSlashCommands, estimateTokens, estimateContextTokens } from './useChat.js'
+import { documentToText, useChat, PRESETS, matchSlashCommands, estimateTokens, estimateContextTokens, formatPassages } from './useChat.js'
 
 // Mock the Tauri bridge: `invoke` for commands, `listen` for streaming events.
 // `listen` resolves to an unlisten function; we capture the event handlers so
@@ -68,6 +68,11 @@ function makeLlmSettings(overrides = {}) {
     model: 'llama3',
     apiKey: '',
     temperature: null,
+    // Embeddings triple (Phase 4.2 follow-up / 4.4): separate from chat. The
+    // "Relevant passages" scope sends these into `retrieve_passages`.
+    embeddingsEndpoint: 'http://localhost:11434',
+    embeddingsApiKey: '',
+    embeddingsModel: 'nomic-embed-text',
     ...overrides,
   }
   return { settings: { value: settings } }
@@ -167,6 +172,36 @@ describe('documentToText', () => {
   it('returns empty for a doc with no sections', () => {
     expect(documentToText({ sections: [] }, 'document')).toBe('')
     expect(documentToText(null, 'document')).toBe('')
+  })
+})
+
+// --- formatPassages (4.4) ---------------------------------------------------
+//
+// Pure helper backing the "Relevant passages" context message. Chunks come back
+// camelCase from `retrieve_passages`; `chapterIndex` is null for front matter.
+
+describe('formatPassages', () => {
+  it('labels a chunk with its chapter index', () => {
+    const chunks = [{ id: 'c1:0', sectionId: 'c1', chapterIndex: 2, text: 'The door opened.' }]
+    expect(formatPassages(chunks)).toBe('[Chapter 2]\nThe door opened.')
+  })
+
+  it('labels a front-matter chunk (chapterIndex null) as Front matter', () => {
+    const chunks = [{ id: 'front:0', sectionId: 'front', chapterIndex: null, text: 'An epigram.' }]
+    expect(formatPassages(chunks)).toBe('[Front matter]\nAn epigram.')
+  })
+
+  it('joins multiple chunks with a blank line', () => {
+    const chunks = [
+      { id: 'c1:0', sectionId: 'c1', chapterIndex: 1, text: 'First passage.' },
+      { id: 'c2:0', sectionId: 'c2', chapterIndex: 2, text: 'Second passage.' },
+    ]
+    expect(formatPassages(chunks)).toBe('[Chapter 1]\nFirst passage.\n\n[Chapter 2]\nSecond passage.')
+  })
+
+  it('returns empty for no chunks', () => {
+    expect(formatPassages([])).toBe('')
+    expect(formatPassages(null)).toBe('')
   })
 })
 
@@ -319,6 +354,36 @@ describe('useChat — buildContextMessages', () => {
     expect(messages[1].content).toContain('full manuscript')
   })
 
+  it('uses supplied retrieved context with the passages label (4.4)', () => {
+    // When `send` has fetched passages, it threads the formatted text in as the
+    // second arg; the context message must use the passages label + that text
+    // (NOT documentToText, regardless of scope).
+    const doc = sampleDocument()
+    const chat = useChat(docRef(doc), makeLlmSettings(), makeNav('s1'), { value: null })
+    chat.setRole({ name: 'Critic', body: 'sys' })
+    chat.scope.value = 'passages'
+    const messages = chat.buildContextMessages('merge these two?', '[Chapter 1]\nThe door opened.')
+    expect(messages[1].role).toBe('user')
+    expect(messages[1].content).toContain('most relevant manuscript passages')
+    expect(messages[1].content).toContain('[Chapter 1]\nThe door opened.')
+    // Must NOT fall back to the section/document body.
+    expect(messages[1].content).not.toContain('Rain fell softly.')
+  })
+
+  it('omits the context message for the passages scope when no retrieved context', () => {
+    // The readout path: passages can't be previewed, so no context message is
+    // emitted (the token estimate under-counts by design).
+    const doc = sampleDocument()
+    const chat = useChat(docRef(doc), makeLlmSettings(), makeNav(), { value: null })
+    chat.setRole({ name: 'Critic', body: 'sys' })
+    chat.scope.value = 'passages'
+    const messages = chat.buildContextMessages('question')
+    expect(messages).toEqual([
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'question' },
+    ])
+  })
+
   it('omits the context message when the doc has no sections', () => {
     const doc = makeDocument([])
     const chat = useChat(docRef(doc), makeLlmSettings(), makeNav('s1'), { value: null })
@@ -414,6 +479,22 @@ describe('useChat — effectiveScope (selection-default)', () => {
     chat.setRole({ name: 'Critic', body: 'sys' })
     chat.scope.value = 'section'
     expect(chat.effectiveScope.value).toBe('section')
+  })
+
+  it('respects an explicit Relevant-passages scope even with a selection', () => {
+    // Like Whole document, "Relevant passages" is a whole-manuscript choice — a
+    // stray selection must NOT override it (the retrieval ranks against the full
+    // index, not a highlighted snippet).
+    const doc = sampleDocument()
+    const chat = useChat(
+      docRef(doc),
+      makeLlmSettings(),
+      makeNav(),
+      makeEditorRef({ hasSelection: true, selectionText: 'the chosen passage' }),
+    )
+    chat.setRole({ name: 'Critic', body: 'sys' })
+    chat.scope.value = 'passages'
+    expect(chat.effectiveScope.value).toBe('passages')
   })
 })
 
@@ -511,6 +592,95 @@ describe('useChat — send + streaming', () => {
     await chat.send()
     expect(invoke).not.toHaveBeenCalled()
     expect(chat.messages.value.length).toBe(0)
+  })
+})
+
+// --- Relevant passages scope (4.4) ------------------------------------------
+//
+// The "Relevant passages" scope fetches passages via `retrieve_passages` BEFORE
+// assembling the request, then threads them into `buildContextMessages`. These
+// tests drive the two invoke calls (retrieve_passages + llm_chat_stream) with a
+// per-command mock implementation.
+
+describe('useChat — Relevant passages send', () => {
+  it('fetches passages and injects them as the context message', async () => {
+    const doc = sampleDocument()
+    const chat = useChat(docRef(doc), makeLlmSettings(), makeNav(), { value: null })
+    chat.setRole({ name: 'Critic', body: 'sys' })
+    chat.scope.value = 'passages'
+
+    // retrieve_passages returns chunks; llm_chat_stream resolves (value unused).
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'retrieve_passages') {
+        return [{ id: 's1:0', sectionId: 's1', chapterIndex: 1, text: 'The door opened.' }]
+      }
+      return 'full text'
+    })
+
+    chat.input.value = 'Would merging these two characters work?'
+    await chat.send()
+
+    // retrieve_passages was called with the question as the query + the embeddings triple.
+    const retrieveCall = invoke.mock.calls.find((c) => c[0] === 'retrieve_passages')
+    expect(retrieveCall[1]).toMatchObject({
+      query: 'Would merging these two characters work?',
+      endpoint: 'http://localhost:11434',
+      model: 'nomic-embed-text',
+    })
+    // The request shipped to the model includes the passages context message.
+    const streamCall = invoke.mock.calls.find((c) => c[0] === 'llm_chat_stream')
+    const contextMessage = streamCall[1].request.messages.find((m) =>
+      m.content.includes('most relevant manuscript passages'),
+    )
+    expect(contextMessage).toBeTruthy()
+    expect(contextMessage.content).toContain('The door opened.')
+    // The user's question is still the final message.
+    const lastMessage = streamCall[1].request.messages[streamCall[1].request.messages.length - 1]
+    expect(lastMessage.content).toBe('Would merging these two characters work?')
+    // Retrieval error is clear on success.
+    expect(chat.retrievalError.value).toBe('')
+  })
+
+  it('aborts on retrieval failure, restoring input + setting retrievalError', async () => {
+    const doc = sampleDocument()
+    const chat = useChat(docRef(doc), makeLlmSettings(), makeNav(), { value: null })
+    chat.setRole({ name: 'Critic', body: 'sys' })
+    chat.scope.value = 'passages'
+
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'retrieve_passages') throw new Error('manuscript index is empty')
+      return 'full text'
+    })
+
+    chat.input.value = 'merge these two?'
+    await chat.send()
+
+    // Nothing pushed to the conversation (no failed exchange pollutes history).
+    expect(chat.messages.value.length).toBe(0)
+    // The error is surfaced inline...
+    expect(chat.retrievalError.value).toBe('manuscript index is empty')
+    // ...the input is restored so the writer can fix setup + retry...
+    expect(chat.input.value).toBe('merge these two?')
+    // ...and we never reached the chat stream.
+    expect(invoke.mock.calls.some((c) => c[0] === 'llm_chat_stream')).toBe(false)
+    expect(chat.busy.value).toBe(false)
+  })
+
+  it('clears a stale retrievalError at the start of a successful send', async () => {
+    const doc = sampleDocument()
+    const chat = useChat(docRef(doc), makeLlmSettings(), makeNav(), { value: null })
+    chat.setRole({ name: 'Critic', body: 'sys' })
+    chat.scope.value = 'passages'
+    chat.retrievalError.value = 'stale error from before'
+
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'retrieve_passages') return [{ id: 's1:0', sectionId: 's1', chapterIndex: 1, text: 'ok' }]
+      return 'full text'
+    })
+
+    chat.input.value = 'question'
+    await chat.send()
+    expect(chat.retrievalError.value).toBe('')
   })
 })
 

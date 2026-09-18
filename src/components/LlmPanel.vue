@@ -141,6 +141,11 @@
         <option value="section">Current section</option>
         <option value="selection">Selection</option>
         <option value="document">Whole document</option>
+        <!-- Phase 4.4: embed the question, cosine-rank the manuscript's indexed
+             chunks, inject the top-k. A sibling to Whole document for
+             document-wide-but-localized-evidence questions (character
+             consistency, motif tracking). Needs manuscript indexing ON. -->
+        <option value="passages">Relevant passages</option>
       </select>
       <!-- Shows only when a live editor selection overrides the chosen scope
            ("selection wins, except Whole document"). `scope` is the writer's
@@ -164,6 +169,11 @@
         Context: ~{{ formatTokens(contextTokens) }} / {{ formatTokens(settings.settings.contextLength) }} tokens
       </p>
     </div>
+    <!-- Retrieval error (4.4): shown when a "Relevant passages" send couldn't
+         fetch context (index off, embeddings model not pulled). Cleared by
+         `useChat.send` on the next attempt. `chat.retrievalError` auto-unwraps
+         via the reactive proxy. -->
+    <p v-if="chat.retrievalError" class="llm-retrieval-error">{{ chat.retrievalError }}</p>
     <div class="llm-clear-row">
        <button
           class="llm-clear-btn"
@@ -558,6 +568,15 @@ watch(
 
 .llm-context-readout.near {
   color: var(--accent);
+}
+
+/* Retrieval error (4.4): a red inline notice under the scope row, matching the
+   existing error bubble's red so it reads as the same severity. */
+.llm-retrieval-error {
+  margin: 0;
+  font-size: 11px;
+  color: #e55;
+  line-height: 1.4;
 }
 
 .llm-clear-row {
