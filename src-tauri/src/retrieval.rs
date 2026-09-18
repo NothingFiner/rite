@@ -357,11 +357,7 @@ pub async fn embed_texts(
 #[derive(Clone)]
 pub struct StoredChunk {
     pub chunk: Chunk,
-    // 4.3 writes vectors but does not yet read them — the first reader is 4.4's
-    // `retrieve_passages`, which cosine-similarity-ranks the stored vectors
-    // against the query vector. Allow dead code until that lands; removing this
-    // early would re-warn the moment 4.3 merges.
-    #[allow(dead_code)]
+    // 4.4's `retrieve_passages` cosine-ranks these against the query vector.
     pub vector: Vec<f32>,
 }
 
@@ -638,6 +634,119 @@ pub async fn reembed_document(
 
     state.reembedding.store(false, Ordering::Release);
     Ok(report)
+}
+
+// --- Passage retrieval (Phase 4.4) -----------------------------------------
+//
+// The fourth and final RAG link: at send time, embed the writer's question and
+// cosine-rank the stored chunks against it, returning only the top-k. The JS
+// side (useChat) injects those passages as the assistant's context message for
+// the explicit "Relevant passages" Feedback Target — a sibling scope to "Whole
+// document", NOT a replacement (global/structural questions like pacing stay on
+// the whole-manuscript dump; cosine retrieval is the right tool only for
+// document-wide-but-localized-evidence questions — character consistency, motif
+// tracking, "would merging these two work" — where the answer sits in scattered
+// passages whose meaning resembles the query).
+
+/// Cosine similarity between two vectors: the cosine of the angle between them,
+/// in [-1, 1]. 1.0 = same direction (most similar), 0.0 = orthogonal, -1.0 =
+/// opposite. Cosine (not Euclidean distance) because embeddings' MAGNITUDE is a
+/// length/text-artifact while their DIRECTION is the meaning — we want to rank
+/// by meaning, so we normalize magnitude away. Pure.
+///
+/// Returns `0.0` (not NaN) for a zero-norm vector, and for a dimension mismatch
+/// (defensive — the query and stored vectors come from the same embeddings
+/// model so their dims match in practice, but a malformed store shouldn't panic
+/// the retrieval). A zero vector is genuinely dissimilar to everything, so 0.0
+/// ranks it last, which is the right behavior.
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    if a.len() != b.len() || a.is_empty() {
+        return 0.0;
+    }
+    let mut dot = 0.0_f32;
+    let mut norm_a = 0.0_f32;
+    let mut norm_b = 0.0_f32;
+    for (x, y) in a.iter().zip(b.iter()) {
+        dot += x * y;
+        norm_a += x * x;
+        norm_b += y * y;
+    }
+    let denom = norm_a.sqrt() * norm_b.sqrt();
+    if denom == 0.0 {
+        0.0
+    } else {
+        dot / denom
+    }
+}
+
+/// Rank stored chunks against a query vector, returning the top-k highest-scoring
+/// `Chunk`s (highest cosine similarity first). Pure — no I/O, no state — so it is
+/// the unit-testable core of retrieval; the command embeds the query then calls
+/// this. The sort is **stable** so chunks with equal similarity keep the order
+/// `chunk_document` produced (manuscript order, which `state.vectors` preserves)
+/// — ties resolve to reading order, not an arbitrary shuffle. `top_k` saturates
+/// at the store size. Returns only the `Chunk`s (the vector never crosses to JS).
+fn rank_passages(query_vector: &[f32], stored: &[StoredChunk], top_k: usize) -> Vec<Chunk> {
+    // Pair each chunk with its score, then sort by score descending. `sort_by`
+    // is stable, so equal scores keep their input (manuscript) order.
+    let mut scored: Vec<(f32, &StoredChunk)> = stored
+        .iter()
+        .map(|entry| (cosine_similarity(query_vector, &entry.vector), entry))
+        .collect();
+    scored.sort_by(|(score_a, _), (score_b, _)| {
+        score_b.partial_cmp(score_a).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    scored
+        .into_iter()
+        .take(top_k)
+        .map(|(_, entry)| entry.chunk.clone())
+        .collect()
+}
+
+/// Retrieve the top-k passages most relevant to a query. Embeds the query via
+/// `embed_texts` (one vector), cosine-ranks the in-memory store against it, and
+/// returns the matching `Chunk`s for the JS side to inject as context.
+///
+/// The embeddings endpoint/key/model are passed per call and never stored in
+/// `AppState` — same boundary as `reembed_document`/`embed_texts` (keeps the key
+/// out of the webview's inspectable fetch headers, the proxy's reason for
+/// existing). The store is snapshotted under a brief lock and ranked outside it
+/// (the embed is an async HTTP round-trip; we never hold the vectors Mutex
+/// across I/O). An empty store is a clear error, not a silent empty result —
+/// the writer must turn on manuscript indexing first.
+#[tauri::command]
+pub async fn retrieve_passages(
+    query: String,
+    top_k: u32,
+    endpoint: String,
+    api_key: Option<String>,
+    model: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<Chunk>, String> {
+    // Snapshot the store under a brief lock, then compute outside it.
+    let snapshot: Vec<StoredChunk> = state
+        .vectors
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
+    if snapshot.is_empty() {
+        return Err(
+            "manuscript index is empty — turn on manuscript indexing in General Options and wait for it to build"
+                .to_string(),
+        );
+    }
+
+    // Embed the query: one text in → one vector out.
+    let query_vectors = embed_texts(endpoint, api_key, model, vec![query]).await?;
+    if query_vectors.len() != 1 {
+        return Err(format!(
+            "embeddings returned {} vectors for one query",
+            query_vectors.len()
+        ));
+    }
+    let query_vector = query_vectors.into_iter().next().expect("checked len == 1");
+
+    Ok(rank_passages(&query_vector, &snapshot, top_k as usize))
 }
 
 #[cfg(test)]
@@ -1181,5 +1290,163 @@ mod tests {
             .expect("third embed should succeed");
         assert_eq!(report3.chunks_total, initial_total - 1, "deleted section's chunk dropped");
         assert_eq!(state.section_hashes.lock().unwrap().len(), 1, "baseline shrunk to one section");
+    }
+
+    // --- Passage retrieval (Phase 4.4) ---------------------------------------
+    //
+    // `cosine_similarity` + `rank_passages` are pure, so the ranking logic is
+    // tested with hand-built vectors (no network). A `stored_chunk` helper builds
+    // a `StoredChunk` from a literal vector + a minimal `Chunk` (the text/ids are
+    // irrelevant to ranking — only the vector + the chunk identity that comes
+    // back matter).
+
+    fn stored_chunk(id: &str, vector: Vec<f32>) -> StoredChunk {
+        StoredChunk {
+            chunk: Chunk {
+                id: id.to_string(),
+                section_id: "s".to_string(),
+                chapter_index: None,
+                text: id.to_string(),
+            },
+            vector,
+        }
+    }
+
+    #[test]
+    fn cosine_similarity_is_one_for_identical_vectors() {
+        let v = vec![1.0, 2.0, 3.0];
+        let sim = cosine_similarity(&v, &v);
+        assert!((sim - 1.0).abs() < 1e-5, "identical → ~1.0, got {sim}");
+    }
+
+    #[test]
+    fn cosine_similarity_is_zero_for_orthogonal_vectors() {
+        // (1,0) and (0,1) are orthogonal → cosine 0.
+        let sim = cosine_similarity(&[1.0, 0.0], &[0.0, 1.0]);
+        assert!((sim - 0.0).abs() < 1e-5, "orthogonal → ~0.0, got {sim}");
+    }
+
+    #[test]
+    fn cosine_similarity_is_zero_for_a_zero_vector() {
+        // A zero vector has no direction; we return 0.0 (not NaN) so it ranks
+        // last, and the query side is guarded the same way.
+        let sim = cosine_similarity(&[0.0, 0.0], &[1.0, 1.0]);
+        assert_eq!(sim, 0.0);
+    }
+
+    #[test]
+    fn cosine_similarity_is_zero_for_dimension_mismatch() {
+        // Defensive: a malformed store must not panic the retrieval.
+        assert_eq!(cosine_similarity(&[1.0], &[1.0, 1.0]), 0.0);
+        assert_eq!(cosine_similarity(&[], &[]), 0.0);
+    }
+
+    #[test]
+    fn rank_passages_orders_by_similarity_descending() {
+        // Query aligns with "b" most, then "a", then "c" (orthogonal-ish).
+        let query = vec![1.0, 0.0];
+        let stored = vec![
+            stored_chunk("a", vec![0.9, 0.1]),
+            stored_chunk("b", vec![1.0, 0.0]),
+            stored_chunk("c", vec![0.0, 1.0]),
+        ];
+        let ranked = rank_passages(&query, &stored, 3);
+        assert_eq!(ranked.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), vec!["b", "a", "c"]);
+    }
+
+    #[test]
+    fn rank_passages_truncates_to_top_k() {
+        let query = vec![1.0, 0.0];
+        let stored = vec![
+            stored_chunk("a", vec![1.0, 0.0]),
+            stored_chunk("b", vec![0.9, 0.1]),
+            stored_chunk("c", vec![0.8, 0.2]),
+        ];
+        let ranked = rank_passages(&query, &stored, 2);
+        assert_eq!(ranked.len(), 2);
+        assert_eq!(ranked[0].id, "a");
+        assert_eq!(ranked[1].id, "b");
+    }
+
+    #[test]
+    fn rank_passages_top_k_saturates_at_store_size() {
+        let query = vec![1.0, 0.0];
+        let stored = vec![stored_chunk("a", vec![1.0, 0.0]), stored_chunk("b", vec![0.0, 1.0])];
+        // Asking for more than the store holds returns everything, in order.
+        let ranked = rank_passages(&query, &stored, 10);
+        assert_eq!(ranked.len(), 2);
+    }
+
+    #[test]
+    fn rank_passages_keeps_manuscript_order_on_ties() {
+        // Three chunks with IDENTICAL vectors → equal scores. The stable sort
+        // preserves their input (manuscript) order rather than shuffling.
+        let query = vec![1.0, 0.0];
+        let stored = vec![
+            stored_chunk("first", vec![1.0, 0.0]),
+            stored_chunk("second", vec![1.0, 0.0]),
+            stored_chunk("third", vec![1.0, 0.0]),
+        ];
+        let ranked = rank_passages(&query, &stored, 3);
+        assert_eq!(
+            ranked.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            vec!["first", "second", "third"],
+        );
+    }
+
+    #[test]
+    fn rank_passages_empty_store_yields_empty() {
+        let ranked = rank_passages(&[1.0, 0.0], &[], 5);
+        assert!(ranked.is_empty());
+    }
+
+    // Live retrieve round-trip against a real Ollama. Ignored by default (needs a
+    // running server + `nomic-embed-text` pulled); run with
+    // `cargo test retrieve -- --ignored`. Drives the two steps `retrieve_passages`
+    // composes (`embed_texts` for the query, then `rank_passages` against the
+    // stored vectors) directly, so it can build an `AppState` by hand rather than
+    // a Tauri `State` wrapper — the same reason 4.3's live test calls
+    // `reembed_pass` not `reembed_document`.
+    #[test]
+    #[ignore]
+    fn retrieve_passages_live_against_ollama() {
+        let state = AppState::new();
+        // A doc whose two chunks are topically distinct: a door/rain scene vs a
+        // cooking/kitchen scene. A query about rain should rank the first highest.
+        let doc = create_document(vec![
+            create_section("s1", "One", SectionType::Section, vec![
+                create_paragraph("p1", "The door opened onto a quiet street. Rain fell in silver lines."),
+            ]),
+            create_section("s2", "Two", SectionType::Section, vec![
+                create_paragraph("p2", "She chopped onions on the worn kitchen counter, the pan heating."),
+            ]),
+        ]);
+        *state.document.lock().unwrap() = doc;
+
+        let endpoint = "http://localhost:11434";
+        let model = "nomic-embed-text";
+
+        // Build the index.
+        tauri::async_runtime::block_on(reembed_pass(endpoint, None, model, &state))
+            .expect("index build should succeed with the model pulled");
+
+        // Snapshot the store + embed the query, exactly as the command does.
+        let snapshot = state.vectors.lock().unwrap().clone();
+        assert_eq!(snapshot.len(), 2, "two chunks indexed");
+        let query_vectors = tauri::async_runtime::block_on(embed_texts(
+            endpoint.to_string(),
+            None,
+            model.to_string(),
+            vec!["Rain falling outside.".to_string()],
+        ))
+        .expect("query embed should succeed");
+        assert_eq!(query_vectors.len(), 1);
+        let query_vector = query_vectors.into_iter().next().unwrap();
+
+        let ranked = rank_passages(&query_vector, &snapshot, 2);
+        assert_eq!(ranked.len(), 2);
+        // The rain/door chunk (s1) must rank above the kitchen chunk (s2) for a
+        // rain query — the whole point of semantic retrieval.
+        assert_eq!(ranked[0].section_id, "s1", "the rain scene should be top-ranked");
     }
 }

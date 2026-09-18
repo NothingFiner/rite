@@ -25,6 +25,12 @@ import { flattenSections } from './useSectionBlocks.js'
 /// context + history every turn.
 const MAX_HISTORY_TURNS = 10
 
+/// How many passages the "Relevant passages" Feedback Target (Phase 4.4) injects
+/// as context. The Rust `retrieve_passages` command cosine-ranks the manuscript's
+/// indexed chunks against the question and returns this many. Tunable; not yet a
+/// setting — a writer who wants more/fewer can adjust here until it becomes one.
+const DEFAULT_TOP_K = 8
+
 /// The four quick-action presets. Each sets a fixed analytical prompt + a
 /// sensible scope, then sends. They layer ON TOP of the selected role's
 /// system prompt — they do not replace the role.
@@ -186,6 +192,22 @@ export function documentToText(doc, scope, selectionText = '', sectionId = null)
   return text.trim()
 }
 
+/// Format retrieved passages (from the Rust `retrieve_passages` command) into a
+/// plain-text context block for the model. Each `Chunk` comes back camelCase
+/// (`{ id, sectionId, chapterIndex, text }`); `chapterIndex` is `null` for front
+/// matter before any Chapter (Rust `None`) and a 1-based number otherwise (a
+/// `Section` between Chapters inherits its nearest preceding Chapter's index, so
+/// it still labels as "Chapter N"). Pure so it is unit-testable without mounting.
+export function formatPassages(chunks) {
+  if (!chunks || chunks.length === 0) return ''
+  return chunks
+    .map((chunk) => {
+      const location = chunk.chapterIndex ? `Chapter ${chunk.chapterIndex}` : 'Front matter'
+      return `[${location}]\n${chunk.text}`
+    })
+    .join('\n\n')
+}
+
 export function useChat(docRef, llmSettings, nav, editorRef) {
   const messages = ref([])
   const input = ref('')
@@ -193,20 +215,29 @@ export function useChat(docRef, llmSettings, nav, editorRef) {
   const busy = ref(false)
   const selectedRoleBody = ref('') // composed system prompt from the role selector
   const selectedRoleName = ref('')
+  // The error from a failed `retrieve_passages` call (Phase 4.4), shown inline by
+  // the panel when the "Relevant passages" scope can't fetch context — e.g.
+  // manuscript indexing is off, or the embeddings model isn't pulled. Cleared at
+  // the start of each send. Not a toast: keeps this composable Pinia-free and
+  // unit-testable without a store setup, matching how `busy`/`input` are exposed.
+  const retrievalError = ref('')
 
   // The scope that will actually be used for the next send. `scope` is the
   // writer's explicit dropdown choice; `effectiveScope` layers a live editor
-  // selection on top of it: "selection wins, except Whole document". A
-  // selection upgrades any non-document scope to `selection` (so highlighting a
-  // passage and asking "critique this" targets the passage, not the whole
-  // section); an explicit `document` choice short-circuits and is always
-  // respected (pacing analysis needs the whole manuscript). Separating intent
-  // (`scope`) from what's used (`effectiveScope`) means the auto-override never
-  // mutates `scope`, so there's no sticky state — clearing the selection reverts
-  // on the next read. `editorRef.value.hasSelection` is the reactive boolean
-  // forwarded through DocumentRenderer (see editorDisplay.vue).
+  // selection on top of it: "selection wins, except Whole document and Relevant
+  // passages". A selection upgrades any localized scope to `selection` (so
+  // highlighting a passage and asking "critique this" targets the passage, not
+  // the whole section); an explicit `document` OR `passages` choice short-
+  // circuits and is always respected — both are whole-manuscript choices (pacing
+  // needs the full dump; `passages` needs to rank against the whole index), so a
+  // stray selection must not derail either. Separating intent (`scope`) from
+  // what's used (`effectiveScope`) means the auto-override never mutates `scope`,
+  // so there's no sticky state — clearing the selection reverts on the next read.
+  // `editorRef.value.hasSelection` is the reactive boolean forwarded through
+  // DocumentRenderer (see editorDisplay.vue).
   const effectiveScope = computed(() => {
-    if (editorRef?.value?.hasSelection && scope.value !== 'document') {
+    const isWholeManuscriptScope = scope.value === 'document' || scope.value === 'passages'
+    if (editorRef?.value?.hasSelection && !isWholeManuscriptScope) {
       return 'selection'
     }
     return scope.value
@@ -223,23 +254,45 @@ export function useChat(docRef, llmSettings, nav, editorRef) {
   ///   2. document context (per scope) as a user message
   ///   3. conversation history (last ~10 turns)
   ///   4. the new user message
-  /// Structured so a future RAG step can insert retrieved context between (2)
-  /// and (3) without rewriting this function.
-  function buildContextMessages(userMessage) {
+  ///
+  /// `retrievedContext` (Phase 4.4) is the pre-fetched "Relevant passages" text
+  /// from `retrieve_passages`. When supplied it becomes context message (2)
+  /// directly — `buildContextMessages` stays SYNCHRONOUS (the 3.4 token readout
+  /// calls it in a computed, which can't await), so the async retrieval happens
+  /// in `send` BEFORE this is called and is threaded in here. When `null` (the
+  /// readout, or any non-passages scope) the context is built from
+  /// `documentToText` per `effectiveScope` as before. For the `passages` scope
+  /// with no `retrievedContext` (the readout case), the context is empty — the
+  /// readout can't preview async-retrieved passages, so it under-estimates
+  /// (accepted, same philosophy as the `getSelectionText` caveat in 3.4).
+  function buildContextMessages(userMessage, retrievedContext = null) {
     const systemPrompt = selectedRoleBody.value
     const out = []
     if (systemPrompt) {
       out.push({ role: 'system', content: systemPrompt })
     }
 
-    const contextText = documentToText(
-      docRef?.value || docRef,
-      effectiveScope.value,
-      editorRef?.value?.getSelectionText?.() || '',
-      nav?.selectedNavId?.value || null,
-    )
+    let contextText
+    let label
+    if (retrievedContext !== null) {
+      contextText = retrievedContext
+      label = 'most relevant manuscript passages'
+    } else if (effectiveScope.value === 'passages') {
+      // Readout path: no passages to preview yet → no context message. The real
+      // send always supplies `retrievedContext`, so this only affects the token
+      // estimate, which under-counts by design here.
+      contextText = ''
+      label = ''
+    } else {
+      contextText = documentToText(
+        docRef?.value || docRef,
+        effectiveScope.value,
+        editorRef?.value?.getSelectionText?.() || '',
+        nav?.selectedNavId?.value || null,
+      )
+      label = scopeLabel(effectiveScope.value)
+    }
     if (contextText.trim()) {
-      const label = scopeLabel(effectiveScope.value)
       out.push({
         role: 'user',
         content: `Here is the ${label} for reference:\n\n${contextText}`,
@@ -261,6 +314,7 @@ export function useChat(docRef, llmSettings, nav, editorRef) {
   function scopeLabel(s) {
     if (s === 'selection') return 'selected text'
     if (s === 'document') return 'full manuscript'
+    if (s === 'passages') return 'relevant manuscript passages'
     return 'current section'
   }
 
@@ -268,11 +322,46 @@ export function useChat(docRef, llmSettings, nav, editorRef) {
   async function send() {
     if (busy.value || !input.value.trim()) return
     const userMessage = input.value.trim()
+    // Clear any prior retrieval error up front so a fresh send doesn't inherit
+    // a stale red notice from a previous failed attempt.
+    retrievalError.value = ''
+
+    // Phase 4.4 — "Relevant passages" scope: fetch the top-k passages matching
+    // the question BEFORE assembling the request, and thread them into
+    // `buildContextMessages` as the context. The question itself is the retrieval
+    // query (no separate query field). Uses the EMBEDDINGS triple (separate from
+    // the chat endpoint/key, per the 4.2 follow-up — Ollama Cloud doesn't host
+    // embeddings models). On failure, surface the error inline and abort without
+    // pushing anything to the conversation (no failed exchange pollutes history);
+    // the input is restored so the writer can fix setup and retry.
+    let retrievedContext = null
+    if (effectiveScope.value === 'passages') {
+      const settings = llmSettings.settings.value
+      busy.value = true
+      input.value = ''
+      try {
+        const chunks = await invoke('retrieve_passages', {
+          query: userMessage,
+          topK: DEFAULT_TOP_K,
+          endpoint: settings.embeddingsEndpoint,
+          apiKey: settings.embeddingsApiKey || null,
+          model: settings.embeddingsModel,
+        })
+        retrievedContext = formatPassages(chunks)
+      } catch (err) {
+        retrievalError.value = typeof err === 'string' ? err : (err?.message || String(err))
+        busy.value = false
+        input.value = userMessage // restore so they can retry
+        return
+      }
+    }
 
     // Push the user message + an empty streaming assistant placeholder.
     messages.value.push({ role: 'user', content: userMessage })
     activeAssistantIndex = messages.value.length
     messages.value.push({ role: 'assistant', content: '', streaming: true })
+    // `input` was already cleared for the passages scope (above); clear it for
+    // the other scopes here, on the commit path.
     input.value = ''
     busy.value = true
 
@@ -281,7 +370,7 @@ export function useChat(docRef, llmSettings, nav, editorRef) {
       model: llmSettings.settings.value.model,
       apiKey: llmSettings.settings.value.apiKey || null,
       temperature: llmSettings.settings.value.temperature ?? null,
-      messages: buildContextMessages(userMessage),
+      messages: buildContextMessages(userMessage, retrievedContext),
     }
 
     // Listen for streaming tokens + errors. The index guard ensures a late
@@ -374,6 +463,7 @@ export function useChat(docRef, llmSettings, nav, editorRef) {
     effectiveScope,
     busy,
     selectedRoleName,
+    retrievalError,
     buildContextMessages,
     send,
     preset,
