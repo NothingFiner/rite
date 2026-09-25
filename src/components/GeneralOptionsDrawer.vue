@@ -225,15 +225,70 @@
             {{ testResult }}
           </p>
         </div>
+
+        <!-- Roles accordion (Phase 4.5) — manage user-authored personas.
+             Built-in roles (●) are read-only here; custom roles (◆) can be
+             edited or deleted. "copy" forks a built-in into an editable user
+             role (saving with the built-in's exact name creates an override).
+             The Prompt body field edits only the persona — the shared
+             analytical-only base rules are composed on top by Rust and are
+             never shown or editable here. -->
+        <button
+          class="accordion-header"
+          :class="{ active: expandedSections['roles'] }"
+          @click="expandedSections['roles'] = !expandedSections['roles']"
+        >
+          <span>Roles</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" :class="{ rotated: expandedSections['roles'] }">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
+        <div v-show="expandedSections['roles']" class="accordion-body">
+          <ul class="role-list">
+            <li v-for="role in roles.roles" :key="role.name" class="role-row">
+              <span class="role-name">
+                <span class="role-badge" :class="{ builtin: role.isBuiltIn }" :title="role.isBuiltIn ? 'Built-in' : 'Custom'">{{ role.isBuiltIn ? '●' : '◆' }}</span>
+                {{ role.name }}
+              </span>
+              <span class="role-actions">
+                <button v-if="role.isBuiltIn" class="role-mini-btn" @click="roles.copyToCustom(role)" title="Copy to a custom role">copy</button>
+                <template v-else>
+                  <button class="role-mini-btn" @click="roles.startEdit(role)" title="Edit">edit</button>
+                  <button class="role-mini-btn danger" @click="roles.remove(role)" title="Delete">delete</button>
+                </template>
+              </span>
+            </li>
+          </ul>
+          <button class="ai-test-btn" @click="roles.startNew" :disabled="roles.isCreating || roles.editing">+ New role</button>
+
+          <div v-if="roles.isCreating || roles.editing" class="role-editor">
+            <label class="drawer-label">
+              {{ roles.isCreating ? 'New role' : 'Editing: ' + roles.editing.name }}
+            </label>
+            <input class="drawer-input" :value="roles.draftName" @input="e => roles.draftName = e.target.value" placeholder="Role name" />
+            <label class="drawer-label">Description</label>
+            <input class="drawer-input" :value="roles.draftDescription" @input="e => roles.draftDescription = e.target.value" placeholder="One-line description" />
+            <label class="drawer-label">Prompt body</label>
+            <textarea class="drawer-textarea" :value="roles.draftBody" @input="e => roles.draftBody = e.target.value" rows="8" placeholder="You are a…"></textarea>
+            <p class="ai-context-hint">The shared analytical-only rules (never write prose into the doc) are always applied on top — you only edit this role's persona.</p>
+            <p v-if="roles.roleError" class="ai-test-result">{{ roles.roleError }}</p>
+            <div class="role-editor-actions">
+              <button class="ai-test-btn" @click="roles.save" :disabled="roles.roleSaving">{{ roles.roleSaving ? 'Saving…' : 'Save' }}</button>
+              <button class="ai-test-btn ghost" @click="roles.cancelEdit">Cancel</button>
+              <button v-if="!roles.isCreating && roles.editing" class="ai-test-btn danger" @click="roles.remove(roles.editing)">Delete</button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/tauri'
 import { fetchModels } from '../composables/useLlmModels.js'
+import { useRoles } from '../composables/useRoles.js'
 
 // Receives the document store, the section-format composable, and the
 // llm-settings composable as props and drives them directly. These are
@@ -250,9 +305,20 @@ const props = defineProps({
   // readout. May be absent in contexts that don't wire retrieval, so it is
   // optional and the status computed guards against that.
   retrieval: { type: Object, default: null },
+  // The reactive useChatManager from App.vue — owns the merged role list
+  // (`roles`) + `refreshRoles()`. The Roles accordion's editor (useRoles)
+  // reads the list from it and calls `refreshRoles()` after a save/delete so
+  // the Assistant role selector updates live.
+  chatManager: { type: Object, required: true },
 })
 
-const expandedSections = ref({ 'chapter-naming': true, 'document-info': false, 'ai-assistant': false })
+const expandedSections = ref({ 'chapter-naming': true, 'document-info': false, 'ai-assistant': false, 'roles': false })
+
+// Role editor (Phase 4.5). Wrapped in `reactive()` so its nested refs
+// (`draftName` / `isCreating` / `roles` / …) auto-unwrap in the template — the
+// same pattern App.vue uses for every composable. Reads the list + refresh hook
+// off the reactive `chatManager` prop.
+const roles = reactive(useRoles(props.chatManager))
 
 // Live preview of how the configured prefix + numbering render for a chapter
 // with a sample subtitle. formatChapter(3) yields e.g. "Chapter 3: ".
@@ -611,5 +677,124 @@ watch(
 
 .index-status.is-error {
   color: #e88;
+}
+
+/* Roles accordion (Phase 4.5) */
+.role-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.role-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+
+.role-row:hover {
+  background: var(--input-bg);
+}
+
+.role-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.role-badge {
+  font-size: 10px;
+  color: var(--text-secondary);
+  flex: 0 0 auto;
+}
+
+.role-badge.builtin {
+  color: var(--accent);
+}
+
+.role-actions {
+  display: flex;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.role-mini-btn {
+  padding: 2px 6px;
+  border: 1px solid var(--bg-glass-border);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.role-mini-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.role-mini-btn.danger:hover {
+  color: #e88;
+  border-color: #e88;
+}
+
+.role-editor {
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--bg-glass-border);
+  border-radius: 8px;
+  background: var(--input-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* A label inside the editor's tinted box needs a touch of top margin so the
+   first one isn't flush against the box's padding. */
+.role-editor .drawer-label {
+  margin-top: 2px;
+}
+
+.role-editor-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+/* Button variants for the editor action row: ghost (cancel) is neutral, danger
+   (delete) is red. Built on `.ai-test-btn` (accent by default). */
+.ai-test-btn.ghost {
+  border-color: var(--bg-glass-border);
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.ai-test-btn.ghost:hover:not(:disabled) {
+  background: var(--input-bg);
+  color: var(--text-primary);
+}
+
+.ai-test-btn.danger {
+  border-color: #e88;
+  background: transparent;
+  color: #e88;
+  margin-left: auto;
+}
+
+.ai-test-btn.danger:hover:not(:disabled) {
+  background: #e88;
+  color: var(--text-primary);
 }
 </style>

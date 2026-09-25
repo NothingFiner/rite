@@ -609,18 +609,40 @@ export function useChatManager(docRef, llmSettings, nav, editorRef) {
   /// one-stream-at-a-time serialization described above.
   const anyBusy = computed(() => sessions.value.some((s) => s.busy))
 
-  /// Load the persona list once (moved here from LlmPanel, where it ran on
-  /// every mount). When roles arrive, give the active session its default role
-  /// if it doesn't have one yet — mirroring the panel's old auto-select.
-  async function loadRoles() {
+  /// Reload the persona list from Rust (built-in + user roles merged server-
+  /// side). After a refresh, if the active session's selected role is no longer
+  /// in the list (e.g. it was deleted in the Roles editor), fall back to the
+  /// default role when available, else clear it — so the selector never points
+  /// at a vanished role. Exposed so the Roles editor can call it after a
+  /// save/delete and the selector updates live.
+  async function refreshRoles() {
     try {
       roles.value = await invoke('list_roles')
-      const active = activeSession.value
-      if (active && !active.selectedRoleName) {
-        applyRole(active, DEFAULT_ROLE_NAME)
-      }
     } catch (e) {
       console.error('Failed to load roles:', e)
+      return
+    }
+    const active = activeSession.value
+    if (!active) return
+    const current = active.selectedRoleName
+    if (current && !findRole(current)) {
+      // The selected role vanished — re-apply the default if present, else clear.
+      if (findRole(DEFAULT_ROLE_NAME)) {
+        applyRole(active, DEFAULT_ROLE_NAME)
+      } else {
+        active.setRole(null)
+      }
+    }
+  }
+
+  /// Load roles on first construction. Same as `refreshRoles`, plus giving the
+  /// active session its default role if it doesn't have one yet (mirrors the
+  /// old auto-select-on-mount behavior).
+  async function loadRoles() {
+    await refreshRoles()
+    const active = activeSession.value
+    if (active && !active.selectedRoleName) {
+      applyRole(active, DEFAULT_ROLE_NAME)
     }
   }
 
@@ -636,6 +658,7 @@ export function useChatManager(docRef, llmSettings, nav, editorRef) {
     tabs,
     activeSession,
     anyBusy,
+    refreshRoles,
     createSession,
     selectSession,
     closeSession,

@@ -18,7 +18,7 @@ use commands::{
 };
 use export_docx::export_docx;
 use export_text::export_text;
-use llm::{llm_cancel, llm_chat, llm_chat_stream, llm_list_models, list_roles};
+use llm::{llm_cancel, llm_chat, llm_chat_stream, llm_list_models, list_roles, save_role, delete_role};
 use retrieval::{embed_texts, reembed_document, retrieve_passages};
 use state::AppState;
 
@@ -54,6 +54,8 @@ fn main() {
             llm_chat_stream,
             llm_list_models,
             llm_cancel,
+            save_role,
+            delete_role,
             embed_texts,
             reembed_document,
             retrieve_passages,
