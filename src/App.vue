@@ -43,6 +43,7 @@
       :section-format="sectionFormat"
       :llm-settings="llmSettings"
       :retrieval="retrieval"
+      :chat-manager="chatManager"
     />
     <TextOptionsDrawer
       :open="leftDrawerOpen && leftDrawerMode === 'text-options'"
