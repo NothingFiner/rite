@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { documentToText, useChat, PRESETS, matchSlashCommands, estimateTokens, estimateContextTokens, formatPassages } from './useChat.js'
+import { documentToText, useChat, PRESETS, matchSlashCommands, estimateTokens, estimateContextTokens, formatPassages, formatStructuralSignals } from './useChat.js'
 
 // Mock the Tauri bridge: `invoke` for commands, `listen` for streaming events.
 // `listen` resolves to an unlisten function; we capture the event handlers so
@@ -205,6 +205,72 @@ describe('formatPassages', () => {
   })
 })
 
+// --- formatStructuralSignals (4.6) ------------------------------------------
+//
+// Pure helper backing the "Structure" context message. A StructuralReport comes
+// back camelCase from `structural_signals`; the formatter renders a compact
+// per-chapter breakdown the model can scan as a consistent column.
+
+describe('formatStructuralSignals', () => {
+  it('renders the header, front matter, and one line per chapter', () => {
+    const report = {
+      chapters: [
+        { chapterIndex: 1, title: 'The Door', words: 2400, paragraphs: 18, sceneBreaks: 2, sectionCount: 2 },
+        { chapterIndex: 2, title: 'Rain', words: 800, paragraphs: 6, sceneBreaks: 0, sectionCount: 1 },
+      ],
+      frontMatter: { words: 120, paragraphs: 2, sceneBreaks: 0, sectionCount: 1 },
+      totals: { chapters: 2, sections: 4, words: 3320, paragraphs: 26, sceneBreaks: 2 },
+    }
+    const text = formatStructuralSignals(report)
+    const lines = text.split('\n')
+    expect(lines[0]).toBe('Manuscript structure — 2 chapters, 4 sections, ~3320 words total:')
+    expect(lines[1]).toBe('Front matter: 120 words, 2 paragraphs, 0 scene breaks')
+    expect(lines[2]).toBe('Chapter 1: The Door — 2400 words, 18 paragraphs, 2 scene breaks (2 sections)')
+    expect(lines[3]).toBe('Chapter 2: Rain — 800 words, 6 paragraphs, 0 scene breaks (1 section)')
+  })
+
+  it('omits the front-matter line when there is none', () => {
+    const report = {
+      chapters: [{ chapterIndex: 1, title: 'One', words: 100, paragraphs: 2, sceneBreaks: 0, sectionCount: 1 }],
+      frontMatter: { words: 0, paragraphs: 0, sceneBreaks: 0, sectionCount: 0 },
+      totals: { chapters: 1, sections: 1, words: 100, paragraphs: 2, sceneBreaks: 0 },
+    }
+    const lines = formatStructuralSignals(report).split('\n')
+    expect(lines[0]).toBe('Manuscript structure — 1 chapter, 1 section, ~100 words total:')
+    // No front-matter line — the second line is the chapter.
+    expect(lines[1]).toBe('Chapter 1: One — 100 words, 2 paragraphs, 0 scene breaks (1 section)')
+    expect(lines.length).toBe(2)
+  })
+
+  it('renders a chapter with no title as just its number', () => {
+    const report = {
+      chapters: [{ chapterIndex: 3, title: '', words: 50, paragraphs: 1, sceneBreaks: 0, sectionCount: 1 }],
+      frontMatter: { words: 0, paragraphs: 0, sceneBreaks: 0, sectionCount: 0 },
+      totals: { chapters: 1, sections: 1, words: 50, paragraphs: 1, sceneBreaks: 0 },
+    }
+    const line = formatStructuralSignals(report).split('\n')[1]
+    expect(line).toBe('Chapter 3 — 50 words, 1 paragraph, 0 scene breaks (1 section)')
+  })
+
+  it('pluralizes counts (1 chapter / 2 chapters, 1 section / 2 sections)', () => {
+    const one = {
+      chapters: [{ chapterIndex: 1, title: 'Solo', words: 10, paragraphs: 1, sceneBreaks: 1, sectionCount: 1 }],
+      frontMatter: { words: 0, paragraphs: 0, sceneBreaks: 0, sectionCount: 0 },
+      totals: { chapters: 1, sections: 1, words: 10, paragraphs: 1, sceneBreaks: 1 },
+    }
+    expect(formatStructuralSignals(one).split('\n')[0]).toBe(
+      'Manuscript structure — 1 chapter, 1 section, ~10 words total:',
+    )
+    expect(formatStructuralSignals(one).split('\n')[1]).toBe(
+      'Chapter 1: Solo — 10 words, 1 paragraph, 1 scene break (1 section)',
+    )
+  })
+
+  it('returns empty for a null report', () => {
+    expect(formatStructuralSignals(null)).toBe('')
+  })
+})
+
 // --- matchSlashCommands -----------------------------------------------------
 
 describe('matchSlashCommands', () => {
@@ -214,18 +280,22 @@ describe('matchSlashCommands', () => {
     expect(matchSlashCommands(' /summarize')).toBeNull()
   })
 
-  it('returns all four presets for a bare /', () => {
+  it('returns all five presets for a bare /', () => {
     expect(matchSlashCommands('/').map((p) => p.id)).toEqual([
       'summarize',
       'critique',
       'pacing',
+      'pacing-shape',
       'suggest',
     ])
   })
 
   it('filters to presets whose id starts with the token', () => {
     expect(matchSlashCommands('/cri').map((p) => p.id)).toEqual(['critique'])
-    expect(matchSlashCommands('/pac').map((p) => p.id)).toEqual(['pacing'])
+    // `/pac` is a prefix of BOTH `pacing` and `pacing-shape`, so both match.
+    expect(matchSlashCommands('/pac').map((p) => p.id)).toEqual(['pacing', 'pacing-shape'])
+    // Typing the hyphen disambiguates down to the shape preset alone.
+    expect(matchSlashCommands('/pacing-').map((p) => p.id)).toEqual(['pacing-shape'])
   })
 
   it('returns matching presets in PRESETS order, not input order', () => {
@@ -384,6 +454,39 @@ describe('useChat — buildContextMessages', () => {
     ])
   })
 
+  it('uses supplied retrieved context with the structure label (4.6)', () => {
+    // The "Structure" scope pre-fetches the breakdown in `send` and threads it
+    // in as the second arg; the context message must use the structure label +
+    // that text (NOT documentToText).
+    const doc = sampleDocument()
+    const chat = useChat(docRef(doc), makeLlmSettings(), makeNav('s1'), { value: null })
+    chat.setRole({ name: 'Critic', body: 'sys' })
+    chat.scope.value = 'structure'
+    const messages = chat.buildContextMessages(
+      'where does the middle sag?',
+      'Manuscript structure — 1 chapter, 1 section, ~6 words total:\nChapter 1: The Arrival — 4 words, 2 paragraphs, 0 scene breaks (1 section)',
+    )
+    expect(messages[1].role).toBe('user')
+    expect(messages[1].content).toContain('manuscript structure')
+    expect(messages[1].content).toContain('Chapter 1: The Arrival')
+    // Must NOT fall back to the section/document body.
+    expect(messages[1].content).not.toContain('The door opened.')
+  })
+
+  it('omits the context message for the structure scope when no retrieved context', () => {
+    // Readout path: like passages, the structure breakdown can't be previewed
+    // synchronously, so no context message is emitted (under-counts by design).
+    const doc = sampleDocument()
+    const chat = useChat(docRef(doc), makeLlmSettings(), makeNav(), { value: null })
+    chat.setRole({ name: 'Critic', body: 'sys' })
+    chat.scope.value = 'structure'
+    const messages = chat.buildContextMessages('question')
+    expect(messages).toEqual([
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'question' },
+    ])
+  })
+
   it('omits the context message when the doc has no sections', () => {
     const doc = makeDocument([])
     const chat = useChat(docRef(doc), makeLlmSettings(), makeNav('s1'), { value: null })
@@ -495,6 +598,22 @@ describe('useChat — effectiveScope (selection-default)', () => {
     chat.setRole({ name: 'Critic', body: 'sys' })
     chat.scope.value = 'passages'
     expect(chat.effectiveScope.value).toBe('passages')
+  })
+
+  it('respects an explicit Structure scope even with a selection', () => {
+    // Like Whole document / Relevant passages, "Structure" is a whole-manuscript
+    // choice — a stray selection must NOT override it (the breakdown covers every
+    // chapter, not a highlighted snippet).
+    const doc = sampleDocument()
+    const chat = useChat(
+      docRef(doc),
+      makeLlmSettings(),
+      makeNav(),
+      makeEditorRef({ hasSelection: true, selectionText: 'the chosen passage' }),
+    )
+    chat.setRole({ name: 'Critic', body: 'sys' })
+    chat.scope.value = 'structure'
+    expect(chat.effectiveScope.value).toBe('structure')
   })
 })
 
@@ -684,6 +803,98 @@ describe('useChat — Relevant passages send', () => {
   })
 })
 
+// --- Structure scope (4.6) ---------------------------------------------------
+//
+// The "Structure" scope fetches the per-chapter breakdown via
+// `structural_signals` BEFORE assembling the request (no embeddings triple —
+// it's a pure Rust walk), then threads it into `buildContextMessages`. These
+// tests drive the two invoke calls (structural_signals + llm_chat_stream) with a
+// per-command mock implementation.
+
+describe('useChat — Structure send', () => {
+  it('fetches the structural breakdown and injects it as the context message', async () => {
+    const doc = sampleDocument()
+    const chat = useChat(docRef(doc), makeLlmSettings(), makeNav(), { value: null })
+    chat.setRole({ name: 'Critic', body: 'sys' })
+    chat.scope.value = 'structure'
+
+    // structural_signals returns a report; llm_chat_stream resolves (unused).
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'structural_signals') {
+        return {
+          chapters: [{ chapterIndex: 1, title: 'The Arrival', words: 4, paragraphs: 2, sceneBreaks: 0, sectionCount: 2 }],
+          frontMatter: { words: 0, paragraphs: 0, sceneBreaks: 0, sectionCount: 0 },
+          totals: { chapters: 1, sections: 2, words: 5, paragraphs: 3, sceneBreaks: 0 },
+        }
+      }
+      return 'full text'
+    })
+
+    chat.input.value = 'Where does the middle sag?'
+    await chat.send()
+
+    // structural_signals was called with NO args (the document is read from
+    // AppState server-side, not passed in).
+    const signalsCall = invoke.mock.calls.find((c) => c[0] === 'structural_signals')
+    expect(signalsCall[1]).toEqual({})
+    // The request shipped to the model includes the structure context message.
+    const streamCall = invoke.mock.calls.find((c) => c[0] === 'llm_chat_stream')
+    const contextMessage = streamCall[1].request.messages.find((m) =>
+      m.content.includes('manuscript structure'),
+    )
+    expect(contextMessage).toBeTruthy()
+    expect(contextMessage.content).toContain('Chapter 1: The Arrival')
+    // The user's question is still the final message.
+    const lastMessage = streamCall[1].request.messages[streamCall[1].request.messages.length - 1]
+    expect(lastMessage.content).toBe('Where does the middle sag?')
+    // Error is clear on success.
+    expect(chat.retrievalError.value).toBe('')
+  })
+
+  it('aborts on structural_signals failure, restoring input + setting retrievalError', async () => {
+    const doc = sampleDocument()
+    const chat = useChat(docRef(doc), makeLlmSettings(), makeNav(), { value: null })
+    chat.setRole({ name: 'Critic', body: 'sys' })
+    chat.scope.value = 'structure'
+
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'structural_signals') throw new Error('document lock poisoned')
+      return 'full text'
+    })
+
+    chat.input.value = 'balance check'
+    await chat.send()
+
+    // Nothing pushed to the conversation.
+    expect(chat.messages.value.length).toBe(0)
+    expect(chat.retrievalError.value).toBe('document lock poisoned')
+    // Input restored so the writer can retry.
+    expect(chat.input.value).toBe('balance check')
+    // We never reached the chat stream.
+    expect(invoke.mock.calls.some((c) => c[0] === 'llm_chat_stream')).toBe(false)
+    expect(chat.busy.value).toBe(false)
+  })
+
+  it('clears a stale retrievalError at the start of a successful structure send', async () => {
+    const doc = sampleDocument()
+    const chat = useChat(docRef(doc), makeLlmSettings(), makeNav(), { value: null })
+    chat.setRole({ name: 'Critic', body: 'sys' })
+    chat.scope.value = 'structure'
+    chat.retrievalError.value = 'stale error from before'
+
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'structural_signals') {
+        return { chapters: [], frontMatter: { words: 0, paragraphs: 0, sceneBreaks: 0, sectionCount: 0 }, totals: { chapters: 0, sections: 0, words: 0, paragraphs: 0, sceneBreaks: 0 } }
+      }
+      return 'full text'
+    })
+
+    chat.input.value = 'question'
+    await chat.send()
+    expect(chat.retrievalError.value).toBe('')
+  })
+})
+
 // --- preset -----------------------------------------------------------------
 
 describe('useChat — preset', () => {
@@ -717,9 +928,28 @@ describe('useChat — preset', () => {
     expect(lastMessage.content).toContain('pacing across the whole manuscript')
   })
 
-  it('PRESETS has exactly four presets with the expected ids', () => {
+  it('sets the structure scope for the pacing-shape preset (4.6)', async () => {
+    const doc = sampleDocument()
+    const chat = useChat(docRef(doc), makeLlmSettings(), makeNav(), { value: null })
+    chat.setRole({ name: 'Critic', body: 'sys' })
+    // pacing-shape pre-fetches structural_signals; llm_chat_stream resolves.
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'structural_signals') {
+        return { chapters: [], frontMatter: { words: 0, paragraphs: 0, sceneBreaks: 0, sectionCount: 0 }, totals: { chapters: 0, sections: 0, words: 0, paragraphs: 0, sceneBreaks: 0 } }
+      }
+      return 'full text'
+    })
+
+    await chat.preset('pacing-shape')
+    expect(chat.scope.value).toBe('structure')
+    const streamCall = invoke.mock.calls.find((c) => c[0] === 'llm_chat_stream')
+    const lastMessage = streamCall[1].request.messages[streamCall[1].request.messages.length - 1]
+    expect(lastMessage.content).toContain('macro pacing and structure')
+  })
+
+  it('PRESETS has exactly five presets with the expected ids', () => {
     const ids = PRESETS.map((p) => p.id)
-    expect(ids).toEqual(['summarize', 'critique', 'pacing', 'suggest'])
+    expect(ids).toEqual(['summarize', 'critique', 'pacing', 'pacing-shape', 'suggest'])
   })
 })
 
