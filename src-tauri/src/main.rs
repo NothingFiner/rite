@@ -9,6 +9,7 @@ mod history;
 mod llm;
 mod retrieval;
 mod state;
+mod structure;
 
 use commands::{
     apply_text_style, autosave_document, change_section_type, delete_section,
@@ -21,6 +22,7 @@ use export_text::export_text;
 use llm::{llm_cancel, llm_chat, llm_chat_stream, llm_list_models, list_roles, save_role, delete_role};
 use retrieval::{embed_texts, reembed_document, retrieve_passages};
 use state::AppState;
+use structure::structural_signals;
 
 fn main() {
     tauri::Builder::default()
@@ -59,6 +61,7 @@ fn main() {
             embed_texts,
             reembed_document,
             retrieve_passages,
+            structural_signals,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

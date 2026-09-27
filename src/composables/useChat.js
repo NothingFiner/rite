@@ -54,6 +54,13 @@ export const PRESETS = [
     prompt: 'Analyze the pacing across the whole manuscript. Where does it drag, where does it rush, where is the tension well-managed?',
   },
   {
+    id: 'pacing-shape',
+    label: 'Analyze pacing (shape)',
+    scope: 'structure',
+    prompt:
+      'Analyze the macro pacing and structure across the whole manuscript from this per-chapter breakdown: chapter lengths, scene-break rhythm, where tension might sag or rush, and structural balance.',
+  },
+  {
     id: 'suggest',
     label: 'Suggest improvements',
     scope: 'section',
@@ -208,6 +215,67 @@ export function formatPassages(chunks) {
     .join('\n\n')
 }
 
+/// Format a `StructuralReport` (from the Rust `structural_signals` command) into
+/// a compact plain-text block for the model's context — the "Structure" Feedback
+/// Target (Phase 4.6). The report comes back camelCase:
+///   `{ chapters: [{ chapterIndex, title, words, paragraphs, sceneBreaks,
+///      sectionCount }], frontMatter: { … }, totals: { chapters, sections,
+///      words, paragraphs, sceneBreaks } }`.
+///
+/// One header line (document scale), a front-matter line only when there IS
+/// front matter, then one line per chapter — each with its render-derived
+/// number, title, and the three counts plus its section-group size. Every
+/// chapter line carries all three counts (even when 0) so the model can scan a
+/// consistent column and compare chapters at a glance. Pure so it is unit-
+/// testable without mounting, like `formatPassages`.
+export function formatStructuralSignals(report) {
+  if (!report) return ''
+  const totals = report.totals || {}
+  const headerParts = []
+  if (totals.chapters) headerParts.push(pluralize(totals.chapters, 'chapter'))
+  if (totals.sections) headerParts.push(pluralize(totals.sections, 'section'))
+  if (totals.words) headerParts.push(`~${totals.words} words total`)
+  const lines = [
+    headerParts.length
+      ? `Manuscript structure — ${headerParts.join(', ')}:`
+      : 'Manuscript structure:',
+  ]
+
+  const frontMatter = report.frontMatter || {}
+  if (frontMatter.sectionCount) {
+    lines.push(
+      `Front matter: ${frontMatter.words} words, ${pluralize(
+        frontMatter.paragraphs,
+        'paragraph',
+      )}, ${pluralize(frontMatter.sceneBreaks, 'scene break')}`,
+    )
+  }
+
+  for (const chapter of report.chapters || []) {
+    const label = chapter.title
+      ? `Chapter ${chapter.chapterIndex}: ${chapter.title}`
+      : `Chapter ${chapter.chapterIndex}`
+    lines.push(
+      `${label} — ${chapter.words} words, ${pluralize(
+        chapter.paragraphs,
+        'paragraph',
+      )}, ${pluralize(chapter.sceneBreaks, 'scene break')} (${pluralize(
+        chapter.sectionCount,
+        'section',
+      )})`,
+    )
+  }
+
+  return lines.join('\n')
+}
+
+/// `n` + unit, pluralized ("1 chapter", "2 chapters"). Module-private helper
+/// for `formatStructuralSignals` so the breakdown reads naturally rather than
+/// dropping an "s" on every count.
+function pluralize(count, unit) {
+  return `${count} ${unit}${count === 1 ? '' : 's'}`
+}
+
 export function useChat(docRef, llmSettings, nav, editorRef) {
   const messages = ref([])
   const input = ref('')
@@ -224,19 +292,21 @@ export function useChat(docRef, llmSettings, nav, editorRef) {
 
   // The scope that will actually be used for the next send. `scope` is the
   // writer's explicit dropdown choice; `effectiveScope` layers a live editor
-  // selection on top of it: "selection wins, except Whole document and Relevant
-  // passages". A selection upgrades any localized scope to `selection` (so
+  // selection on top of it: "selection wins, except the whole-manuscript
+  // scopes". A selection upgrades any localized scope to `selection` (so
   // highlighting a passage and asking "critique this" targets the passage, not
-  // the whole section); an explicit `document` OR `passages` choice short-
-  // circuits and is always respected — both are whole-manuscript choices (pacing
-  // needs the full dump; `passages` needs to rank against the whole index), so a
-  // stray selection must not derail either. Separating intent (`scope`) from
-  // what's used (`effectiveScope`) means the auto-override never mutates `scope`,
-  // so there's no sticky state — clearing the selection reverts on the next read.
-  // `editorRef.value.hasSelection` is the reactive boolean forwarded through
-  // DocumentRenderer (see editorDisplay.vue).
+  // the whole section); an explicit `document`, `passages`, OR `structure`
+  // choice short-circuits and is always respected — all three are whole-
+  // manuscript choices (pacing needs the full dump; `passages` needs to rank
+  // against the whole index; `structure` needs the complete per-chapter
+  // breakdown), so a stray selection must not derail any of them. Separating
+  // intent (`scope`) from what's used (`effectiveScope`) means the auto-override
+  // never mutates `scope`, so there's no sticky state — clearing the selection
+  // reverts on the next read. `editorRef.value.hasSelection` is the reactive
+  // boolean forwarded through DocumentRenderer (see editorDisplay.vue).
   const effectiveScope = computed(() => {
-    const isWholeManuscriptScope = scope.value === 'document' || scope.value === 'passages'
+    const isWholeManuscriptScope =
+      scope.value === 'document' || scope.value === 'passages' || scope.value === 'structure'
     if (editorRef?.value?.hasSelection && !isWholeManuscriptScope) {
       return 'selection'
     }
@@ -276,11 +346,18 @@ export function useChat(docRef, llmSettings, nav, editorRef) {
     let label
     if (retrievedContext !== null) {
       contextText = retrievedContext
-      label = 'most relevant manuscript passages'
-    } else if (effectiveScope.value === 'passages') {
-      // Readout path: no passages to preview yet → no context message. The real
-      // send always supplies `retrievedContext`, so this only affects the token
-      // estimate, which under-counts by design here.
+      // The pre-fetched context is either the cosine-ranked passages (4.4) or
+      // the structural breakdown (4.6) — label it by which scope fetched it.
+      label =
+        effectiveScope.value === 'structure'
+          ? 'manuscript structure'
+          : 'most relevant manuscript passages'
+    } else if (effectiveScope.value === 'passages' || effectiveScope.value === 'structure') {
+      // Readout path: these scopes pre-fetch their context async in `send`
+      // before this runs, but the sync token readout (3.4) calls
+      // `buildContextMessages` directly and can't await. So with no
+      // `retrievedContext` yet, the context is empty → the readout under-counts
+      // by design (same accepted caveat as the passages scope).
       contextText = ''
       label = ''
     } else {
@@ -315,6 +392,7 @@ export function useChat(docRef, llmSettings, nav, editorRef) {
     if (s === 'selection') return 'selected text'
     if (s === 'document') return 'full manuscript'
     if (s === 'passages') return 'relevant manuscript passages'
+    if (s === 'structure') return 'manuscript structure'
     return 'current section'
   }
 
@@ -354,14 +432,37 @@ export function useChat(docRef, llmSettings, nav, editorRef) {
         input.value = userMessage // restore so they can retry
         return
       }
+    } else if (effectiveScope.value === 'structure') {
+      // Phase 4.6 — "Structure" scope: fetch the per-chapter structural
+      // breakdown BEFORE assembling the request, and thread it in as the
+      // context. Unlike `passages` this needs no embeddings triple — it's a pure
+      // Rust walk over the live document (no network), so the only failure mode
+      // is a poisoned document lock (near-impossible). Still, on failure surface
+      // the error inline and abort without pushing anything, mirroring the
+      // passages branch; `retrievalError` is reused as the "couldn't fetch
+      // context" notice for any async-context scope.
+      busy.value = true
+      input.value = ''
+      try {
+        // No args on the JS side — the command's `State<'_, AppState>` is
+        // auto-injected by Tauri. Pass `{}` so the no-args intent is explicit
+        // (mirrors how the test asserts the call shape).
+        const report = await invoke('structural_signals', {})
+        retrievedContext = formatStructuralSignals(report)
+      } catch (err) {
+        retrievalError.value = typeof err === 'string' ? err : (err?.message || String(err))
+        busy.value = false
+        input.value = userMessage // restore so they can retry
+        return
+      }
     }
 
     // Push the user message + an empty streaming assistant placeholder.
     messages.value.push({ role: 'user', content: userMessage })
     activeAssistantIndex = messages.value.length
     messages.value.push({ role: 'assistant', content: '', streaming: true })
-    // `input` was already cleared for the passages scope (above); clear it for
-    // the other scopes here, on the commit path.
+    // `input` was already cleared for the passages / structure scopes (above);
+    // clear it for the other scopes here, on the commit path.
     input.value = ''
     busy.value = true
 

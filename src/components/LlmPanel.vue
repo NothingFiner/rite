@@ -141,6 +141,13 @@
         <option value="section">Current section</option>
         <option value="selection">Selection</option>
         <option value="document">Whole document</option>
+        <!-- Phase 4.6: send a per-chapter word/paragraph/scene-break breakdown
+             instead of the prose itself — a compact context for structural /
+             pacing-shape questions. A sibling to Whole document: when the full
+             prose fits the window the model can derive the shape itself, so this
+             earns its keep on truncated manuscripts or shape-only questions. Pure
+             Rust, no network, re-fetched per send (no indexing needed). -->
+        <option value="structure">Structure</option>
         <!-- Phase 4.4: embed the question, cosine-rank the manuscript's indexed
              chunks, inject the top-k. A sibling to Whole document for
              document-wide-but-localized-evidence questions (character
@@ -169,10 +176,11 @@
         Context: ~{{ formatTokens(contextTokens) }} / {{ formatTokens(settings.settings.contextLength) }} tokens
       </p>
     </div>
-    <!-- Retrieval error (4.4): shown when a "Relevant passages" send couldn't
-         fetch context (index off, embeddings model not pulled). Cleared by
-         `useChat.send` on the next attempt. `chat.retrievalError` auto-unwraps
-         via the reactive proxy. -->
+    <!-- Retrieval error (4.4 / 4.6): shown when an async-context scope send
+         couldn't fetch context — "Relevant passages" (index off, embeddings
+         model not pulled) or "Structure" (poisoned document lock, near-
+         impossible). Cleared by `useChat.send` on the next attempt.
+         `chat.retrievalError` auto-unwraps via the reactive proxy. -->
     <p v-if="chat.retrievalError" class="llm-retrieval-error">{{ chat.retrievalError }}</p>
     <div class="llm-clear-row">
        <button
