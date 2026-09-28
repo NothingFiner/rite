@@ -4,6 +4,7 @@ use crate::retrieval::StoredChunk;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
+use tauri::AppHandle;
 
 pub struct AppState {
     pub document: Mutex<Document>,
@@ -116,6 +117,50 @@ impl AppState {
     /// default empty document.
     pub fn set_history_baseline(&self, doc: &Document) {
         *self.last_history_state.lock().unwrap() = doc.clone();
+    }
+
+    /// Load the durable vector-index sidecar for `manuscript_path` into the
+    /// in-memory store (Phase 4.7). ALWAYS clears `vectors` + `section_hashes`
+    /// first: `open_document` previously did not touch the store at all, so
+    /// opening doc B would leave doc A's stale vectors keyed against B's section
+    /// ids — clearing makes the no-sidecar case (a manuscript never indexed, or
+    /// indexed under a different path) start empty → a full rebuild, which is
+    /// always correct. If a sidecar exists for this path it repopulates the store;
+    /// the next `reembed_document` pass then reconciles the persisted
+    /// `section_hashes` baseline against the live document (unchanged sections
+    /// keep their vectors, changed sections re-embed). Missing/corrupt sidecar
+    /// → no-op after the clear → full rebuild. `AppHandle` is auto-injected by
+    /// Tauri at the command boundary.
+    pub fn load_index_from_sidecar(&self, app: &AppHandle, manuscript_path: &str) {
+        self.vectors.lock().unwrap().clear();
+        self.section_hashes.lock().unwrap().clear();
+        if let Some(sidecar) = crate::sidecar::load_sidecar(app, manuscript_path) {
+            *self.section_hashes.lock().unwrap() = sidecar.section_hashes;
+            *self.vectors.lock().unwrap() = sidecar.vectors;
+        }
+    }
+
+    /// Snapshot the current vector store + section-hash baseline into the
+    /// sidecar for `manuscript_path` (Phase 4.7). Called at save time (explicit
+    /// save + throttled autosave), NOT on every debounced `reembed_document` —
+    /// checkpointing on save avoids disk thrash during typing while keeping the
+    /// in-memory store hot between saves. `schema_version` is stamped by
+    /// `Sidecar::new`. Vectors are derivable, so a checkpoint failure is
+    /// non-fatal; callers invoke this best-effort (a failed write just means the
+    /// next open rebuilds from scratch).
+    pub fn checkpoint_index_to_sidecar(
+        &self,
+        app: &AppHandle,
+        manuscript_path: &str,
+    ) -> Result<(), String> {
+        let section_hashes = self
+            .section_hashes
+            .lock()
+            .map_err(|e| e.to_string())?
+            .clone();
+        let vectors = self.vectors.lock().map_err(|e| e.to_string())?.clone();
+        let sidecar = crate::sidecar::Sidecar::new(section_hashes, vectors);
+        crate::sidecar::write_sidecar(app, manuscript_path, &sidecar)
     }
 
     /// Replace the embedded version history (used on open, after reading the

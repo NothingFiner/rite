@@ -8,6 +8,7 @@ mod export_text;
 mod history;
 mod llm;
 mod retrieval;
+mod sidecar;
 mod state;
 mod structure;
 

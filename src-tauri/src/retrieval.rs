@@ -16,7 +16,7 @@
 use crate::document::{Document, Paragraph, Section, SectionType};
 use crate::llm::{build_headers, normalize_base};
 use crate::state::AppState;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
@@ -53,7 +53,7 @@ const TARGET_CHUNK_WORDS: u32 = 256;
 /// A chunk never spans two sections: the buffer is flushed at every section
 /// boundary, so `section_id` and `chapter_index` are unambiguous for the whole
 /// chunk.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Chunk {
     pub id: String,
@@ -352,9 +352,12 @@ pub async fn embed_texts(
 
 /// One entry in the in-memory vector store: a chunk paired with the vector
 /// `embed_texts` produced for its text. Stored flat in `AppState::vectors` for
-/// 4.4's linear cosine scan. Not `Serialize` — 4.4 builds its own response from
-/// the `Chunk` (which is `Serialize`); the raw vector never crosses to JS.
-#[derive(Clone)]
+/// 4.4's linear cosine scan. 4.4 builds its own response from the `Chunk`
+/// (which is `Serialize`); the raw vector never crosses to JS. Phase 4.7 adds
+/// `Serialize`/`Deserialize` so the store can round-trip through the durable
+/// sidecar — the vector is deserialized back into Rust state on open, never sent
+/// to the webview (the response path still builds from `Chunk` alone).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StoredChunk {
     pub chunk: Chunk,
     // 4.4's `retrieve_passages` cosine-ranks these against the query vector.
