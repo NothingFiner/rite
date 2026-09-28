@@ -24,6 +24,27 @@
         </template>
         <template v-else>Version history</template>
       </span>
+      <!-- Owns open/close of the version-list left drawer (Scheme A: the Toolbar
+           History tab is view-switch-only; this in-header toggle is the single
+           control for the list). `versionsOpen` mirrors App.vue's
+           `leftDrawerOpen && leftDrawerMode === 'history'` so the button reflects
+           the drawer's real state, including after Escape closes it. -->
+      <button
+        class="history-versions-toggle"
+        :class="{ active: versionsOpen }"
+        :title="versionsOpen ? 'Hide version list' : 'Show version list'"
+        @click="$emit('toggle-versions')"
+      >
+        <svg width="14" height="14" viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="96" y1="64" x2="208" y2="64" />
+          <line x1="96" y1="128" x2="208" y2="128" />
+          <line x1="96" y1="192" x2="208" y2="192" />
+          <circle cx="56" cy="64" r="10" fill="currentColor" stroke="none" />
+          <circle cx="56" cy="128" r="10" fill="currentColor" stroke="none" />
+          <circle cx="56" cy="192" r="10" fill="currentColor" stroke="none" />
+        </svg>
+        Versions
+      </button>
     </div>
 
     <div class="history-view-canvas">
@@ -55,9 +76,13 @@ import { formatHistoryTimestamp } from '../composables/useVersionHistory.js'
 defineProps({
   // The reactive useVersionHistory instance from App.vue.
   history: { type: Object, required: true },
+  // Whether the version-list left drawer is currently open. Drives the
+  // Versions toggle's active state + title. Passed from App.vue as
+  // `leftDrawerOpen && leftDrawerMode === 'history'`.
+  versionsOpen: { type: Boolean, default: false },
 })
 
-defineEmits(['back'])
+defineEmits(['back', 'toggle-versions'])
 </script>
 
 <style scoped>
@@ -101,6 +126,36 @@ defineEmits(['back'])
   font-size: 13px;
   color: var(--text-secondary, #a0a0b0);
   font-variant-numeric: tabular-nums;
+}
+
+/* The Versions toggle sits at the right end of the header (margin-left:auto in
+   the flex row). Styled like .history-back so the two header controls read as a
+   pair; .active marks the list-open state in the accent color. */
+.history-versions-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  margin-left: auto;
+  padding: 0 10px;
+  border-radius: 5px;
+  border: 1px solid var(--bg-glass-border, rgba(255, 255, 255, 0.15));
+  background: transparent;
+  color: var(--text-secondary, #a0a0b0);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.history-versions-toggle:hover {
+  background: var(--hover-bg-strong, rgba(255, 255, 255, 0.1));
+  color: var(--text-primary, #f0f0f5);
+}
+
+.history-versions-toggle.active {
+  background: var(--accent-bg, rgba(79, 142, 247, 0.25));
+  color: var(--accent, #4f8ef7);
+  border-color: var(--accent, #4f8ef7);
 }
 
 .history-view-canvas {

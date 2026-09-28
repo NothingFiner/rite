@@ -78,7 +78,9 @@
         <HistoryView
           v-if="viewMode === 'history'"
           :history="history"
+          :versions-open="leftDrawerOpen && leftDrawerMode === 'history'"
           @back="onSetMode('editor')"
+          @toggle-versions="onToggleVersions"
         />
         <DocumentRenderer
           ref="editorRef"
@@ -180,6 +182,7 @@ import { useSummaries } from './composables/useSummaries.js'
 import { useWordCount } from './composables/useWordCount.js'
 import { usePagination } from './composables/usePagination.js'
 import { useManuscriptFormat } from './composables/useManuscriptFormat.js'
+import { isDrawerModeAllowedIn } from './constants/drawerVisibility.js'
 import DocumentRenderer from './components/DocumentRenderer.vue'
 import Toolbar from './components/Toolbar.vue'
 import StatusBar from './components/StatusBar.vue'
@@ -364,16 +367,26 @@ function onActivitySelect(mode) {
 function onSetMode(mode) {
   if (mode === 'history') {
     if (viewMode.value === 'history') {
-      leftDrawerOpen.value = !leftDrawerOpen.value
-    } else {
-      viewMode.value = 'history'
-      leftDrawerMode.value = 'history'
-      leftDrawerOpen.value = true
-      history.loadHistory()
+      // Already in the History view: the tab is view-switch-only (Scheme A).
+      // The version-list drawer is toggled by the in-header Versions button
+      // (onToggleVersions) and closed by Escape — not by re-clicking the tab.
+      return
     }
+    viewMode.value = 'history'
+    leftDrawerMode.value = 'history'
+    leftDrawerOpen.value = true
+    history.loadHistory()
     return
   }
-  if (viewMode.value === 'history' && leftDrawerMode.value === 'history') {
+  // Close an open drawer whose button vanishes in the target view (Scheme A:
+  // ActivityBar buttons are view-aware via isDrawerModeAllowedIn). Without
+  // this, switching Editor→Manuscript with Text Options open would leave the
+  // drawer open with no handle to close it. 'history' is never in the allowed
+  // map, so this also closes the version list when leaving the History view —
+  // replacing the old history-specific close. leftDrawerMode is left as-is:
+  // harmless once the drawer is closed, and the button reappears on return to
+  // a view where it applies.
+  if (leftDrawerOpen.value && !isDrawerModeAllowedIn(leftDrawerMode.value, mode)) {
     leftDrawerOpen.value = false
   }
 
@@ -399,6 +412,20 @@ function onSetMode(mode) {
     nextTick(() => {
       editorRef.value?.scrollToPage?.(pendingPage)
     })
+  }
+}
+
+// Toggle the version-list drawer from the History view's in-header Versions
+// button (Scheme A). Mirrors onActivitySelect's logic for a hypothetical
+// 'history' ActivityBar item: if the list is the current drawer, flip it; if
+// another drawer displaced it (e.g. General Options opened from History),
+// switch back to the version list + open it.
+function onToggleVersions() {
+  if (leftDrawerMode.value === 'history') {
+    leftDrawerOpen.value = !leftDrawerOpen.value
+  } else {
+    leftDrawerMode.value = 'history'
+    leftDrawerOpen.value = true
   }
 }
 

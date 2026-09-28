@@ -35,14 +35,37 @@ test.describe('Rite App', () => {
   })
 
   test('can open left drawer', async ({ page }) => {
-    await page.click('button[title="Open Navigation"]')
+    // The ActivityBar's Sections button (title="Sections") opens the chapters
+    // left drawer. (Was `button[title="Open Navigation"]` — a stale selector from
+    // before the ActivityBar rename.)
+    await page.click('button[title="Sections"]')
     const drawer = page.locator('.drawer.left')
     await expect(drawer).toHaveClass(/open/)
   })
 
   test('can open right drawer', async ({ page }) => {
-    await page.click('button[title="Open Info"]')
+    // The Toolbar's Assistant toggle (title="Open Assistant" when closed) opens
+    // the right drawer. (Was `button[title="Open Info"]` — a stale selector.)
+    await page.click('button[title="Open Assistant"]')
     const drawer = page.locator('.drawer.right')
+    await expect(drawer).toHaveClass(/open/)
+  })
+
+  test('can toggle the history version-list drawer', async ({ page }) => {
+    // The History view tab switches to the History view AND opens the version
+    // list on first entry (Scheme A: the tab is view-switch-only thereafter).
+    await page.click('button.view-tab:has-text("History")')
+    await expect(page.locator('.history-view')).toBeVisible()
+    const drawer = page.locator('.drawer.left')
+    await expect(drawer).toHaveClass(/open/)
+
+    // The in-header Versions button (not the tab) owns open/close of the list.
+    const versionsToggle = page.locator('.history-versions-toggle')
+    await versionsToggle.click()
+    await expect(drawer).not.toHaveClass(/open/)
+
+    // ...and toggles it open again.
+    await versionsToggle.click()
     await expect(drawer).toHaveClass(/open/)
   })
 
