@@ -54,7 +54,8 @@
 </template>
 
 <script setup>
-import { h, Transition, TransitionGroup } from 'vue'
+import { computed, h, Transition, TransitionGroup } from 'vue'
+import { isDrawerModeAllowedIn } from '../constants/drawerVisibility.js'
 
 const props = defineProps({
   activeId: { type: String, default: '' },
@@ -114,14 +115,23 @@ const ListIcon = () => h('svg', {
         })
 ])
 
-const items = [
-  // The id stays 'chapters' (compared in App.vue's drawer-open conditions and
-  // here in useKeyboardShortcuts' Cmd+Enter handler); only the user-facing
-  // label changes to reflect the flat-sections model.
+// Every drawer button, in rail order. Visibility per view is governed by
+// `isDrawerModeAllowedIn` (constants/drawerVisibility.js) — the single source
+// of truth shared with App.vue's close-on-switch — so a button that doesn't
+// apply to the current view is hidden rather than left to act nonsensically
+// (e.g. Text Options over the History view). The 'chapters' id stays a valid
+// leftDrawerMode value in every view it appears in (useKeyboardShortcuts' Cmd+Enter
+// handler writes the literal 'chapters' directly, and App.vue's drawer-open
+// conditions compare against it); only the user-facing label reflects the
+// flat-sections model.
+const ALL_ITEMS = [
   { id: 'chapters', label: 'Sections', icon: BookIcon },
   { id: 'general-options', label: 'General Options', icon: ListIcon },
   { id: 'text-options', label: 'Text Options', icon: CogIcon },
 ]
+const items = computed(() =>
+  ALL_ITEMS.filter((item) => isDrawerModeAllowedIn(item.id, props.viewMode)),
+)
 
 function onClick(id) {
   emit('select', id)
