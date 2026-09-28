@@ -22,6 +22,7 @@
 
 use crate::history::atomic_write;
 use crate::retrieval::StoredChunk;
+use crate::summary::SectionSummary;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -36,14 +37,16 @@ use tauri::AppHandle;
 /// rejected (→ graceful full rebuild) rather than guessed at. Bump this only
 /// when the on-disk shape changes; pair it with a migration arm in
 /// `migrate_sidecar`.
-pub const CURRENT_SIDECAR_SCHEMA_VERSION: u32 = 1;
+pub const CURRENT_SIDECAR_SCHEMA_VERSION: u32 = 2;
 
 /// The on-disk shape of a manuscript's vector index: the section-hash baseline
 /// (`section_id → hash of the section's concatenated paragraph text`, the
 /// differential signal `reembed_document` diffs against) + the vectors
-/// themselves. `camelCase` on the wire to match `Chunk`/`ReembedReport`. Both
-/// payload fields are `#[serde(default)]` so a truncated-but-parseable file
-/// degrades to an empty index rather than failing to load.
+/// themselves, plus Phase 4.8's per-section `summaries` (`section_id →
+/// SectionSummary`). `camelCase` on the wire to match `Chunk`/`ReembedReport`.
+/// All payload fields are `#[serde(default)]` so a truncated-but-parseable file
+/// degrades to an empty index rather than failing to load — and so a 4.7-written
+/// sidecar (no `summaries` field) still loads in 4.8 with empty summaries.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Sidecar {
@@ -53,6 +56,12 @@ pub struct Sidecar {
     pub section_hashes: HashMap<String, u64>,
     #[serde(default)]
     pub vectors: Vec<StoredChunk>,
+    /// Phase 4.8 semantic summaries, keyed by `section_id`. `#[serde(default)]`
+    /// so a 4.7 sidecar (schema v1, no summaries) loads with an empty map; the
+    /// `1 => 2` migration in `migrate_sidecar` stamps the version after which
+    /// this field is always present on write.
+    #[serde(default)]
+    pub summaries: HashMap<String, SectionSummary>,
 }
 
 impl Sidecar {
@@ -60,11 +69,16 @@ impl Sidecar {
     /// the current schema version. (`write` is the only authority that needs the
     /// version; constructing it here keeps the call site a one-liner and mirrors
     /// how `build_rite_file` carries a neutral version for the writer to stamp.)
-    pub fn new(section_hashes: HashMap<String, u64>, vectors: Vec<StoredChunk>) -> Self {
+    pub fn new(
+        section_hashes: HashMap<String, u64>,
+        vectors: Vec<StoredChunk>,
+        summaries: HashMap<String, SectionSummary>,
+    ) -> Self {
         Self {
             schema_version: CURRENT_SIDECAR_SCHEMA_VERSION,
             section_hashes,
             vectors,
+            summaries,
         }
     }
 }
@@ -117,11 +131,19 @@ pub fn parse_sidecar(json: &str) -> Result<Sidecar, String> {
 }
 
 /// Apply any forward migrations a loaded `Sidecar` needs before it is used.
-/// Structured like `history::migrate_rite_file` so Phase 4.8 can add a `1 => 2`
-/// arm (adding the `summaries` field). No migrations exist yet.
-pub fn migrate_sidecar(sidecar: Sidecar) -> Result<Sidecar, String> {
+/// Structured like `history::migrate_rite_file`. Phase 4.8 adds the `1 => 2`
+/// arm: a 4.7-written sidecar has no `summaries` field, but `summaries` is
+/// `#[serde(default)]` so it already deserializes to an empty map — the
+/// migration only stamps the version to 2 so the next write carries the field.
+/// `2` is current → no-op.
+pub fn migrate_sidecar(mut sidecar: Sidecar) -> Result<Sidecar, String> {
     match sidecar.schema_version {
-        1 => Ok(sidecar),
+        1 => {
+            sidecar.schema_version = 2;
+            // summaries already defaults to empty via serde; nothing to fill.
+            Ok(sidecar)
+        }
+        2 => Ok(sidecar),
         v if v > CURRENT_SIDECAR_SCHEMA_VERSION => Err(format!(
             "unsupported sidecar schema version {}",
             v
@@ -178,6 +200,7 @@ pub fn write_sidecar(
 mod tests {
     use super::*;
     use crate::retrieval::Chunk;
+    use crate::summary::SectionSummary;
 
     /// Build a `StoredChunk` with a couple of vector dims for round-trip tests.
     fn stored_chunk(section_id: &str, ordinal: usize, text: &str, vector: &[f32]) -> StoredChunk {
@@ -215,11 +238,20 @@ mod tests {
         assert_eq!(a.extension().unwrap(), "json");
     }
 
+    fn make_summary(id: &str, hash: u64, summary: &str) -> SectionSummary {
+        SectionSummary {
+            section_id: id.to_string(),
+            section_hash: hash,
+            summary: summary.to_string(),
+        }
+    }
+
     #[test]
     fn sidecar_round_trips_vectors_and_hashes() {
         let sidecar = Sidecar::new(
             HashMap::from([("s1".to_string(), 111), ("s2".to_string(), 222)]),
             vec![stored_chunk("s1", 0, "hello world", &[0.1, 0.2, 0.3])],
+            HashMap::new(),
         );
         let json = serde_json::to_string_pretty(&sidecar).unwrap();
         let back = parse_sidecar(&json).unwrap();
@@ -228,6 +260,52 @@ mod tests {
         assert_eq!(back.vectors.len(), 1);
         assert_eq!(back.vectors[0].vector, vec![0.1, 0.2, 0.3]);
         assert_eq!(back.section_hashes.get("s2"), Some(&222));
+    }
+
+    #[test]
+    fn sidecar_round_trips_summaries() {
+        // Summaries persist alongside vectors + hashes and come back equal.
+        let summaries = HashMap::from([
+            ("s1".to_string(), make_summary("s1", 111, "Chapter one recap.")),
+            ("s2".to_string(), make_summary("s2", 222, "Chapter two recap.")),
+        ]);
+        let sidecar = Sidecar::new(HashMap::new(), Vec::new(), summaries.clone());
+        let json = serde_json::to_string_pretty(&sidecar).unwrap();
+        let back = parse_sidecar(&json).unwrap();
+        assert_eq!(back.summaries, summaries);
+        assert_eq!(back.summaries.get("s1").unwrap().summary, "Chapter one recap.");
+        assert_eq!(back.summaries.get("s2").unwrap().section_hash, 222);
+    }
+
+    #[test]
+    fn parse_sidecar_defaults_missing_summaries_for_a_v1_sidecar() {
+        // A 4.7-written sidecar (schema v1) has no `summaries` field. It must
+        // still load with an empty summaries map, and migrate up to v2.
+        let json =
+            "{\"schemaVersion\":1,\"sectionHashes\":{\"s1\":111},\"vectors\":[]}".to_string();
+        let back = parse_sidecar(&json).unwrap();
+        assert_eq!(back.schema_version, 1);
+        assert!(back.summaries.is_empty());
+        // migrate stamps it to v2 (summaries already empty via serde default).
+        let migrated = migrate_sidecar(back).unwrap();
+        assert_eq!(migrated.schema_version, 2);
+        assert!(migrated.summaries.is_empty());
+    }
+
+    #[test]
+    fn migrate_sidecar_v1_to_v2_preserves_payloads() {
+        let summaries = HashMap::from([("s1".to_string(), make_summary("s1", 9, "recap"))]);
+        let mut v1 = Sidecar::new(
+            HashMap::from([("s1".to_string(), 111)]),
+            vec![stored_chunk("s1", 0, "text", &[0.1])],
+            summaries.clone(),
+        );
+        v1.schema_version = 1; // pretend it was written by 4.7
+        let migrated = migrate_sidecar(v1.clone()).unwrap();
+        assert_eq!(migrated.schema_version, 2);
+        assert_eq!(migrated.section_hashes, v1.section_hashes);
+        assert_eq!(migrated.vectors, v1.vectors);
+        assert_eq!(migrated.summaries, summaries);
     }
 
     #[test]
@@ -306,6 +384,7 @@ mod tests {
                 stored_chunk("s1", 0, "first chunk", &[0.5, -0.5]),
                 stored_chunk("s1", 1, "second chunk", &[1.0, 0.0]),
             ],
+            HashMap::new(),
         );
         write_sidecar_at(&path, &sidecar).unwrap();
         let back = load_sidecar_at(&path).unwrap();
@@ -316,7 +395,7 @@ mod tests {
 
     #[test]
     fn migrate_sidecar_accepts_current_rejects_future() {
-        let current = Sidecar::new(HashMap::new(), Vec::new());
+        let current = Sidecar::new(HashMap::new(), Vec::new(), HashMap::new());
         assert!(migrate_sidecar(current.clone()).is_ok());
 
         let mut future = current;

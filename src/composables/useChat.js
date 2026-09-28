@@ -276,6 +276,33 @@ function pluralize(count, unit) {
   return `${count} ${unit}${count === 1 ? '' : 's'}`
 }
 
+/// Format retrieved section summaries (from the Rust `retrieve_summaries`
+/// command) into a compact plain-text context block for the model — the
+/// "Summaries" Feedback Target (Phase 4.8). Each `SummaryEntry` comes back
+/// camelCase: `{ sectionId, chapterIndex, title, sectionType, summary, stale }`.
+/// `chapterIndex` is `null` for front matter before any Chapter (Rust `None`),
+/// a 1-based number for a Chapter, and inherited from the nearest preceding
+/// Chapter for a `Section` under it — so a `Section` labels as "Chapter N" too
+/// (mirroring `formatPassages`' location label). One header line (document
+/// scale), then one line per summarized section in manuscript order:
+/// `Chapter 1: The Door — {summary}`. A `stale` entry (the section's text
+/// changed since its summary was generated) is marked `(stale)` so the model
+/// knows that recap may be outdated rather than treat it as ground truth. Pure
+/// so it is unit-testable without mounting, like `formatPassages`/
+/// `formatStructuralSignals`. Null/empty → `''` (the empty-store case is an
+/// error caught in `send`, so this only sees a real list).
+export function formatSummaries(entries) {
+  if (!entries || entries.length === 0) return ''
+  const lines = [`Manuscript summaries — ${pluralize(entries.length, 'section')}:`]
+  for (const entry of entries) {
+    const location = entry.chapterIndex ? `Chapter ${entry.chapterIndex}` : 'Front matter'
+    const title = entry.title || 'Untitled'
+    const stale = entry.stale ? ' (stale)' : ''
+    lines.push(`${location}: ${title}${stale} — ${entry.summary}`)
+  }
+  return lines.join('\n')
+}
+
 export function useChat(docRef, llmSettings, nav, editorRef) {
   const messages = ref([])
   const input = ref('')
@@ -283,11 +310,12 @@ export function useChat(docRef, llmSettings, nav, editorRef) {
   const busy = ref(false)
   const selectedRoleBody = ref('') // composed system prompt from the role selector
   const selectedRoleName = ref('')
-  // The error from a failed `retrieve_passages` call (Phase 4.4), shown inline by
-  // the panel when the "Relevant passages" scope can't fetch context — e.g.
-  // manuscript indexing is off, or the embeddings model isn't pulled. Cleared at
-  // the start of each send. Not a toast: keeps this composable Pinia-free and
-  // unit-testable without a store setup, matching how `busy`/`input` are exposed.
+  // The error from a failed context fetch (Phase 4.4 passages / 4.6 structure /
+  // 4.8 summaries), shown inline by the panel when the active scope can't fetch
+  // its context — e.g. manuscript indexing is off, the embeddings model isn't
+  // pulled, or no summaries have been generated yet. Cleared at the start of
+  // each send. Not a toast: keeps this composable Pinia-free and unit-testable
+  // without a store setup, matching how `busy`/`input` are exposed.
   const retrievalError = ref('')
 
   // The scope that will actually be used for the next send. `scope` is the
@@ -295,18 +323,22 @@ export function useChat(docRef, llmSettings, nav, editorRef) {
   // selection on top of it: "selection wins, except the whole-manuscript
   // scopes". A selection upgrades any localized scope to `selection` (so
   // highlighting a passage and asking "critique this" targets the passage, not
-  // the whole section); an explicit `document`, `passages`, OR `structure`
-  // choice short-circuits and is always respected — all three are whole-
-  // manuscript choices (pacing needs the full dump; `passages` needs to rank
-  // against the whole index; `structure` needs the complete per-chapter
-  // breakdown), so a stray selection must not derail any of them. Separating
-  // intent (`scope`) from what's used (`effectiveScope`) means the auto-override
-  // never mutates `scope`, so there's no sticky state — clearing the selection
-  // reverts on the next read. `editorRef.value.hasSelection` is the reactive
-  // boolean forwarded through DocumentRenderer (see editorDisplay.vue).
+  // the whole section); an explicit `document`, `passages`, `structure`, OR
+  // `summaries` choice short-circuits and is always respected — all four are
+  // whole-manuscript choices (pacing needs the full dump; `passages` needs to
+  // rank against the whole index; `structure` needs the complete per-chapter
+  // breakdown; `summaries` needs every section's recap to trace the arc), so a
+  // stray selection must not derail any of them. Separating intent (`scope`)
+  // from what's used (`effectiveScope`) means the auto-override never mutates
+  // `scope`, so there's no sticky state — clearing the selection reverts on the
+  // next read. `editorRef.value.hasSelection` is the reactive boolean forwarded
+  // through DocumentRenderer (see editorDisplay.vue).
   const effectiveScope = computed(() => {
     const isWholeManuscriptScope =
-      scope.value === 'document' || scope.value === 'passages' || scope.value === 'structure'
+      scope.value === 'document' ||
+      scope.value === 'passages' ||
+      scope.value === 'structure' ||
+      scope.value === 'summaries'
     if (editorRef?.value?.hasSelection && !isWholeManuscriptScope) {
       return 'selection'
     }
@@ -346,13 +378,20 @@ export function useChat(docRef, llmSettings, nav, editorRef) {
     let label
     if (retrievedContext !== null) {
       contextText = retrievedContext
-      // The pre-fetched context is either the cosine-ranked passages (4.4) or
-      // the structural breakdown (4.6) — label it by which scope fetched it.
+      // The pre-fetched context is the cosine-ranked passages (4.4), the
+      // structural breakdown (4.6), or the section summaries (4.8) — label it
+      // by which scope fetched it.
       label =
         effectiveScope.value === 'structure'
           ? 'manuscript structure'
-          : 'most relevant manuscript passages'
-    } else if (effectiveScope.value === 'passages' || effectiveScope.value === 'structure') {
+          : effectiveScope.value === 'summaries'
+            ? 'section summaries'
+            : 'most relevant manuscript passages'
+    } else if (
+      effectiveScope.value === 'passages' ||
+      effectiveScope.value === 'structure' ||
+      effectiveScope.value === 'summaries'
+    ) {
       // Readout path: these scopes pre-fetch their context async in `send`
       // before this runs, but the sync token readout (3.4) calls
       // `buildContextMessages` directly and can't await. So with no
@@ -393,6 +432,7 @@ export function useChat(docRef, llmSettings, nav, editorRef) {
     if (s === 'document') return 'full manuscript'
     if (s === 'passages') return 'relevant manuscript passages'
     if (s === 'structure') return 'manuscript structure'
+    if (s === 'summaries') return 'section summaries'
     return 'current section'
   }
 
@@ -449,6 +489,27 @@ export function useChat(docRef, llmSettings, nav, editorRef) {
         // (mirrors how the test asserts the call shape).
         const report = await invoke('structural_signals', {})
         retrievedContext = formatStructuralSignals(report)
+      } catch (err) {
+        retrievalError.value = typeof err === 'string' ? err : (err?.message || String(err))
+        busy.value = false
+        input.value = userMessage // restore so they can retry
+        return
+      }
+    } else if (effectiveScope.value === 'summaries') {
+      // Phase 4.8 — "Summaries" scope: fetch the stored per-section summaries
+      // BEFORE assembling the request, and thread them in as the context. Like
+      // `structure` this is a pure Rust read (no network) — the summaries were
+      // generated ahead of time by `useSummaries.generateSummaries`; here we
+      // just read them back. An empty store is a clear error (not a silent
+      // empty context): the writer must generate summaries first. On failure
+      // surface the error inline and abort without pushing anything, mirroring
+      // the passages/structure branches; `retrievalError` carries the
+      // "generate summaries first" message.
+      busy.value = true
+      input.value = ''
+      try {
+        const entries = await invoke('retrieve_summaries', {})
+        retrievedContext = formatSummaries(entries)
       } catch (err) {
         retrievalError.value = typeof err === 'string' ? err : (err?.message || String(err))
         busy.value = false

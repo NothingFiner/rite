@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { documentToText, useChat, PRESETS, matchSlashCommands, estimateTokens, estimateContextTokens, formatPassages, formatStructuralSignals } from './useChat.js'
+import { documentToText, useChat, PRESETS, matchSlashCommands, estimateTokens, estimateContextTokens, formatPassages, formatStructuralSignals, formatSummaries } from './useChat.js'
 
 // Mock the Tauri bridge: `invoke` for commands, `listen` for streaming events.
 // `listen` resolves to an unlisten function; we capture the event handlers so
@@ -271,6 +271,67 @@ describe('formatStructuralSignals', () => {
   })
 })
 
+// --- formatSummaries (4.8) --------------------------------------------------
+//
+// Pure helper backing the "Summaries" context message. SummaryEntry objects come
+// back camelCase from `retrieve_summaries`; the formatter renders a compact
+// per-section recap block the model can scan to trace the arc.
+
+describe('formatSummaries', () => {
+  it('renders the header and one line per summarized section', () => {
+    const entries = [
+      { sectionId: 's1', chapterIndex: 1, title: 'The Arrival', sectionType: 'chapter', summary: 'A stranger arrives.', stale: false },
+      { sectionId: 's2', chapterIndex: 2, title: 'The Bargain', sectionType: 'chapter', summary: 'A deal is struck.', stale: false },
+    ]
+    const lines = formatSummaries(entries).split('\n')
+    expect(lines[0]).toBe('Manuscript summaries — 2 sections:')
+    expect(lines[1]).toBe('Chapter 1: The Arrival — A stranger arrives.')
+    expect(lines[2]).toBe('Chapter 2: The Bargain — A deal is struck.')
+  })
+
+  it('labels a front-matter section (chapterIndex null) as Front matter', () => {
+    const entries = [
+      { sectionId: 'front', chapterIndex: null, title: 'Epigraph', sectionType: 'section', summary: 'An epigram.', stale: false },
+    ]
+    expect(formatSummaries(entries).split('\n')[1]).toBe('Front matter: Epigraph — An epigram.')
+  })
+
+  it('marks a stale entry with (stale) on the header line', () => {
+    const entries = [
+      { sectionId: 's1', chapterIndex: 1, title: 'The Arrival', sectionType: 'chapter', summary: 'A stranger arrives.', stale: false },
+      { sectionId: 's2', chapterIndex: 2, title: 'The Bargain', sectionType: 'chapter', summary: 'A deal is struck.', stale: true },
+    ]
+    const lines = formatSummaries(entries).split('\n')
+    // The fresh entry has no marker; the stale one is annotated.
+    expect(lines[1]).toBe('Chapter 1: The Arrival — A stranger arrives.')
+    expect(lines[2]).toBe('Chapter 2: The Bargain (stale) — A deal is struck.')
+  })
+
+  it('pluralizes the section count (1 section / 2 sections)', () => {
+    const one = [
+      { sectionId: 's1', chapterIndex: 1, title: 'Solo', sectionType: 'chapter', summary: 'r', stale: false },
+    ]
+    expect(formatSummaries(one).split('\n')[0]).toBe('Manuscript summaries — 1 section:')
+    const two = [
+      { sectionId: 's1', chapterIndex: 1, title: 'A', sectionType: 'chapter', summary: 'r', stale: false },
+      { sectionId: 's2', chapterIndex: 2, title: 'B', sectionType: 'chapter', summary: 'r', stale: false },
+    ]
+    expect(formatSummaries(two).split('\n')[0]).toBe('Manuscript summaries — 2 sections:')
+  })
+
+  it('falls back to Untitled for an empty title', () => {
+    const entries = [
+      { sectionId: 's1', chapterIndex: 1, title: '', sectionType: 'chapter', summary: 'recap', stale: false },
+    ]
+    expect(formatSummaries(entries).split('\n')[1]).toBe('Chapter 1: Untitled — recap')
+  })
+
+  it('returns empty for no entries', () => {
+    expect(formatSummaries([])).toBe('')
+    expect(formatSummaries(null)).toBe('')
+  })
+})
+
 // --- matchSlashCommands -----------------------------------------------------
 
 describe('matchSlashCommands', () => {
@@ -487,6 +548,39 @@ describe('useChat — buildContextMessages', () => {
     ])
   })
 
+  it('uses supplied retrieved context with the summaries label (4.8)', () => {
+    // The "Summaries" scope pre-fetches the recaps in `send` and threads them in
+    // as the second arg; the context message must use the summaries label + that
+    // text (NOT documentToText).
+    const doc = sampleDocument()
+    const chat = useChat(docRef(doc), makeLlmSettings(), makeNav('s1'), { value: null })
+    chat.setRole({ name: 'Critic', body: 'sys' })
+    chat.scope.value = 'summaries'
+    const messages = chat.buildContextMessages(
+      'trace the arc',
+      'Manuscript summaries — 1 section:\nChapter 1: The Arrival — A stranger arrives.',
+    )
+    expect(messages[1].role).toBe('user')
+    expect(messages[1].content).toContain('section summaries')
+    expect(messages[1].content).toContain('Chapter 1: The Arrival')
+    // Must NOT fall back to the section/document body.
+    expect(messages[1].content).not.toContain('The door opened.')
+  })
+
+  it('omits the context message for the summaries scope when no retrieved context', () => {
+    // Readout path: like passages/structure, summaries can't be previewed
+    // synchronously, so no context message is emitted (under-counts by design).
+    const doc = sampleDocument()
+    const chat = useChat(docRef(doc), makeLlmSettings(), makeNav(), { value: null })
+    chat.setRole({ name: 'Critic', body: 'sys' })
+    chat.scope.value = 'summaries'
+    const messages = chat.buildContextMessages('question')
+    expect(messages).toEqual([
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'question' },
+    ])
+  })
+
   it('omits the context message when the doc has no sections', () => {
     const doc = makeDocument([])
     const chat = useChat(docRef(doc), makeLlmSettings(), makeNav('s1'), { value: null })
@@ -614,6 +708,22 @@ describe('useChat — effectiveScope (selection-default)', () => {
     chat.setRole({ name: 'Critic', body: 'sys' })
     chat.scope.value = 'structure'
     expect(chat.effectiveScope.value).toBe('structure')
+  })
+
+  it('respects an explicit Summaries scope even with a selection', () => {
+    // Like Whole document / Relevant passages / Structure, "Summaries" is a
+    // whole-manuscript choice — a stray selection must NOT override it (the
+    // recaps cover every section, not a highlighted snippet).
+    const doc = sampleDocument()
+    const chat = useChat(
+      docRef(doc),
+      makeLlmSettings(),
+      makeNav(),
+      makeEditorRef({ hasSelection: true, selectionText: 'the chosen passage' }),
+    )
+    chat.setRole({ name: 'Critic', body: 'sys' })
+    chat.scope.value = 'summaries'
+    expect(chat.effectiveScope.value).toBe('summaries')
   })
 })
 
@@ -885,6 +995,99 @@ describe('useChat — Structure send', () => {
     invoke.mockImplementation(async (cmd) => {
       if (cmd === 'structural_signals') {
         return { chapters: [], frontMatter: { words: 0, paragraphs: 0, sceneBreaks: 0, sectionCount: 0 }, totals: { chapters: 0, sections: 0, words: 0, paragraphs: 0, sceneBreaks: 0 } }
+      }
+      return 'full text'
+    })
+
+    chat.input.value = 'question'
+    await chat.send()
+    expect(chat.retrievalError.value).toBe('')
+  })
+})
+
+// --- Summaries scope (4.8) ---------------------------------------------------
+//
+// The "Summaries" scope fetches the stored per-section recaps via
+// `retrieve_summaries` BEFORE assembling the request (no embeddings triple —
+// it's a pure Rust read of the sidecar-backed store), then threads them into
+// `buildContextMessages`. An empty store is an error (not a silent empty
+// context): the writer must generate summaries first. These tests drive the two
+// invoke calls (retrieve_summaries + llm_chat_stream) with a per-command mock.
+
+describe('useChat — Summaries send', () => {
+  it('fetches the summaries and injects them as the context message', async () => {
+    const doc = sampleDocument()
+    const chat = useChat(docRef(doc), makeLlmSettings(), makeNav(), { value: null })
+    chat.setRole({ name: 'Critic', body: 'sys' })
+    chat.scope.value = 'summaries'
+
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'retrieve_summaries') {
+        return [
+          { sectionId: 's1', chapterIndex: 1, title: 'The Arrival', sectionType: 'chapter', summary: 'A stranger arrives.', stale: false },
+          { sectionId: 's2', chapterIndex: 1, title: 'Notes', sectionType: 'section', summary: 'A quiet scene.', stale: false },
+        ]
+      }
+      return 'full text'
+    })
+
+    chat.input.value = 'Trace the arc of the book.'
+    await chat.send()
+
+    // retrieve_summaries was called with NO args (the store + document are read
+    // from AppState server-side, not passed in).
+    const retrieveCall = invoke.mock.calls.find((c) => c[0] === 'retrieve_summaries')
+    expect(retrieveCall[1]).toEqual({})
+    // The request shipped to the model includes the summaries context message.
+    const streamCall = invoke.mock.calls.find((c) => c[0] === 'llm_chat_stream')
+    const contextMessage = streamCall[1].request.messages.find((m) =>
+      m.content.includes('section summaries'),
+    )
+    expect(contextMessage).toBeTruthy()
+    expect(contextMessage.content).toContain('Chapter 1: The Arrival')
+    expect(contextMessage.content).toContain('A stranger arrives.')
+    // The user's question is still the final message.
+    const lastMessage = streamCall[1].request.messages[streamCall[1].request.messages.length - 1]
+    expect(lastMessage.content).toBe('Trace the arc of the book.')
+    // Error is clear on success.
+    expect(chat.retrievalError.value).toBe('')
+  })
+
+  it('aborts on an empty summaries store, restoring input + setting retrievalError', async () => {
+    const doc = sampleDocument()
+    const chat = useChat(docRef(doc), makeLlmSettings(), makeNav(), { value: null })
+    chat.setRole({ name: 'Critic', body: 'sys' })
+    chat.scope.value = 'summaries'
+
+    invoke.mockImplementation(async (cmd) => {
+      // The empty-store case is an error server-side ("no summaries yet…").
+      if (cmd === 'retrieve_summaries') throw new Error('no summaries yet — generate them from the AI options')
+      return 'full text'
+    })
+
+    chat.input.value = 'trace the arc'
+    await chat.send()
+
+    // Nothing pushed to the conversation.
+    expect(chat.messages.value.length).toBe(0)
+    expect(chat.retrievalError.value).toContain('no summaries yet')
+    // Input restored so the writer can generate summaries + retry.
+    expect(chat.input.value).toBe('trace the arc')
+    // We never reached the chat stream.
+    expect(invoke.mock.calls.some((c) => c[0] === 'llm_chat_stream')).toBe(false)
+    expect(chat.busy.value).toBe(false)
+  })
+
+  it('clears a stale retrievalError at the start of a successful summaries send', async () => {
+    const doc = sampleDocument()
+    const chat = useChat(docRef(doc), makeLlmSettings(), makeNav(), { value: null })
+    chat.setRole({ name: 'Critic', body: 'sys' })
+    chat.scope.value = 'summaries'
+    chat.retrievalError.value = 'stale error from before'
+
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd === 'retrieve_summaries') {
+        return [{ sectionId: 's1', chapterIndex: 1, title: 'The Arrival', sectionType: 'chapter', summary: 'r', stale: false }]
       }
       return 'full text'
     })

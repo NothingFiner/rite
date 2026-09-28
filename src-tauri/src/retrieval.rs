@@ -430,13 +430,20 @@ fn plan_reembed(stored: &HashMap<String, u64>, current: &HashMap<String, u64>) -
 /// Hash a section's full paragraph text (paragraphs joined by `\n`) into a
 /// `u64`. This is the differential signal: if a section's text is unchanged
 /// between two passes, its hash matches and its stored vectors are kept
-/// untouched. `DefaultHasher` (SipHash) is deterministic within a process —
-/// enough, because the baseline lives in memory for the session and is never
-/// persisted (persistence is deferred to after 2.1's schema versioning). Uses
-/// `paragraph_text` (the same run concatenation `chunk_document` uses), so a
-/// section hashes the same prose that gets chunked + embedded — a hash match
-/// guarantees the vectors are still valid for that section's text.
-fn section_text_hash(section: &Section) -> u64 {
+/// untouched. Uses `paragraph_text` (the same run concatenation `chunk_document`
+/// uses), so a section hashes the same prose that gets chunked + embedded — a
+/// hash match guarantees the vectors are still valid for that section's text.
+///
+/// `DefaultHasher::new()` is SipHash with a CONSTANT key, so the hash is
+/// deterministic across processes for the same binary — load-bearing since
+/// Phase 4.7: the `section_hashes` baseline is persisted to the durable sidecar
+/// and validated on reload by comparing against a freshly-recomputed hash (a
+/// drift, e.g. from a different Rust-std version, triggers a graceful full
+/// rebuild). `pub(crate)` so Phase 4.8's summary layer reuses the SAME prose
+/// hash as its per-section staleness baseline — the same prose gets chunked
+/// (4.3) AND summarized (4.8), so one hash answers "did this section's text
+/// change?" for both.
+pub(crate) fn section_text_hash(section: &Section) -> u64 {
     let mut text = String::new();
     for (i, paragraph) in section.paragraphs.iter().enumerate() {
         if i > 0 {

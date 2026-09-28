@@ -43,6 +43,7 @@
       :section-format="sectionFormat"
       :llm-settings="llmSettings"
       :retrieval="retrieval"
+      :summaries="summaries"
       :chat-manager="chatManager"
     />
     <TextOptionsDrawer
@@ -66,7 +67,7 @@
           :settings="llmSettings"
           :manager="chatManager"
           :roles="chatManager.roles"
-          :busy="chatManager.anyBusy"
+          :busy="chatManager.anyBusy || summaries.summariesBusy"
           @open-settings="openGeneralOptions"
         />
       </div>
@@ -175,6 +176,7 @@ import { useVersionHistory } from './composables/useVersionHistory.js'
 import { useLlmSettings } from './composables/useLlmSettings.js'
 import { useChatManager } from './composables/useChat.js'
 import { useRetrieval } from './composables/useRetrieval.js'
+import { useSummaries } from './composables/useSummaries.js'
 import { useWordCount } from './composables/useWordCount.js'
 import { usePagination } from './composables/usePagination.js'
 import { useManuscriptFormat } from './composables/useManuscriptFormat.js'
@@ -272,6 +274,14 @@ const chatManager = reactive(useChatManager(doc, llmSettingsRaw, navRaw, editorR
 // status is passed to GeneralOptionsDrawer; retrieval itself is wired into the
 // chat context in 4.4.
 const retrieval = reactive(useRetrieval(store, llmSettingsRaw))
+
+// Phase 4.8 semantic-summary generation. Mirrors `retrieval` (the 4.3
+// embeddings trigger): the composable owns generation state + the status
+// readout, wired into GeneralOptionsDrawer. `summariesBusy` is OR'd into the
+// LLM panel's busy gate below so Send is disabled during generation. Uses the
+// RAW llm-settings composable (reads `settings.value.*`, like useChat/
+// useRetrieval). Wrapped in `reactive()` so the drawer readout auto-unwraps.
+const summaries = reactive(useSummaries(store, llmSettingsRaw))
 
 // Whole-document word count. THE single instance (mirrors the shared-
 // pagination lift): the status bar reads it here, and the manuscript title

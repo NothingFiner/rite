@@ -173,6 +173,37 @@
             {{ indexStatusText }}
           </p>
 
+          <!-- Manuscript summaries (Phase 4.8). Generates a 2–3 sentence neutral
+               recap per section (one LLM call each, user-triggered) and stores
+               them in the durable sidecar, so the "Summaries" Feedback Target
+               can inject a compact semantic grasp of the whole book as context.
+               Reading them is free; generating costs tokens. Mirrors the
+               embeddings index-status block above. Generate = every section;
+               Refresh stale = only sections whose text changed since their recap.
+               Buttons disabled while a generation loop is in flight. -->
+          <div class="drawer-check summaries-control">
+            <span class="summaries-label">Manuscript summaries</span>
+            <div class="summaries-buttons">
+              <button
+                class="ai-test-btn"
+                :disabled="!summaries || summaries.summariesBusy"
+                @click="summaries && summaries.generateSummaries()"
+              >
+                {{ summaries && summaries.summaryStatus === 'generating' ? 'Generating…' : 'Generate summaries' }}
+              </button>
+              <button
+                class="ai-test-btn"
+                :disabled="!summaries || summaries.summariesBusy"
+                @click="summaries && summaries.refreshStaleSummaries()"
+              >
+                Refresh stale
+              </button>
+            </div>
+            <p class="ai-context-hint index-status" :class="summaryStatusClass">
+              {{ summaryStatusText }}
+            </p>
+          </div>
+
           <label class="drawer-label">API Key (optional — required for Ollama Cloud)</label>
           <input
             class="drawer-input"
@@ -305,6 +336,11 @@ const props = defineProps({
   // readout. May be absent in contexts that don't wire retrieval, so it is
   // optional and the status computed guards against that.
   retrieval: { type: Object, default: null },
+  // The useSummaries composable (reactive) from App.vue (Phase 4.8) — exposes
+  // `summaryStatus` / `summaryProgress` / `summaryError` / `summariesBusy` for
+  // the summaries-status readout, and `generateSummaries()` / `refreshStaleSummaries()`
+  // for the buttons. Optional + guarded like `retrieval`.
+  summaries: { type: Object, default: null },
   // The reactive useChatManager from App.vue — owns the merged role list
   // (`roles`) + `refreshRoles()`. The Roles accordion's editor (useRoles)
   // reads the list from it and calls `refreshRoles()` after a save/delete so
@@ -360,6 +396,37 @@ const indexStatusClass = computed(() => {
   if (!retrieval) return ''
   if (retrieval.reembedStatus === 'error') return 'is-error'
   if (retrieval.reembedStatus === 'ready') return 'is-ok'
+  return ''
+})
+
+// Summaries-status readout (Phase 4.8). Mirrors the index-status readout above.
+// Maps `summaryStatus` to a one-line "N/M sections summarized, K stale" using
+// `summaryProgress` ({ done, total, stale }). Reactive through `props.summaries`
+// — App.vue wraps useSummaries in `reactive()`, so its ref members auto-unwrap.
+// When the composable isn't wired, the line reads "Summaries: off".
+const summaryStatusText = computed(() => {
+  const summaries = props.summaries
+  if (!summaries) return 'Summaries: off'
+  const { done, total, stale } = summaries.summaryProgress || { done: 0, total: 0, stale: 0 }
+  switch (summaries.summaryStatus) {
+    case 'generating':
+      return `Generating… ${done}/${total} sections`
+    case 'error':
+      return 'Summary error: ' + (summaries.summaryError || 'unknown')
+    case 'ready':
+      return `${done}/${total} sections summarized, ${stale} stale`
+    default:
+      // 'idle' — show the counts anyway (summaries may exist from a prior
+      // session, loaded from the sidecar) so the writer sees what they have.
+      return total > 0 ? `${done}/${total} sections summarized, ${stale} stale` : 'Summaries: none yet'
+  }
+})
+
+const summaryStatusClass = computed(() => {
+  const summaries = props.summaries
+  if (!summaries) return ''
+  if (summaries.summaryStatus === 'error') return 'is-error'
+  if (summaries.summaryStatus === 'ready') return 'is-ok'
   return ''
 })
 
@@ -677,6 +744,25 @@ watch(
 
 .index-status.is-error {
   color: #e88;
+}
+
+/* Manuscript summaries control (Phase 4.8). A label + a two-button row (Generate
+   / Refresh stale) + the status line. Reuses `.ai-test-btn` for the buttons and
+   `.index-status` for the status line so it reads like the embeddings block
+   above it. */
+.summaries-control {
+  margin-top: 0.5rem;
+}
+.summaries-label {
+  display: block;
+  font-weight: 600;
+  margin-bottom: 0.4rem;
+}
+.summaries-buttons {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.4rem;
 }
 
 /* Roles accordion (Phase 4.5) */

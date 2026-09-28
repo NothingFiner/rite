@@ -11,6 +11,7 @@ mod retrieval;
 mod sidecar;
 mod state;
 mod structure;
+mod summary;
 
 use commands::{
     apply_text_style, autosave_document, change_section_type, delete_section,
@@ -24,6 +25,7 @@ use llm::{llm_cancel, llm_chat, llm_chat_stream, llm_list_models, list_roles, sa
 use retrieval::{embed_texts, reembed_document, retrieve_passages};
 use state::AppState;
 use structure::structural_signals;
+use summary::{retrieve_stale_summary_section_ids, retrieve_summaries, summarize_and_store_section};
 
 fn main() {
     tauri::Builder::default()
@@ -63,6 +65,9 @@ fn main() {
             reembed_document,
             retrieve_passages,
             structural_signals,
+            summarize_and_store_section,
+            retrieve_summaries,
+            retrieve_stale_summary_section_ids,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
