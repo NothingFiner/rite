@@ -148,6 +148,14 @@
              earns its keep on truncated manuscripts or shape-only questions. Pure
              Rust, no network, re-fetched per send (no indexing needed). -->
         <option value="structure">Structure</option>
+        <!-- Phase 4.8: inject LLM-generated per-section recaps (a 2–3 sentence
+             neutral summary per Section), stored durably in the 4.7 sidecar. A
+             compact semantic grasp of the whole book — for arc/turning-point
+             questions where Structure's counts are too coarse but the full prose
+             truncates. Pure Rust read (no network) of pre-generated summaries,
+             re-fetched per send. Generate them from the AI options drawer first;
+             an empty store surfaces a "generate summaries first" notice. -->
+        <option value="summaries">Summaries</option>
         <!-- Phase 4.4: embed the question, cosine-rank the manuscript's indexed
              chunks, inject the top-k. A sibling to Whole document for
              document-wide-but-localized-evidence questions (character
@@ -176,11 +184,12 @@
         Context: ~{{ formatTokens(contextTokens) }} / {{ formatTokens(settings.settings.contextLength) }} tokens
       </p>
     </div>
-    <!-- Retrieval error (4.4 / 4.6): shown when an async-context scope send
-         couldn't fetch context — "Relevant passages" (index off, embeddings
-         model not pulled) or "Structure" (poisoned document lock, near-
-         impossible). Cleared by `useChat.send` on the next attempt.
-         `chat.retrievalError` auto-unwraps via the reactive proxy. -->
+    <!-- Retrieval error (4.4 / 4.6 / 4.8): shown when an async-context scope
+         send couldn't fetch context — "Relevant passages" (index off, embeddings
+         model not pulled), "Structure" (poisoned document lock, near-impossible),
+         or "Summaries" (no summaries generated yet). Cleared by `useChat.send` on
+         the next attempt. `chat.retrievalError` auto-unwraps via the reactive
+         proxy. -->
     <p v-if="chat.retrievalError" class="llm-retrieval-error">{{ chat.retrievalError }}</p>
     <div class="llm-clear-row">
        <button

@@ -147,7 +147,14 @@ fn parse_frontmatter(source: &str) -> (Option<String>, Option<String>, String) {
 /// Compose the system prompt for one role: base rules + persona body. The base
 /// is prepended so every persona inherits the shared "never write prose"
 /// constraint; a blank line separates the two for readability.
-fn compose_role_body(persona_body: &str) -> String {
+///
+/// `pub(crate)` so Phase 4.8's summary layer (`summary::build_summary_request`)
+/// composes the FIXED summary persona the same way — the `_base.md`
+/// analytical-only rules are always prepended, so "never writes into the doc"
+/// is structural for summaries too (a summary is metadata in the sidecar, never
+/// inserted into the manuscript), not a setting the summary persona has to
+/// remember on its own.
+pub(crate) fn compose_role_body(persona_body: &str) -> String {
     format!("{}\n\n{}", BASE_ROLE.trim_end(), persona_body.trim_start())
 }
 
