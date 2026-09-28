@@ -8,7 +8,7 @@ use crate::state::AppState;
 use regex::Regex;
 use std::fs;
 use std::path::Path;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 #[tauri::command]
 pub fn get_document(state: State<AppState>) -> Result<Document, String> {
@@ -262,7 +262,7 @@ pub fn replace_all(
 }
 
 #[tauri::command]
-pub fn save_document(path: String, state: State<AppState>) -> Result<(), String> {
+pub fn save_document(path: String, app: AppHandle, state: State<AppState>) -> Result<(), String> {
     let doc = state.document.lock().map_err(|e| e.to_string())?.clone();
 
     // Record a full snapshot of the saved document in the embedded history (the
@@ -274,6 +274,12 @@ pub fn save_document(path: String, state: State<AppState>) -> Result<(), String>
     // `write_rite_file` takes ownership and stamps the current schema version
     // on the way to disk; `file` is not used afterward, so move it in.
     history::write_rite_file(Path::new(&path), file)?;
+
+    // Checkpoint the RAG vector index to its sidecar (Phase 4.7). Done BEFORE
+    // `path` is moved into `last_path` below. Best-effort: vectors are derivable
+    // (a missing sidecar just rebuilds on next open), so a sidecar write failure
+    // must NOT fail the document save that already succeeded — swallow it.
+    let _ = state.checkpoint_index_to_sidecar(&app, &path);
 
     let mut last_path = state.last_path.lock().map_err(|e| e.to_string())?;
     *last_path = Some(path);
@@ -289,7 +295,7 @@ pub fn save_document(path: String, state: State<AppState>) -> Result<(), String>
 }
 
 #[tauri::command]
-pub fn open_document(path: String, state: State<AppState>) -> Result<Document, String> {
+pub fn open_document(path: String, app: AppHandle, state: State<AppState>) -> Result<Document, String> {
     let json = fs::read_to_string(&path).map_err(|e| e.to_string())?;
 
     // Parse the `.rite` as an embedded `RiteFile { document, history }`. A
@@ -331,6 +337,12 @@ pub fn open_document(path: String, state: State<AppState>) -> Result<Document, S
     // document's last explicit save).
     state.set_history_baseline(&doc);
 
+    // Load the durable RAG vector index for this manuscript (Phase 4.7). This
+    // clears the previous manuscript's stale vectors first, then repopulates
+    // from the sidecar if one exists for this path; the next `reembed_document`
+    // pass reconciles the persisted baseline against the live document.
+    state.load_index_from_sidecar(&app, &path);
+
     let mut last_path = state.last_path.lock().map_err(|e| e.to_string())?;
     *last_path = Some(path);
 
@@ -363,7 +375,7 @@ pub fn sync_document(data: Document, state: State<AppState>) -> Result<(), Strin
 }
 
 #[tauri::command]
-pub fn autosave_document(state: State<AppState>) -> Result<(), String> {
+pub fn autosave_document(app: AppHandle, state: State<AppState>) -> Result<(), String> {
     let modified = *state.is_modified.lock().map_err(|e| e.to_string())?;
     if !modified {
         return Ok(());
@@ -386,6 +398,13 @@ pub fn autosave_document(state: State<AppState>) -> Result<(), String> {
     if journaled {
         let file = state.build_rite_file()?;
         history::write_rite_file(Path::new(&base_path), file)?;
+        // Checkpoint the RAG vector index alongside the `.rite` rewrite
+        // (Phase 4.7). Best-effort, same rationale as `save_document`: the
+        // index is derivable, so a sidecar write failure must not fail the
+        // autosave. Only checkpoint when we actually rewrote the `.rite`
+        // (a journaled change implies the doc — and thus the reembed that
+        // follows a sync — advanced).
+        let _ = state.checkpoint_index_to_sidecar(&app, &base_path);
     }
 
     *state.is_modified.lock().map_err(|e| e.to_string())? = false;
