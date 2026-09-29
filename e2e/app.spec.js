@@ -22,15 +22,23 @@ test.describe('Rite App', () => {
   })
 
   test('can toggle manuscript mode', async ({ page }) => {
-    await page.click('button:has-text("Manuscript")')
+    // Scope to `.view-tab`: a bare `button:has-text("Manuscript")` also matches
+    // the manuscript view's off-screen zoom-row control (rendered but positioned
+    // left of the viewport in editor view), which Playwright's non-strict click
+    // would resolve first — landing the click on the activity bar instead.
+    await page.click('button.view-tab:has-text("Manuscript")')
     await expect(page.locator('.manuscript-viewport')).toBeVisible()
-    await expect(page.locator('.manuscript-page')).toHaveCount(1)
+    // The manuscript view paginates `allPages` — a title page plus one or more
+    // content pages — so the page count varies with the doc. Assert at least one
+    // page rendered, not a fixed count (the old `toHaveCount(1)` broke once the
+    // title page existed).
+    await expect(page.locator('.manuscript-page')).not.toHaveCount(0)
   })
 
   test('can toggle back to editor mode', async ({ page }) => {
-    await page.click('button:has-text("Manuscript")')
+    await page.click('button.view-tab:has-text("Manuscript")')
     await expect(page.locator('.manuscript-viewport')).toBeVisible()
-    await page.click('button:has-text("Editor")')
+    await page.click('button.view-tab:has-text("Editor")')
     await expect(page.locator('.editor-sheet')).toBeVisible()
   })
 
@@ -39,8 +47,11 @@ test.describe('Rite App', () => {
     // left drawer. (Was `button[title="Open Navigation"]` — a stale selector from
     // before the ActivityBar rename.)
     await page.click('button[title="Sections"]')
-    const drawer = page.locator('.drawer.left')
-    await expect(drawer).toHaveClass(/open/)
+    // Four left drawers share `.drawer.left` (Sections / General / Text / History),
+    // only one ever open at once — assert the open one exists, rather than the
+    // strict-mode-violating `.drawer.left` which matches all four.
+    const openDrawer = page.locator('.drawer.left.open')
+    await expect(openDrawer).toHaveCount(1)
   })
 
   test('can open right drawer', async ({ page }) => {
@@ -56,17 +67,19 @@ test.describe('Rite App', () => {
     // list on first entry (Scheme A: the tab is view-switch-only thereafter).
     await page.click('button.view-tab:has-text("History")')
     await expect(page.locator('.history-view')).toBeVisible()
-    const drawer = page.locator('.drawer.left')
-    await expect(drawer).toHaveClass(/open/)
+    // `.drawer.left` matches all four left drawers (strict-mode violation); the
+    // open one is unique at any time, so assert on `.drawer.left.open`.
+    const openDrawer = page.locator('.drawer.left.open')
+    await expect(openDrawer).toHaveCount(1)
 
     // The in-header Versions button (not the tab) owns open/close of the list.
     const versionsToggle = page.locator('.history-versions-toggle')
     await versionsToggle.click()
-    await expect(drawer).not.toHaveClass(/open/)
+    await expect(openDrawer).toHaveCount(0)
 
     // ...and toggles it open again.
     await versionsToggle.click()
-    await expect(drawer).toHaveClass(/open/)
+    await expect(openDrawer).toHaveCount(1)
   })
 
   test('typing in editor creates paragraphs', async ({ page }) => {
@@ -95,11 +108,15 @@ test.describe('Rite App', () => {
   })
 
   test('word count updates when typing', async ({ page }) => {
-    const editor = page.locator('.editor-sheet')
-    await editor.click()
+    // Click inside a paragraph BLOCK (`.paragraph`), not the bare `.editor-sheet`:
+    // clicking the sheet roots the caret on the contenteditable itself, so typed
+    // text becomes a direct text node of the sheet that the readback never walks
+    // — the store word count stays 0. Landing in a `.paragraph` div lets the
+    // reconciler pick the text up. `useWordCount` debounces 300ms; the expect's
+    // own retry window covers that, so no fixed sleep.
+    const firstParagraph = page.locator('.editor-sheet .paragraph').first()
+    await firstParagraph.click()
     await page.keyboard.type('One two three')
-    await page.waitForTimeout(200)
-    const wordCount = page.locator('.word-count')
-    await expect(wordCount).toContainText('3 words')
+    await expect(page.locator('.word-count')).toContainText('3 words')
   })
 })
