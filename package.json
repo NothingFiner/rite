@@ -19,10 +19,10 @@
     "mammoth": "^1.12.0",
     "marked": "^18.0.11",
     "pinia": "^3.0.4",
-    "playwright": "^1.60.0",
     "vue": "^3.4.21"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@tauri-apps/cli": "^1.5.11",
     "@vitejs/plugin-vue": "^5.0.4",
     "@vitest/coverage-v8": "^4.1.8",
