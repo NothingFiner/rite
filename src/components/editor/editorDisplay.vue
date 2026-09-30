@@ -18,7 +18,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted, nextTick, watch, computed, toRef } from 'vue'
 import { paragraphToHTML, sectionTitleToHTML, escapeHtml } from '../../composables/useParagraphHTML.js'
-import { flattenSections, groupBlocks, computeFirstLineIndent } from '../../composables/useSectionBlocks.js'
+import { flattenSections, computeFirstLineIndent } from '../../composables/useSectionBlocks.js'
 import { computeReconcileOps, blockKey } from '../../composables/useEditorReconcile.js'
 import { applySearchHighlights, clearSearchHighlights } from '../../composables/useSearchHighlights.js'
 import {
@@ -34,8 +34,12 @@ import {
   scrollToPage as scrollToPageInSheet,
   getCurrentPage as getCurrentPageInSheet,
 } from '../../composables/useEditorPageNav.js'
+import {
+  useEditorReadback,
+  blockPlainText, adjustOffsetForReplace, isNonContentBlock, readSectionTitleText,
+} from '../../composables/useEditorReadback.js'
 import { THEMES } from '../../constants/themes.js'
-import { generateParagraphId, generateSectionId, createSection, createParagraph, defaultTextStyle } from '../../constants/DocumentModel.js'
+import { generateParagraphId, createSection } from '../../constants/DocumentModel.js'
 import { useSectionFormat } from '../../composables/useSectionFormat.js'
 
 const props = defineProps({
@@ -89,7 +93,20 @@ const lastEditorSelection = ref(null)
 // the caret bookmark uses, so no new event wiring.
 const hasSelection = ref(false)
 const pageBreaks = toRef(props, 'pageBreaks')
+// Refs handed to the readback factory (roadmap 5.6 PR3) so it can read the live
+// model + zoom baseline reactively without owning them — the orchestrator keeps
+// ownership of the shared state.
+const modelRef = toRef(props, 'modelValue')
+const zoomRef = toRef(props, 'zoom')
 const sectionFormat = useSectionFormat()
+
+// DOM→model readback (syncFromDOM for the localized typing path, fullSyncFromDOM
+// as its structural-ambiguity fallback) lives in useEditorReadback.js; this
+// binds it to the reactive state above. Only syncFromDOM is consumed here —
+// fullSyncFromDOM is an internal fallback the localized path calls.
+const { syncFromDOM } = useEditorReadback({
+  sheetRef, modelRef, zoomRef, lastRenderedBlocks, lastSectionCount, skipNextWatcher, emit,
+})
 
 function editorApplySearchHighlights(matches, currentIndex) {
   applySearchHighlights(sheetRef.value, matches, currentIndex)
@@ -145,264 +162,16 @@ function lockFreshSection() {
 }
 
 // --- DOM → model -------------------------------------------------------------
-// The editor's contenteditable is a FLAT sibling list: .section-title markers
-// interleaved with .paragraph divs. domToBlocks walks that flat list into the
-// block shape groupBlocks understands; groupBlocks then rebuilds the nested
-// Section[] the store holds. Section-titles are read back from their editable
-// span only (the chapter-prefix span is derived and never read).
-
-function isNonContentBlock(el) {
-  return el.classList?.contains('page-break-line') ||
-    el.classList?.contains('page-number-label') ||
-    el.classList?.contains('epigram-block') ||
-    el.classList?.contains('editor-sentinel')
-}
-
-function parseParagraphElement(child) {
-  const style = window.getComputedStyle(child)
-  const leftIndentPx = parseInt(style.marginLeft, 10) || 0
-  const rightIndentPx = parseInt(style.marginRight, 10) || 0
-  const elements = []
-  for (const run of child.childNodes) {
-    if (run.nodeType === Node.TEXT_NODE) {
-      if (run.textContent) {
-        elements.push({ textRun: { content: run.textContent, textStyle: defaultTextStyle() } })
-      }
-    } else if (run.nodeType === Node.ELEMENT_NODE) {
-      if (run.classList?.contains('search-highlight') || run.classList?.contains('search-current')) {
-        elements.push({ textRun: { content: run.textContent || '', textStyle: defaultTextStyle() } })
-        continue
-      }
-      const runStyle = window.getComputedStyle(run)
-      const textStyle = defaultTextStyle({
-        bold: runStyle.fontWeight === '700' || runStyle.fontWeight === 'bold',
-        italic: runStyle.fontStyle === 'italic',
-        underline: runStyle.textDecorationLine.includes('underline'),
-      })
-      const fs = parseInt(runStyle.fontSize, 10)
-      if (fs && fs !== 16 && fs !== props.zoom) textStyle.fontSize = fs
-      elements.push({ textRun: { content: run.innerText || '', textStyle } })
-    }
-  }
-  if (elements.length === 0) {
-    elements.push({ textRun: { content: '', textStyle: defaultTextStyle() } })
-  }
-  return {
-    id: child.dataset.paraId || generateParagraphId(),
-    leftIndent: leftIndentPx > 0 ? Math.round(leftIndentPx / 96 * 10) / 10 : null,
-    rightIndent: rightIndentPx > 0 ? Math.round(rightIndentPx / 96 * 10) / 10 : null,
-    firstLineIndent: null, // recomputed in syncFromDOM
-    elements,
-  }
-}
-
-function readSectionTitleText(el) {
-  const sectionType = el.dataset.sectionType
-  const span = sectionType === 'chapter'
-    ? el.querySelector('.section-subtitle')
-    : el.querySelector('.section-title-text')
-  const text = span ? (span.textContent || '') : ''
-  return text.replace(/ /g, ' ').trim()
-}
-
-function domToBlocks(root) {
-  const blocks = []
-  for (const child of Array.from(root.children)) {
-    if (isNonContentBlock(child)) continue
-
-    if (child.classList?.contains('section-title')) {
-      blocks.push({
-        kind: 'section-title',
-        sectionId: child.dataset.sectionId || generateSectionId(),
-        sectionType: child.dataset.sectionType || 'section',
-        title: readSectionTitleText(child),
-      })
-    } else if (child.classList?.contains('paragraph')) {
-      blocks.push({
-        kind: 'paragraph',
-        sectionId: child.dataset.sectionId,
-        paragraphId: child.dataset.paraId,
-        paragraph: parseParagraphElement(child),
-      })
-    }
-  }
-  return blocks
-}
-
-/// Stamp the render-derived `chapterIndex` onto each section-title block (1-based
-/// running count of chapters; null for non-chapters). `flattenSections` already
-/// does this for model-sourced blocks, but `domToBlocks` (the DOM readback path)
-/// does not — so blocks built from the DOM must be baked here to match. The
-/// reconciler renders a block via this index to reproduce the "Chapter N: "
-/// prefix; without it, every chapter title would falsely diff as changed after
-/// an edit. Idempotent: re-baking a flattenSections list yields the same values.
-function bakeChapterIndices(blocks) {
-  let chapterIndex = 0
-  for (const block of blocks) {
-    if (block.kind === 'section-title') {
-      block.chapterIndex = block.sectionType === 'chapter' ? ++chapterIndex : null
-    }
-  }
-}
-
-/// Read back the whole sheet into the model and emit the full sections array.
-/// This is the FALLBACK for the localized syncFromDOM: used when an edit can't
-/// be confidently confined to one section (no selection, no section id, or the
-/// section structure looks changed) and on the first paint. It is the
-/// pre-localization behavior verbatim. O(document) — the localized path is
-/// what makes typing feel good; this only runs on structural ambiguity.
-function fullSyncFromDOM() {
-  const root = sheetRef.value
-  if (!root || !props.modelValue) return
-  const blocks = domToBlocks(root)
-  bakeChapterIndices(blocks)
-
-  // Compute and bake section-aware first-line indents.
-  for (let i = 0; i < blocks.length; i++) {
-    if (blocks[i].kind !== 'paragraph') continue
-    blocks[i].paragraph.firstLineIndent = computeFirstLineIndent(blocks, i)
-  }
-
-  // Reflect computed indents back into the live DOM so paragraphs created by
-  // the browser (which don't copy inline styles) show the right indent.
-  const domParas = Array.from(root.querySelectorAll('.paragraph'))
-  let pIdx = 0
-  for (const block of blocks) {
-    if (block.kind !== 'paragraph') continue
-    const dom = domParas[pIdx]
-    pIdx++
-    if (!dom) continue
-    const indent = block.paragraph.firstLineIndent
-    dom.style.textIndent = indent > 0 ? `${Math.round(indent * 96)}px` : '0px'
-  }
-
-  let sections = groupBlocks(blocks)
-  // Defensive: every section must have at least one paragraph to type into.
-  for (const s of sections) {
-    if (!s.paragraphs || s.paragraphs.length === 0) s.paragraphs.push(createParagraph())
-  }
-
-  // Keep the retained block list in sync with the live DOM so a later external
-  // change diffs against reality, not a pre-typing snapshot.
-  lastRenderedBlocks.value = blocks
-  lastSectionCount.value = blocks.filter(b => b.kind === 'section-title').length
-
-  skipNextWatcher.value = true
-  emit('syncSections', sections)
-}
-
-/// Read back ONLY the cursor's section into the model and emit that one
-/// section. Every onInput edit is confined to one section — cross-section
-/// backspace/delete is preventDefault'd (onKeydown) and locked section-titles
-/// block input (onBeforeinput) — so the whole-sheet readback fullSyncFromDOM
-/// performs is unnecessary on the typing path. That readback called
-/// window.getComputedStyle() per paragraph AND per styled run
-/// (parseParagraphElement): an O(document) layout read per keystroke, which is
-/// the typing lag at 51k words. Reading one section makes it O(section) — a
-/// handful of getComputedStyle calls. Falls back to fullSyncFromDOM whenever it
-/// can't confidently localize (worst case = today's behavior).
-function syncFromDOM() {
-  const root = sheetRef.value
-  if (!root || !props.modelValue) return
-
-  const sectionId = getSectionIdAtCursor()
-  const titleEls = root.querySelectorAll('.section-title')
-  // Structural gate: if the live section-title count differs from the retained
-  // baseline, an edit crossed a section boundary (added/removed/merged a
-  // section) — a localized read would miss the other side. Fall back to the
-  // full readback. O(section-titles) DOM walk, no layout reads.
-  if (!sectionId || !lastRenderedBlocks.value || titleEls.length !== lastSectionCount.value) {
-    fullSyncFromDOM()
-    return
-  }
-
-  // Locate this section's title element within the titles we already walked.
-  let titleEl = null
-  for (const el of titleEls) {
-    if (el.dataset.sectionId === sectionId) { titleEl = el; break }
-  }
-  if (!titleEl) { fullSyncFromDOM(); return }
-  // Collect this section's paragraphs POSITIONALLY — the consecutive
-  // `.paragraph` siblings after the title, up to the next `.section-title` (or
-  // a trailing decoration / end). This matches groupBlocks' positional logic,
-  // NOT an attribute match: a paragraph created by execCommand('insertParagraph')
-  // (the Enter handler) is a fresh <div> that may not carry data-section-id, so
-  // querying by attribute would miss it and silently drop the just-split
-  // paragraph. Walking siblings by class is robust to that.
-  const paraEls = []
-  let sibling = titleEl.nextElementSibling
-  while (sibling && sibling.classList.contains('paragraph')) {
-    paraEls.push(sibling)
-    sibling = sibling.nextElementSibling
-  }
-
-  // Build the section's block list: one title block + its paragraph blocks.
-  const titleBlock = {
-    kind: 'section-title',
-    sectionId,
-    sectionType: titleEl.dataset.sectionType || 'section',
-    title: readSectionTitleText(titleEl),
-  }
-  // Preserve the render-derived chapterIndex from the retained baseline — a
-  // typing edit doesn't change the title or type, so the index is unchanged and
-  // re-baking it would need an O(document) chapter walk. (If the section
-  // somehow isn't in the baseline the gate above caught it, but guard anyway.)
-  const prevTitle = lastRenderedBlocks.value.find(
-    b => b.kind === 'section-title' && b.sectionId === sectionId
-  )
-  if (!prevTitle) { fullSyncFromDOM(); return }
-  titleBlock.chapterIndex = prevTitle.chapterIndex
-
-  const blocks = [titleBlock]
-  for (const el of paraEls) {
-    blocks.push({
-      kind: 'paragraph',
-      sectionId,
-      paragraphId: el.dataset.paraId,
-      paragraph: parseParagraphElement(el),
-    })
-  }
-
-  // Compute and bake first-line indents within this section only. The title is
-  // blocks[0]; computeFirstLineIndent looks back only to the previous block in
-  // this local list, so a section's indents are self-contained.
-  for (let i = 0; i < blocks.length; i++) {
-    if (blocks[i].kind !== 'paragraph') continue
-    blocks[i].paragraph.firstLineIndent = computeFirstLineIndent(blocks, i)
-  }
-
-  // Reflect computed indents back into this section's live DOM paragraphs only.
-  let pi = 0
-  for (const block of blocks) {
-    if (block.kind !== 'paragraph') continue
-    const dom = paraEls[pi]
-    pi++
-    if (!dom) continue
-    const indent = block.paragraph.firstLineIndent
-    dom.style.textIndent = indent > 0 ? `${Math.round(indent * 96)}px` : '0px'
-  }
-
-  // Group this section's blocks back into a Section (defensive ≥1 paragraph).
-  const sections = groupBlocks(blocks)
-  const s = sections[0]
-  if (!s) { fullSyncFromDOM(); return }
-  if (!s.paragraphs || s.paragraphs.length === 0) s.paragraphs.push(createParagraph())
-
-  // Splice the section's blocks into the retained list, replacing its old
-  // title + paragraphs in place. Section-title count is unchanged by a
-  // within-section edit, so lastSectionCount stays correct without recompute.
-  const all = lastRenderedBlocks.value
-  const startIdx = all.findIndex(
-    b => b.kind === 'section-title' && b.sectionId === sectionId
-  )
-  if (startIdx === -1) { fullSyncFromDOM(); return }
-  let endIdx = startIdx + 1
-  while (endIdx < all.length && all[endIdx].kind !== 'section-title') endIdx++
-  lastRenderedBlocks.value = all.slice(0, startIdx).concat(blocks, all.slice(endIdx))
-
-  skipNextWatcher.value = true
-  emit('syncSection', { id: s.id, title: s.title, paragraphs: s.paragraphs })
-}
+// --- DOM→model readback (extracted to useEditorReadback.js) -----------------
+// The pure helpers (isNonContentBlock, parseParagraphElement, readSectionTitleText,
+// domToBlocks, bakeChapterIndices, blockPlainText, adjustOffsetForReplace) and
+// the two readback entry points (syncFromDOM, fullSyncFromDOM) live in
+// src/composables/useEditorReadback.js. editorDisplay binds the entry points to
+// its reactive state via the useEditorReadback factory (instantiated above, next
+// to the refs); the four helpers the orchestrator core still calls directly
+// (blockPlainText, adjustOffsetForReplace, isNonContentBlock, readSectionTitleText)
+// are imported. parseParagraphElement / domToBlocks / bakeChapterIndices are
+// consumed only inside the readback module.
 
 // --- Page-break layout (extracted to useEditorPageNav.js) -------------------
 // layoutPageBreaks lives in src/composables/useEditorPageNav.js now; this
@@ -437,43 +206,6 @@ function renderBlockHTML(block) {
     )
   }
   return paragraphToHTML(block.paragraph, { sectionId: block.sectionId })
-}
-
-/// The visible text of an editable block — the same string the DOM renders and
-/// `bookmarkSelection` measures offsets against. Paragraph runs are joined with
-/// no separator (useParagraphHTML.js), and a title's editable unit is its
-/// subtitle/title span, whose text is `block.title`. Used to shift a bookmarked
-/// caret by the character delta when a block's text changes on undo/redo.
-function blockPlainText(block) {
-  if (block.kind === 'section-title') return block.title || ''
-  return (block.paragraph?.elements || []).map(e => e.textRun?.content || '').join('')
-}
-
-/// Map a caret offset measured in `oldText` to the corresponding offset in
-/// `newText`. The two are assumed to differ by a single replaced middle region
-/// (the common case for undo/redo of typing within one paragraph): a common
-/// prefix and common suffix flank the change. A caret in the unchanged prefix
-/// or suffix is shifted by the net length change of the middle; a caret that sat
-/// inside the replaced region lands at its start. This is why undoing "big dog"
-/// (typed before "specifications") moves the caret from "after big dog" back to
-/// the insertion point instead of 7 characters deep into "specifications".
-function adjustOffsetForReplace(oldText, newText, offset) {
-  if (oldText === newText) return offset
-  const oldLen = oldText.length
-  const newLen = newText.length
-  if (offset <= 0) return 0
-  let prefix = 0
-  while (prefix < oldLen && prefix < newLen && oldText[prefix] === newText[prefix]) prefix++
-  if (offset <= prefix) return offset
-  let suffix = 0
-  while (
-    suffix < oldLen - prefix && suffix < newLen - prefix &&
-    oldText[oldLen - 1 - suffix] === newText[newLen - 1 - suffix]
-  ) suffix++
-  const oldChangeEnd = oldLen - suffix
-  const newChangeEnd = newLen - suffix
-  if (offset >= oldChangeEnd) return offset - oldChangeEnd + newChangeEnd
-  return prefix
 }
 
 /// Track the in-editor selection continuously so an external change triggered
