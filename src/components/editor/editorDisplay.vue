@@ -21,6 +21,12 @@ import { paragraphToHTML, sectionTitleToHTML, escapeHtml } from '../../composabl
 import { flattenSections, groupBlocks, computeFirstLineIndent } from '../../composables/useSectionBlocks.js'
 import { computeReconcileOps, blockKey } from '../../composables/useEditorReconcile.js'
 import { applySearchHighlights, clearSearchHighlights } from '../../composables/useSearchHighlights.js'
+import {
+  blockSelector, bookmarkSelection, restoreSelection, editableSpanOf,
+  getParagraphAtCursor, getSectionTitleAtCursor, getSectionIdAtCursor,
+  isCaretAtStart, isCaretAtEnd, placeCursorAtStart, selectLine,
+  getSelectionText as selectionTextWithin,
+} from '../../composables/useEditorCursor.js'
 import { THEMES } from '../../constants/themes.js'
 import { generateParagraphId, generateSectionId, createSection, createParagraph, defaultTextStyle } from '../../constants/DocumentModel.js'
 import { useSectionFormat } from '../../composables/useSectionFormat.js'
@@ -472,12 +478,6 @@ function layoutPageBreaks() {
 // useEditorReconcile.js; this function owns the DOM application, cursor
 // save/restore, the epigram, and a drift-gate fallback to renderEditor.
 
-/// `[data-section-id="…"]` / `[data-para-id="…"]` selector for a block key.
-function blockSelector(key) {
-  if (key.startsWith('title:')) return `[data-section-id="${key.slice(6)}"]`
-  return `[data-para-id="${key.slice(5)}"]`
-}
-
 /// Render a single block to its full outer HTML, matching renderEditor's
 /// rendering byte-for-byte so an unchanged block is `keep`, not a false
 /// `replace`. Uses the block's baked `chapterIndex` (set by flattenSections or
@@ -494,69 +494,6 @@ function renderBlockHTML(block) {
     )
   }
   return paragraphToHTML(block.paragraph, { sectionId: block.sectionId })
-}
-
-/// Snapshot the selection so it can be restored after the DOM patch. Returns
-/// `{ key, kind, offset }` where offset is the character count from the start
-/// of the editable unit (the paragraph, or the editable title span) to the
-/// caret, or null when the selection is outside the sheet.
-function bookmarkSelection(root) {
-  const sel = window.getSelection()
-  if (!sel || !sel.rangeCount) return null
-  const anchor = sel.anchorNode
-  if (!anchor || !root.contains(anchor)) return null
-  let blockEl = anchor.nodeType === 3 ? anchor.parentElement : anchor
-  while (blockEl && blockEl !== root && !blockEl.classList?.contains('paragraph') && !blockEl.classList?.contains('section-title')) {
-    blockEl = blockEl.parentElement
-  }
-  if (!blockEl || blockEl === root) return null
-  const kind = blockEl.classList.contains('paragraph') ? 'paragraph' : 'section-title'
-  // For a section-title the editable unit is its inner span (the chapter prefix
-  // is locked); for a paragraph it is the paragraph itself.
-  const unit = kind === 'section-title' ? editableSpanOf(blockEl) : blockEl
-  const key = kind === 'paragraph'
-    ? 'para:' + blockEl.dataset.paraId
-    : 'title:' + blockEl.dataset.sectionId
-  // Character offset from the start of the unit to the caret.
-  const range = sel.getRangeAt(0).cloneRange()
-  const probe = document.createRange()
-  probe.selectNodeContents(unit)
-  probe.setEnd(range.startContainer, range.startOffset)
-  return { key, kind, offset: probe.toString().length }
-}
-
-/// Restore the caret saved by bookmarkSelection. If the block was removed by
-/// the patch, leave the cursor where the browser placed it (acceptable for v1).
-function restoreSelection(root, bookmark) {
-  if (!bookmark) return
-  const sel = window.getSelection()
-  if (!sel) return
-  const blockEl = root.querySelector(blockSelector(bookmark.key))
-  if (!blockEl) return
-  const unit = bookmark.kind === 'section-title' ? editableSpanOf(blockEl) : blockEl
-  // Walk text nodes to place the caret at the (clamped) character offset.
-  let remaining = Math.max(0, bookmark.offset)
-  const walker = document.createTreeWalker(unit, NodeFilter.SHOW_TEXT)
-  let node = walker.nextNode()
-  while (node) {
-    const len = node.textContent.length
-    if (remaining <= len) {
-      const range = document.createRange()
-      range.setStart(node, remaining)
-      range.collapse(true)
-      sel.removeAllRanges()
-      sel.addRange(range)
-      return
-    }
-    remaining -= len
-    node = walker.nextNode()
-  }
-  // Offset at/past the end: collapse to the end of the unit.
-  const range = document.createRange()
-  range.selectNodeContents(unit)
-  range.collapse(false)
-  sel.removeAllRanges()
-  sel.addRange(range)
 }
 
 /// The visible text of an editable block — the same string the DOM renders and
@@ -840,110 +777,18 @@ function onInput() {
   syncFromDOM()
 }
 
-// --- Cursor / block helpers --------------------------------------------------
-
-function getParagraphAtCursor() {
-  const sel = window.getSelection()
-  if (!sel.rangeCount) return null
-  let node = sel.anchorNode
-  if (!node) return null
-  let el = node.nodeType === 3 ? node.parentElement : node
-  while (el && !el.classList?.contains('paragraph')) {
-    el = el.parentElement
-  }
-  return el || null
-}
-
-function getSectionTitleAtCursor() {
-  const sel = window.getSelection()
-  if (!sel.rangeCount) return null
-  let node = sel.anchorNode
-  if (!node) return null
-  let el = node.nodeType === 3 ? node.parentElement : node
-  while (el && !el.classList?.contains('section-title')) {
-    el = el.parentElement
-  }
-  return el || null
-}
-
-function getSectionIdAtCursor() {
-  const el = getParagraphAtCursor() || getSectionTitleAtCursor()
-  if (!el) return null
-  return el.dataset.sectionId || null
-}
-
-function isCaretAtStart(range, element) {
-  const temp = range.cloneRange()
-  temp.selectNodeContents(element)
-  temp.collapse(true)
-  return range.compareBoundaryPoints(Range.START_TO_START, temp) === 0
-}
-
-function isCaretAtEnd(range, element) {
-  const temp = range.cloneRange()
-  temp.selectNodeContents(element)
-  temp.collapse(false)
-  return range.compareBoundaryPoints(Range.END_TO_END, temp) === 0
-}
-
-// The editable span inside a section-title: .section-subtitle for a Chapter
-// (the prefix is locked), .section-title-text for a Section (the whole title).
-function editableSpanOf(sectionEl) {
-  return sectionEl.querySelector('.section-subtitle') ||
-    sectionEl.querySelector('.section-title-text') ||
-    sectionEl
-}
-
-// --- Page/line navigation (exposed to the parent for keyboard shortcuts) -----
-
-function placeCursorAtStart(el) {
-  const range = document.createRange()
-  range.setStart(el, 0)
-  range.collapse(true)
-  const sel = window.getSelection()
-  sel.removeAllRanges()
-  sel.addRange(range)
-}
-
-/// Return the plain text of the current selection within the editor sheet, or
-/// '' when nothing is selected or the selection lies outside the sheet. Used by
-/// the Assistant panel's `selection` scope — the model reads the writer's
-/// selected text as context.
+// --- Cursor / block helpers (extracted to useEditorCursor.js) ---------------
+// The stateless cursor/caret/selection helpers below lived here until roadmap
+// 5.6; they're now pure functions in src/composables/useEditorCursor.js
+// (imported above) — blockSelector, bookmarkSelection, restoreSelection,
+// editableSpanOf, getParagraphAtCursor, getSectionTitleAtCursor,
+// getSectionIdAtCursor, isCaretAtStart, isCaretAtEnd, placeCursorAtStart,
+// selectLine. This wrapper is the one exception: `getSelectionText` there takes
+// the editor root as an argument (so it's unit-testable without a component),
+// while the parent surface expects the arg-less form that bounds itself to this
+// sheet — so the exposed name stays a thin wrapper over `sheetRef.value`.
 function getSelectionText() {
-  const sel = window.getSelection()
-  if (!sel || sel.isCollapsed || !sel.rangeCount) return ''
-  const text = sel.toString()
-  if (!text) return ''
-  // Confirm the selection is within this editor sheet so we don't capture
-  // selections made in other UI (e.g. the nav drawer).
-  const root = sheetRef.value
-  if (!root) return text
-  let node = sel.anchorNode
-  let el = node?.nodeType === 3 ? node.parentElement : node
-  while (el && el !== root) el = el.parentElement
-  return el === root ? text : ''
-}
-
-function selectLine() {
-  const sel = window.getSelection()
-  if (!sel.rangeCount) return
-  const para = getParagraphAtCursor()
-  if (!para) return
-  const range = sel.getRangeAt(0)
-  const endPara = range.endContainer.nodeType === 3
-    ? range.endContainer.parentElement.closest('.paragraph')
-    : range.endContainer.closest('.paragraph')
-  if (endPara && endPara.nextElementSibling && endPara.nextElementSibling.classList.contains('paragraph')) {
-    const next = endPara.nextElementSibling
-    range.setEndAfter(next.lastChild || next)
-    sel.removeAllRanges()
-    sel.addRange(range)
-  } else {
-    const r = document.createRange()
-    r.selectNodeContents(para)
-    sel.removeAllRanges()
-    sel.addRange(r)
-  }
+  return selectionTextWithin(sheetRef.value)
 }
 
 // Current page number at the cursor: walk back from the cursor's block to the
