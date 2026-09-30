@@ -27,6 +27,13 @@ import {
   isCaretAtStart, isCaretAtEnd, placeCursorAtStart, selectLine,
   getSelectionText as selectionTextWithin,
 } from '../../composables/useEditorCursor.js'
+import {
+  layoutPageBreaks as layoutPageBreaksInSheet,
+  navigatePage as navigatePageInSheet,
+  navigateSectionPage as navigateSectionPageInSheet,
+  scrollToPage as scrollToPageInSheet,
+  getCurrentPage as getCurrentPageInSheet,
+} from '../../composables/useEditorPageNav.js'
 import { THEMES } from '../../constants/themes.js'
 import { generateParagraphId, generateSectionId, createSection, createParagraph, defaultTextStyle } from '../../constants/DocumentModel.js'
 import { useSectionFormat } from '../../composables/useSectionFormat.js'
@@ -397,77 +404,13 @@ function syncFromDOM() {
   emit('syncSection', { id: s.id, title: s.title, paragraphs: s.paragraphs })
 }
 
-// --- Page-break layout -------------------------------------------------------
-// pageBreaks (from usePagination) are indices into the flattened block
-// sequence (section-titles + paragraphs, no epigram). layoutPageBreaks walks
-// the live DOM content blocks in that same order and stamps data-page-start on
-// whichever block begins a page. CSS targets [data-page-start] generally, so a
-// page can begin on either a section-title or a paragraph.
-
+// --- Page-break layout (extracted to useEditorPageNav.js) -------------------
+// layoutPageBreaks lives in src/composables/useEditorPageNav.js now; this
+// arg-less wrapper injects the reactive values editorDisplay owns (the sheet
+// root, the doc sections, and the pageBreaks prop) so the renderEditor /
+// reconcileEditor / pageBreaks-watch call sites stay unchanged.
 function layoutPageBreaks() {
-  const root = sheetRef.value
-  if (!root) return
-
-  root.querySelectorAll('.page-break-line').forEach(el => el.remove())
-  root.querySelectorAll('.editor-sentinel').forEach(el => el.remove())
-  root.querySelectorAll('[data-page-start]').forEach(el => el.removeAttribute('data-page-start'))
-
-  const blocks = flattenSections(props.modelValue?.sections || [])
-  if (blocks.length === 0) return
-
-  const breaks = pageBreaks.value
-  let blockIndex = 0
-  let pageNum = 1
-  let lastContentNode = null
-  let lastParagraphNode = null
-  let currentNode = root.firstElementChild
-
-  while (currentNode) {
-    const isContent = currentNode.classList?.contains('section-title') ||
-      currentNode.classList?.contains('paragraph')
-    if (!isContent) {
-      currentNode = currentNode.nextElementSibling
-      continue
-    }
-
-    if (blockIndex === 0 || breaks.includes(blockIndex)) {
-      if (blockIndex !== 0) pageNum++
-      currentNode.setAttribute('data-page-start', String(pageNum))
-    }
-
-    lastContentNode = currentNode
-    if (currentNode.classList.contains('paragraph')) lastParagraphNode = currentNode
-    blockIndex++
-    currentNode = currentNode.nextElementSibling
-  }
-
-  // Trailing page-break line + sentinel for visual closure and to absorb
-  // clicks below the last page break (same purpose as the old code).
-  if (lastContentNode) {
-    const hr = document.createElement('hr')
-    hr.className = 'page-break-line'
-    hr.setAttribute('contenteditable', 'false')
-    hr.style.cssText = `border:none;border-top:1px dashed var(--page-break-color);opacity:0.25;margin:1.2em 0;`
-    root.insertBefore(hr, lastContentNode.nextSibling)
-
-    const sentinel = document.createElement('div')
-    sentinel.className = 'editor-sentinel'
-    sentinel.setAttribute('contenteditable', 'false')
-    sentinel.style.cssText = 'height:48px;user-select:none;'
-    const focusTarget = lastParagraphNode || lastContentNode
-    sentinel.addEventListener('click', (e) => {
-      e.preventDefault()
-      if (focusTarget) {
-        const range = document.createRange()
-        range.selectNodeContents(focusTarget)
-        range.collapse(false)
-        const sel = window.getSelection()
-        sel.removeAllRanges()
-        sel.addRange(range)
-      }
-    })
-    root.appendChild(sentinel)
-  }
+  return layoutPageBreaksInSheet(sheetRef.value, props.modelValue?.sections || [], pageBreaks.value)
 }
 
 // --- Reconciliation (external model changes) ---------------------------------
@@ -791,134 +734,28 @@ function getSelectionText() {
   return selectionTextWithin(sheetRef.value)
 }
 
-// Current page number at the cursor: walk back from the cursor's block to the
-// nearest [data-page-start] marker. (Mid-page blocks have no marker of their
-// own, so reading the cursor block's own data-page-start would wrongly default
-// to 1 — this walk finds the page-start block that owns the current page.)
-function currentPageAtCursor() {
-  const sheet = sheetRef.value
-  if (!sheet) return 1
-  const current = getParagraphAtCursor() || getSectionTitleAtCursor()
-  if (!current) return 1
-  let walk = current
-  while (walk) {
-    if (walk.dataset?.pageStart) return parseInt(walk.dataset.pageStart, 10)
-    walk = walk.previousElementSibling
-  }
-  return 1
-}
-
-// Place the cursor on the first paragraph of the page whose start block is
-// `startEl` (a section-title or paragraph). If the page starts with a
-// section-title, drop into the first paragraph after it.
-//
-// `behavior` defaults to 'smooth' for in-view page navigation (adjacent pages,
-// a short pleasant glide). View-switch restoration passes 'auto' (instant): a
-// switch can jump many pages, and a smooth glide there would briefly flash the
-// wrong page (the scroll-layer keeps its old pixel scrollTop until the glide
-// finishes) before settling — instant jumps straight to the target page.
-function focusPageStart(startEl, behavior = 'smooth') {
-  let target = startEl
-  if (startEl.classList.contains('section-title')) {
-    let next = startEl.nextElementSibling
-    while (next && !next.classList.contains('paragraph') && !next.classList.contains('section-title')) {
-      next = next.nextElementSibling
-    }
-    if (next && next.classList.contains('paragraph')) target = next
-  }
-  placeCursorAtStart(target)
-  target.scrollIntoView({ behavior, block: 'start' })
-}
-
+// --- Page navigation (extracted to useEditorPageNav.js) ---------------------
+// The pure DOM helpers (currentPageAtCursor, currentPageAtTop, focusPageStart,
+// layoutPageBreaks, navigatePage, navigateSectionPage, scrollToPage,
+// getCurrentPage) live in src/composables/useEditorPageNav.js. The four exposed
+// here keep their arg-less parent surface (App.vue / useNavigation call them
+// with just a page number or direction); each injects the sheet root — and, for
+// scrollToPage, the sections + pageBreaks the defensive stamp needs — so the
+// orchestrator's reactive state stays owned by editorDisplay.
 function navigatePage(direction) {
-  const sheet = sheetRef.value
-  if (!sheet) return
-  const currentPage = currentPageAtCursor()
-  const targetPage = currentPage + direction
-  if (targetPage < 1) return
-  const startEl = sheet.querySelector(`[data-page-start="${targetPage}"]`)
-  if (!startEl) return
-  focusPageStart(startEl)
+  return navigatePageInSheet(sheetRef.value, direction)
 }
 
-// Absolute scroll-to-page for view switching (5.1b): place the cursor + scroll
-// to the start of page `n`, reusing the same focusPageStart navigatePage uses.
-// Unlike navigatePage this takes an absolute page number (captured from the
-// outgoing view) rather than a relative step. Instant ('auto') behavior — see
-// focusPageStart — so the switch doesn't glide through intermediate pages.
-//
-// CRITICAL: on a manuscript→editor switch the editor mounts FRESH. Its
-// data-page-start stamps are applied by layoutPageBreaks(), which renderEditor
-// defers to a nextTick. But App.vue queues this scrollToPage the instant
-// viewMode flips — BEFORE the editor's deferred layoutPageBreaks runs — so the
-// stamps are absent when we arrive, the querySelector finds nothing, and we'd
-// silently no-op, leaving the editor at the manuscript's old pixel scrollTop
-// (which in the editor's denser layout is a DIFFERENT page — the 9→13 drift,
-// same ~1.44x ratio as the original 15→23 bug). layoutPageBreaks is synchronous
-// and idempotent (clears + re-stamps from the already-populated pageBreaks
-// prop, and renderEditor has already built the content DOM by onMounted), so
-// calling it here guarantees the stamps exist before we query.
 function scrollToPage(n) {
-  const sheet = sheetRef.value
-  if (!sheet) return
-  layoutPageBreaks()
-  const targetPage = Math.max(1, n)
-  const startEl = sheet.querySelector(`[data-page-start="${targetPage}"]`)
-  if (startEl) focusPageStart(startEl, 'auto')
+  return scrollToPageInSheet(sheetRef.value, n, props.modelValue?.sections || [], pageBreaks.value)
 }
 
-// The page currently at the TOP of the visible area — the editor's screen-based
-// notion of "current page" for view switching. We read the VISIBLE page, not
-// the caret's page: if the writer scrolled with the scrollbar without clicking,
-// the caret is stale (still wherever they last clicked), so currentPageAtCursor
-// would report a page they're not looking at. The manuscript side already reads
-// the visible page (getCurrentContentPage); reading the same way here makes the
-// two directions symmetric and the switch preserve what's on screen. Walks the
-// [data-page-start] markers in DOM order and picks the highest one at or above
-// the scroll-layer's visible top (its top + ~40px padding).
-function currentPageAtTop() {
-  const sheet = sheetRef.value
-  if (!sheet) return 1
-  const layer = sheet.closest('.scroll-layer')
-  const targetY = layer ? layer.getBoundingClientRect().top + 40 : 40
-  const starts = sheet.querySelectorAll('[data-page-start]')
-  let current = 1
-  for (const el of starts) {
-    if (el.getBoundingClientRect().top <= targetY) {
-      current = parseInt(el.getAttribute('data-page-start'), 10)
-    } else {
-      break // DOM order === page order; nothing further can be at/above the line
-    }
-  }
-  return current
-}
-
-// The page number at the caret — used by App.vue when switching FROM the editor
-// to another view so the incoming view can land on the same page. Screen-based
-// (see currentPageAtTop); page numbers agree across views because pagination is
-// shared.
 function getCurrentPage() {
-  return currentPageAtTop()
+  return getCurrentPageInSheet(sheetRef.value)
 }
 
-// Jump the cursor to the first paragraph of the next/previous page that begins
-// with a section-title (the section-aware replacement for navigateHeadingPage).
 function navigateSectionPage(direction) {
-  const sheet = sheetRef.value
-  if (!sheet) return
-  const currentPage = currentPageAtCursor()
-  const sectionTitles = Array.from(sheet.querySelectorAll('.section-title[data-page-start]'))
-  const sectionPages = sectionTitles.map(el => parseInt(el.dataset.pageStart, 10))
-  let targetPage
-  if (direction > 0) {
-    targetPage = sectionPages.find(p => p > currentPage)
-  } else {
-    targetPage = [...sectionPages].reverse().find(p => p < currentPage)
-  }
-  if (!targetPage) return
-  const startEl = sheet.querySelector(`.section-title[data-page-start="${targetPage}"]`)
-  if (!startEl) return
-  focusPageStart(startEl)
+  return navigateSectionPageInSheet(sheetRef.value, direction)
 }
 
 // --- Keyboard / input handling ----------------------------------------------
