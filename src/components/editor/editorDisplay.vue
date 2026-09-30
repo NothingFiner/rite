@@ -17,9 +17,10 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, nextTick, watch, computed, toRef } from 'vue'
-import { paragraphToHTML, sectionTitleToHTML, escapeHtml } from '../../composables/useParagraphHTML.js'
+import { escapeHtml } from '../../composables/useParagraphHTML.js'
 import { flattenSections, computeFirstLineIndent } from '../../composables/useSectionBlocks.js'
-import { computeReconcileOps, blockKey } from '../../composables/useEditorReconcile.js'
+import { computeReconcileOps, blockKey, renderBlockHTML } from '../../composables/useEditorReconcile.js'
+import { buildEditorHTML } from '../../composables/useEditorRender.js'
 import { applySearchHighlights, clearSearchHighlights } from '../../composables/useSearchHighlights.js'
 import {
   blockSelector, bookmarkSelection, restoreSelection, editableSpanOf,
@@ -190,23 +191,13 @@ function layoutPageBreaks() {
 // useEditorReconcile.js; this function owns the DOM application, cursor
 // save/restore, the epigram, and a drift-gate fallback to renderEditor.
 
-/// Render a single block to its full outer HTML, matching renderEditor's
-/// rendering byte-for-byte so an unchanged block is `keep`, not a false
-/// `replace`. Uses the block's baked `chapterIndex` (set by flattenSections or
-/// bakeChapterIndices) for the render-derived chapter prefix.
-function renderBlockHTML(block) {
-  if (block.kind === 'section-title') {
-    const idx = block.chapterIndex
-    const chapterPrefix = idx != null ? sectionFormat.formatChapter(idx) : ''
-    return sectionTitleToHTML(
-      { id: block.sectionId, title: block.title, sectionType: block.sectionType },
-      idx,
-      chapterPrefix,
-      { fresh: block.sectionId === freshSectionId.value }
-    )
-  }
-  return paragraphToHTML(block.paragraph, { sectionId: block.sectionId })
-}
+/// renderBlockHTML (the single-block renderer computeReconcileOps injects as
+/// its renderBlockFn) now lives in useEditorReconcile.js — extracted in roadmap
+/// 5.6 PR4. It's pure: the render-derived bits it closed over (freshSectionId,
+/// formatChapter) are passed in as an options bag at the call site below, so it
+/// stays unit-testable without the component. buildEditorHTML (the full-sheet
+/// render) lives in useEditorRender.js; renderEditor below is now a thin wrapper
+/// over it.
 
 /// Track the in-editor selection continuously so an external change triggered
 /// from OUTSIDE the editor (nav-drawer rename, toolbar, undo/redo) can still
@@ -306,7 +297,10 @@ function reconcileEditor() {
     epigramNode = null
   }
 
-  const { ops, removedKeys } = computeReconcileOps(oldBlocks, newBlocks, renderBlockHTML)
+  const { ops, removedKeys } = computeReconcileOps(
+    oldBlocks, newBlocks,
+    (block) => renderBlockHTML(block, { freshSectionId: freshSectionId.value, formatChapter: sectionFormat.formatChapter })
+  )
 
   // Apply ops in new order, keeping a prevNode cursor so each block lands in the
   // right place. Content blocks live after the epigram (if any); the hr/sentinel
@@ -407,41 +401,24 @@ function renderEditor() {
   const root = sheetRef.value
   if (!root) return
 
-  // Shallow-copy paragraph blocks so baking computed indents does not mutate
-  // the store's reactive paragraphs.
-  const blocks = flattenSections(props.modelValue?.sections || []).map(b => {
-    if (b.kind === 'paragraph') return { ...b, paragraph: { ...b.paragraph } }
-    return b
-  })
+  // The full-sheet build (flatten → bake first-line indents → render each
+  // block → prepend the epigram) lives in useEditorRender.js now (roadmap 5.6
+  // PR4); it returns the baked block list + section count so we record them as
+  // the retained baseline the reconciler diffs against next time.
+  const { html, blocks, sectionCount } = buildEditorHTML(
+    props.modelValue?.sections || [],
+    {
+      freshSectionId: freshSectionId.value,
+      formatChapter: sectionFormat.formatChapter,
+      hasEpigram: props.modelValue?.hasEpigram,
+      epigramText: props.modelValue?.epigramText,
+    }
+  )
 
-  for (let i = 0; i < blocks.length; i++) {
-    if (blocks[i].kind !== 'paragraph') continue
-    blocks[i].paragraph.firstLineIndent = computeFirstLineIndent(blocks, i)
-  }
   // Record the baked block list so a later external change can diff against it
   // instead of rebuilding the whole sheet.
   lastRenderedBlocks.value = blocks
-  lastSectionCount.value = blocks.filter(b => b.kind === 'section-title').length
-
-  let chapterIndex = 0
-  let html = blocks.map(b => {
-    if (b.kind === 'section-title') {
-      const idx = b.sectionType === 'chapter' ? ++chapterIndex : null
-      const chapterPrefix = idx != null ? sectionFormat.formatChapter(idx) : ''
-      return sectionTitleToHTML(
-        { id: b.sectionId, title: b.title, sectionType: b.sectionType },
-        idx,
-        chapterPrefix,
-        { fresh: b.sectionId === freshSectionId.value }
-      )
-    }
-    return paragraphToHTML(b.paragraph, { sectionId: b.sectionId })
-  }).join('')
-
-  if (props.modelValue?.hasEpigram && props.modelValue?.epigramText) {
-    const epigramHtml = `<div class="epigram-block">${escapeHtml(props.modelValue.epigramText).replace(/\n/g, '<br>')}</div>`
-    html = epigramHtml + html
-  }
+  lastSectionCount.value = sectionCount
 
   root.innerHTML = html
   applySectionTitleLocks()
