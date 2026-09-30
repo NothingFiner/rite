@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeReconcileOps, blockKey } from './useEditorReconcile.js'
+import { computeReconcileOps, blockKey, renderBlockHTML } from './useEditorReconcile.js'
 
 // --- toy block builders + renderer ------------------------------------------
 // The real renderer (sectionTitleToHTML / paragraphToHTML) is injected by the
@@ -204,5 +204,88 @@ describe('computeReconcileOps', () => {
     const { ops, removedKeys } = reconcile(old, [])
     expect(ops).toEqual([])
     expect(removedKeys).toEqual(['title:s1', 'para:p1'])
+  })
+})
+
+// --- renderBlockHTML (the production renderBlockFn) --------------------------
+// renderBlockHTML is the single-block renderer computeReconcileOps injects in
+// production. It must match buildEditorHTML's per-block output byte-for-byte so
+// an unchanged block diffs as `keep`. These tests pin that contract directly
+// against the real sectionTitleToHTML / paragraphToHTML output (no toy
+// renderer), covering the two kinds + the injected render-derived bits.
+
+const fmt = (i) => `Chapter ${i}: `
+
+describe('renderBlockHTML', () => {
+  it('renders a chapter title with the derived prefix and a locked subtitle span', () => {
+    const block = { kind: 'section-title', sectionId: 's1', sectionType: 'chapter', title: 'The Reveal', chapterIndex: 1 }
+    const html = renderBlockHTML(block, { freshSectionId: null, formatChapter: fmt })
+    expect(html).toBe(
+      '<div class="section-title chapter" data-section-id="s1" data-section-type="chapter" contenteditable="false">'
+      + '<span class="chapter-prefix" contenteditable="false">Chapter 1: </span>'
+      + '<span class="section-subtitle">The Reveal</span></div>'
+    )
+  })
+
+  it('renders a plain section title with a single title-text span and no prefix', () => {
+    const block = { kind: 'section-title', sectionId: 's2', sectionType: 'section', title: 'Opening', chapterIndex: null }
+    const html = renderBlockHTML(block, { freshSectionId: null, formatChapter: fmt })
+    expect(html).toBe(
+      '<div class="section-title" data-section-id="s2" data-section-type="section" contenteditable="false">'
+      + '<span class="section-title-text">Opening</span></div>'
+    )
+  })
+
+  it('renders a fresh section title editable so the user can type the subtitle inline', () => {
+    const block = { kind: 'section-title', sectionId: 's1', sectionType: 'chapter', title: '', chapterIndex: 1 }
+    const html = renderBlockHTML(block, { freshSectionId: 's1', formatChapter: fmt })
+    expect(html).toContain('contenteditable="true"')
+    // An empty title renders a <br> placeholder in the subtitle span.
+    expect(html).toContain('<span class="section-subtitle"><br></span>')
+  })
+
+  it('renders a non-chapter title without a prefix even when a chapterIndex is present', () => {
+    // A section-type title never has a prefix; chapterIndex is null for them,
+    // but even if it weren't, sectionType drives the prefix, not the index.
+    const block = { kind: 'section-title', sectionId: 's2', sectionType: 'section', title: 'X', chapterIndex: null }
+    const html = renderBlockHTML(block, { freshSectionId: null, formatChapter: fmt })
+    expect(html).not.toContain('chapter-prefix')
+  })
+
+  it('renders a paragraph with its para id, section id, and baked indent style', () => {
+    const block = {
+      kind: 'paragraph',
+      sectionId: 's1',
+      paragraphId: 'p1',
+      paragraph: {
+        id: 'p1',
+        elements: [{ textRun: { content: 'hello', textStyle: {} } }],
+        leftIndent: null,
+        rightIndent: null,
+        firstLineIndent: 0.5,
+      },
+    }
+    const html = renderBlockHTML(block, { freshSectionId: null, formatChapter: fmt })
+    expect(html).toBe(
+      '<div class="paragraph" data-para-id="p1" data-section-id="s1" style="text-indent:48px">hello</div>'
+    )
+  })
+
+  it('renders a zero-indent paragraph with the no-indent class and no text-indent style', () => {
+    const block = {
+      kind: 'paragraph',
+      sectionId: 's1',
+      paragraphId: 'p1',
+      paragraph: {
+        id: 'p1',
+        elements: [{ textRun: { content: 'first', textStyle: {} } }],
+        leftIndent: null,
+        rightIndent: null,
+        firstLineIndent: 0,
+      },
+    }
+    const html = renderBlockHTML(block, { freshSectionId: null, formatChapter: fmt })
+    expect(html).toContain('class="paragraph no-indent"')
+    expect(html).not.toContain('text-indent')
   })
 })

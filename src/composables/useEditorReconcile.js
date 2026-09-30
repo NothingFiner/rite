@@ -29,6 +29,40 @@
 // each title block, so inserting/deleting a chapter changes every later
 // chapter's `chapterIndex` → its rendered prefix changes → it becomes a
 // `replace` op and is re-rendered with the correct number, for free.
+//
+// `renderBlockHTML` (below) is the production `renderBlockFn`: it renders one
+// block to the same HTML `buildEditorHTML` (useEditorRender.js) produces for
+// that block, so a block unchanged between two renders is byte-identical and
+// diffs as `keep`. The orchestrator binds the render-derived bits
+// (`freshSectionId`, `formatChapter`) it owns into the options bag and passes
+// the bound function to computeReconcileOps.
+
+import { paragraphToHTML, sectionTitleToHTML } from './useParagraphHTML.js'
+
+/// Render a single block to its full editor outer HTML, matching
+/// buildEditorHTML's per-block rendering byte-for-byte so an unchanged block
+/// is `keep`, not a false `replace`. Uses the block's baked `chapterIndex`
+/// (set by flattenSections, or by bakeChapterIndices on the DOM-readback path)
+/// for the render-derived chapter prefix.
+///
+/// `{ freshSectionId, formatChapter }` is injected by the orchestrator:
+/// `freshSectionId` marks a just-inserted section's title editable;
+/// `formatChapter(index)` renders the locked "Chapter N: " prefix. Both are
+/// passed as a bag (not closed over) so this stays a pure, unit-testable
+/// function the reconciler can inject as its `renderBlockFn`.
+export function renderBlockHTML(block, { freshSectionId, formatChapter } = {}) {
+  if (block.kind === 'section-title') {
+    const idx = block.chapterIndex
+    const chapterPrefix = idx != null ? (formatChapter ? formatChapter(idx) : '') : ''
+    return sectionTitleToHTML(
+      { id: block.sectionId, title: block.title, sectionType: block.sectionType },
+      idx,
+      chapterPrefix,
+      { fresh: block.sectionId === freshSectionId }
+    )
+  }
+  return paragraphToHTML(block.paragraph, { sectionId: block.sectionId })
+}
 
 /// A stable, kind-prefixed key for a block. The prefix keeps section ids and
 /// paragraph ids in separate namespaces (a section id and a paragraph id could
