@@ -61,8 +61,19 @@ export function parseParagraphElement(child, zoom) {
   if (elements.length === 0) {
     elements.push({ textRun: { content: '', textStyle: defaultTextStyle() } })
   }
+  // Resolve the paragraph id, STAMPING it back onto the DOM when missing. A
+  // paragraph created by the browser (paste / IME composition / an Enter edge
+  // case the keydown handler doesn't catch) can land in the sheet with no
+  // data-para-id; without this write-back the model + Rust get a fresh id while
+  // the DOM keeps none, so `applySearchHighlights` (which locates matches by
+  // [data-para-id]) can never find the paragraph and search matches render with
+  // no highlight. Stamping here keeps the invariant DOM data-para-id === model
+  // paragraph id that the reconciler, the search highlighter, and the Rust
+  // UpdateParagraph delta all depend on.
+  const id = child.dataset.paraId || generateParagraphId()
+  child.dataset.paraId = id
   return {
-    id: child.dataset.paraId || generateParagraphId(),
+    id,
     leftIndent: leftIndentPx > 0 ? Math.round(leftIndentPx / 96 * 10) / 10 : null,
     rightIndent: rightIndentPx > 0 ? Math.round(rightIndentPx / 96 * 10) / 10 : null,
     firstLineIndent: null, // recomputed in syncFromDOM/fullSyncFromDOM
