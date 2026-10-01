@@ -49,7 +49,7 @@ export function useRustSearch() {
         matchIndex: currentIndex.value,
       })
       matches.value = result.matches || []
-      currentIndex.value = result.current_index
+      currentIndex.value = result.currentIndex
       return result
     } catch (e) {
       console.error('Replace current failed:', e)

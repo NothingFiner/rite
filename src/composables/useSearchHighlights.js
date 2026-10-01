@@ -63,8 +63,8 @@ export function applySearchHighlights(root, matches, currentIndex) {
   const byPara = {}
   for (let i = 0; i < matches.length; i++) {
     const m = matches[i]
-    if (!byPara[m.paragraph_id]) byPara[m.paragraph_id] = []
-    byPara[m.paragraph_id].push({ ...m, index: i })
+    if (!byPara[m.paragraphId]) byPara[m.paragraphId] = []
+    byPara[m.paragraphId].push({ ...m, index: i })
   }
 
   for (const paraId in byPara) {
@@ -85,11 +85,11 @@ export function applySearchHighlights(root, matches, currentIndex) {
     }
 
     // Sort by start_offset descending so earlier offsets aren't shifted
-    const paraMatches = byPara[paraId].sort((a, b) => b.start_offset - a.start_offset)
+    const paraMatches = byPara[paraId].sort((a, b) => b.startOffset - a.startOffset)
     for (const match of paraMatches) {
       const isCurrent = match.index === currentIndex
       const className = isCurrent ? CURRENT_CLASS : HIGHLIGHT_CLASS
-      wrapMatchInParagraph(paraEl, match.start_offset, match.end_offset, className)
+      wrapMatchInParagraph(paraEl, match.startOffset, match.endOffset, className)
     }
   }
 

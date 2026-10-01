@@ -26,7 +26,7 @@ function installIpcMock(page) {
               const text = p.textContent || ''
               let i = 0
               while ((i = text.toLowerCase().indexOf(needle, i)) !== -1) {
-                out.push({ section_id: p.dataset.sectionId, paragraph_id: p.dataset.paraId, start_offset: i, end_offset: i + q.length, text: text.slice(i, i + q.length) })
+                out.push({ sectionId: p.dataset.sectionId, paragraphId: p.dataset.paraId, startOffset: i, endOffset: i + q.length, text: text.slice(i, i + q.length) })
                 i += q.length
               }
             }
