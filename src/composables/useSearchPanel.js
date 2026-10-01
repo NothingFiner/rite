@@ -42,6 +42,12 @@ export function useSearchPanel(editorRef, viewModeRef) {
       editorRef.value?.clearSearchHighlights?.()
       return
     }
+    // Flush any pending debounced sync so Rust's `state.document` reflects the
+    // latest editor text BEFORE `search_document` reads it. Without this, typing
+    // text and opening Find within the 1000ms debounce window searches a stale
+    // Rust doc and returns zero matches. No-op when nothing is pending (the
+    // debounce already fired), so repeated Find keystrokes don't re-ship.
+    await store.flushSync()
     const result = await rust.findText(searchQuery.value)
     editorRef.value?.applySearchHighlights?.(result.matches, result.currentIndex)
   }

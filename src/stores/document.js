@@ -220,6 +220,25 @@ export const useDocumentStore = defineStore('document', {
       this.syncTimeout = setTimeout(() => this.syncToRust(), 1000)
     },
 
+    /// Flush a PENDING debounced sync to Rust immediately, awaiting its
+    /// completion. Unlike `undo`/`redo` (which `await this.syncToRust()`
+    /// directly), this first checks for a pending timeout: if the debounce has
+    /// already fired the doc is already in Rust and this is a no-op, so a caller
+    /// that runs per-keystroke (the search panel's `performSearch`) doesn't
+    /// re-ship an unchanged doc on every Find keystroke. The search path needs
+    /// this because `search_document` reads Rust's `state.document`, which lags
+    /// the live editor by up to the 1000ms debounce — without a flush, typing
+    /// text and opening Find within that window searches an empty/stale Rust
+    /// doc and returns zero matches (no highlights, nothing to navigate),
+    /// even though the word count (JS-side) already reflects the edit.
+    async flushSync() {
+      if (this.syncTimeout) {
+        clearTimeout(this.syncTimeout)
+        this.syncTimeout = null
+        await this.syncToRust()
+      }
+    },
+
     markModified() {
       this.isModified = true
       this.debouncedSync()
