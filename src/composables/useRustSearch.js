@@ -27,13 +27,15 @@ export function useRustSearch() {
   }
 
   function findNext() {
-    if (matches.value.length === 0) return
+    if (matches.value.length === 0) return { matches: [], currentIndex: -1 }
     currentIndex.value = (currentIndex.value + 1) % matches.value.length
+    return { matches: matches.value, currentIndex: currentIndex.value }
   }
 
   function findPrev() {
-    if (matches.value.length === 0) return
+    if (matches.value.length === 0) return { matches: [], currentIndex: -1 }
     currentIndex.value = (currentIndex.value - 1 + matches.value.length) % matches.value.length
+    return { matches: matches.value, currentIndex: currentIndex.value }
   }
 
   async function replaceCurrent(replacement) {

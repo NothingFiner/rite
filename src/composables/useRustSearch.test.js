@@ -61,16 +61,26 @@ describe('useRustSearch', () => {
     const search = useRustSearch()
     await search.findText('foo')
     expect(search.currentIndex.value).toBe(0)
-    search.findNext()
+    // findNext must RETURN the updated state — useSearchPanel.onSearchNext
+    // reads result.matches / result.currentIndex, so an undefined return
+    // (the pre-fix bug) throws a TypeError and the highlight never updates.
+    let result = search.findNext()
     expect(search.currentIndex.value).toBe(1)
-    search.findNext()
+    expect(result.matches).toHaveLength(2)
+    expect(result.currentIndex).toBe(1)
+    result = search.findNext()
     expect(search.currentIndex.value).toBe(0)
+    expect(result.currentIndex).toBe(0)
   })
 
   it('findNext does nothing with no matches', () => {
     const search = useRustSearch()
-    search.findNext()
+    const result = search.findNext()
     expect(search.currentIndex.value).toBe(-1)
+    // No matches → an empty result, NOT undefined, so the caller's
+    // applySearchHighlights(result.matches, …) is a safe no-op.
+    expect(result.matches).toEqual([])
+    expect(result.currentIndex).toBe(-1)
   })
 
   it('goes to previous match with wrapping', async () => {
@@ -85,8 +95,11 @@ describe('useRustSearch', () => {
     search.findNext()
     search.findNext()
     expect(search.currentIndex.value).toBe(2)
-    search.findPrev()
+    // findPrev must return the updated state too (mirrors findNext).
+    const result = search.findPrev()
     expect(search.currentIndex.value).toBe(1)
+    expect(result.matches).toHaveLength(3)
+    expect(result.currentIndex).toBe(1)
     search.findPrev()
     search.findPrev()
     expect(search.currentIndex.value).toBe(2)
@@ -94,8 +107,10 @@ describe('useRustSearch', () => {
 
   it('findPrev does nothing with no matches', () => {
     const search = useRustSearch()
-    search.findPrev()
+    const result = search.findPrev()
     expect(search.currentIndex.value).toBe(-1)
+    expect(result.matches).toEqual([])
+    expect(result.currentIndex).toBe(-1)
   })
 
   it('clears search state', async () => {
