@@ -36,6 +36,22 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # with the existing mammoth-based import path.
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
+# macOS-only native spellcheck enable (Phase 5.8a). wry/Tauri's WKWebView ships
+# with continuous spell checking OFF (Tauri #7705), so the red misspelling
+# squiggle never paints even with `spellcheck="true"` on the sheet. We flip
+# `WebContinuousSpellCheckingEnabled` in NSUserDefaults at the top of `main()`
+# (before the WKWebView is created) via the `objc` crate. Target-gated so
+# non-macOS builds don't pull it in.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"
+
+# objc 0.2's `sel_impl!` macro emits a `cfg(cargo-clippy)` check that the
+# `unexpected_cfgs` lint flags as unknown. Register it as a known cfg so the
+# dependency's macro doesn't dirty our build output. (Scoped to objc only;
+# the rest of the crate gains nothing from clippy-cfg awareness.)
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
+
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem
 # DO NOT REMOVE!!
