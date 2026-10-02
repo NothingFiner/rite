@@ -87,6 +87,56 @@ pub fn change_section_type(
     Ok(doc.clone())
 }
 
+/// Move a section — with all its paragraphs — to sit after `to_after_id`, or
+/// to the front of the document when `to_after_id` is `None`. The outline
+/// drag-reorder (roadmap 5.5) calls this; the resulting `push_history_delta`
+/// journals a single `MoveSection` op (the compute_doc_ops reorder fix), so
+/// undo/redo and version-history reconstruction both round-trip the order.
+#[tauri::command]
+pub fn move_section(
+    id: String,
+    to_after_id: Option<String>,
+    state: State<AppState>,
+) -> Result<Document, String> {
+    let old_doc = state.document.lock().map_err(|e| e.to_string())?.clone();
+    let mut doc = state.document.lock().map_err(|e| e.to_string())?;
+    let mut modified = state.is_modified.lock().map_err(|e| e.to_string())?;
+
+    if to_after_id.as_deref() == Some(id.as_str()) {
+        return Err(format!("MoveSection: section {} cannot follow itself", id));
+    }
+    // Validate the destination BEFORE mutating: on a bad id the document
+    // lock must not be released with the section already removed (the
+    // failed command would otherwise silently drop it from the document).
+    if let Some(to_after_id) = &to_after_id {
+        if !doc.sections.iter().any(|s| s.id == *to_after_id) {
+            return Err(format!("MoveSection: to_after_id {} not found", to_after_id));
+        }
+    }
+    let from_idx = doc
+        .sections
+        .iter()
+        .position(|s| s.id == id)
+        .ok_or_else(|| format!("MoveSection: section {} not found", id))?;
+    let section = doc.sections.remove(from_idx);
+    if let Some(to_after_id) = &to_after_id {
+        let to_idx = doc
+            .sections
+            .iter()
+            .position(|s| s.id == *to_after_id)
+            .expect("destination validated above");
+        doc.sections.insert(to_idx + 1, section);
+    } else {
+        doc.sections.insert(0, section);
+    }
+
+    *modified = true;
+    drop(doc);
+    state.push_history_delta(&old_doc);
+    let doc = state.document.lock().map_err(|e| e.to_string())?;
+    Ok(doc.clone())
+}
+
 #[tauri::command]
 pub fn search_document(query: String, state: State<AppState>) -> Result<Vec<SearchMatch>, String> {
     let doc = state.document.lock().map_err(|e| e.to_string())?;
@@ -882,6 +932,17 @@ mod tests {
         }
     }
 
+    /// A section with the given id and paragraphs — the building block for
+    /// the move_section tests, which need MULTI-section documents.
+    fn create_section(id: &str, paragraphs: Vec<Paragraph>) -> Section {
+        Section {
+            id: id.to_string(),
+            title: String::new(),
+            section_type: SectionType::Section,
+            paragraphs,
+        }
+    }
+
     fn para_text(p: &Paragraph) -> String {
         p.elements
             .iter()
@@ -1167,5 +1228,138 @@ mod tests {
         assert_eq!(result.current_index, -1);
         assert!(!state.undo().unwrap());
         assert_eq!(first_paragraph_text(&state), "foo foo");
+    }
+
+    // --- move_section ----------------------------------------------------------
+
+    /// Read the live document's section ids in order (the property every
+    /// move/undo assertion in this block checks).
+    fn section_ids(state: &AppState) -> Vec<String> {
+        state
+            .document
+            .lock()
+            .unwrap()
+            .sections
+            .iter()
+            .map(|s| s.id.clone())
+            .collect()
+    }
+
+    /// A three-section document [s1, s2, s3], one paragraph each.
+    fn three_section_document() -> Document {
+        let base = create_document(vec![create_paragraph("p1", "a")]);
+        Document {
+            sections: vec![
+                create_section("s1", vec![create_paragraph("p1", "a")]),
+                create_section("s2", vec![create_paragraph("p2", "b")]),
+                create_section("s3", vec![create_paragraph("p3", "c")]),
+            ],
+            ..base
+        }
+    }
+
+    #[test]
+    fn move_section_returns_the_reordered_document() {
+        let app = mock_app_with_state();
+        let state = app.state::<AppState>();
+        *state.document.lock().unwrap() = three_section_document();
+
+        // Move s1 to the end (after s3) — the returned doc AND the live state
+        // must both reflect the new order.
+        let returned = move_section(
+            "s1".to_string(),
+            Some("s3".to_string()),
+            state.clone(),
+        )
+        .unwrap();
+        assert_eq!(
+            returned.sections.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            ["s2", "s3", "s1"]
+        );
+        assert_eq!(section_ids(&state), ["s2", "s3", "s1"]);
+        // The command marks the document modified so autosave picks it up.
+        assert!(*state.is_modified.lock().unwrap());
+    }
+
+    #[test]
+    fn move_section_to_none_moves_to_front() {
+        let app = mock_app_with_state();
+        let state = app.state::<AppState>();
+        *state.document.lock().unwrap() = three_section_document();
+
+        move_section("s2".to_string(), None, state.clone()).unwrap();
+        assert_eq!(section_ids(&state), ["s2", "s1", "s3"]);
+    }
+
+    #[test]
+    fn move_section_is_undoable() {
+        let app = mock_app_with_state();
+        let state = app.state::<AppState>();
+        *state.document.lock().unwrap() = three_section_document();
+        let original_ids = section_ids(&state);
+
+        // The move is journaled as a history delta (the whole point of the
+        // MoveSection DocOp over a blind reorder), so undo must restore the
+        // original order.
+        move_section("s1".to_string(), Some("s3".to_string()), state.clone())
+            .unwrap();
+        assert_eq!(section_ids(&state), ["s2", "s3", "s1"]);
+
+        assert!(state.undo().unwrap());
+        assert_eq!(section_ids(&state), original_ids);
+    }
+
+    #[test]
+    fn move_section_unknown_id_errors_and_leaves_document_untouched() {
+        let app = mock_app_with_state();
+        let state = app.state::<AppState>();
+        *state.document.lock().unwrap() = three_section_document();
+
+        let err = move_section(
+            "nope".to_string(),
+            Some("s2".to_string()),
+            state.clone(),
+        )
+        .unwrap_err();
+        assert!(err.contains("not found"));
+        assert_eq!(section_ids(&state), ["s1", "s2", "s3"]);
+        // A failed command must not journal a delta: undo has nothing to do.
+        assert!(!state.undo().unwrap());
+    }
+
+    #[test]
+    fn move_section_unknown_destination_leaves_document_untouched() {
+        let app = mock_app_with_state();
+        let state = app.state::<AppState>();
+        *state.document.lock().unwrap() = three_section_document();
+
+        // The destination must be validated BEFORE the remove — the
+        // regression this guards: removing first would silently drop s1 from
+        // the document on the failed command's error path.
+        let err = move_section(
+            "s1".to_string(),
+            Some("nope".to_string()),
+            state.clone(),
+        )
+        .unwrap_err();
+        assert!(err.contains("not found"));
+        assert_eq!(section_ids(&state), ["s1", "s2", "s3"]);
+        assert!(!state.undo().unwrap());
+    }
+
+    #[test]
+    fn move_section_self_follow_errors() {
+        let app = mock_app_with_state();
+        let state = app.state::<AppState>();
+        *state.document.lock().unwrap() = three_section_document();
+
+        let err = move_section(
+            "s1".to_string(),
+            Some("s1".to_string()),
+            state.clone(),
+        )
+        .unwrap_err();
+        assert!(err.contains("cannot follow itself"));
+        assert_eq!(section_ids(&state), ["s1", "s2", "s3"]);
     }
 }

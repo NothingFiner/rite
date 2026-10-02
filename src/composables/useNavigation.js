@@ -73,6 +73,11 @@ export function useNavigation(docRef, editorRef, pagination = { getPageForBlock:
     await store.changeSectionType(id, newType)
   }
 
+  async function moveSection(id, toAfterId) {
+    await store.moveSection(id, toAfterId)
+    // Editor re-renders automatically via its watcher when store.doc changes.
+  }
+
   return {
     selectedNavId,
     tocItems,
@@ -80,5 +85,6 @@ export function useNavigation(docRef, editorRef, pagination = { getPageForBlock:
     renameSection,
     deleteSection,
     changeSectionType,
+    moveSection,
   }
 }

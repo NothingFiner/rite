@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { setActivePinia, createPinia } from 'pinia'
 import { useDocumentStore } from '../stores/document.js'
+import { useToastsStore } from '../stores/toasts.js'
 
 vi.mock('@tauri-apps/api/tauri', () => ({
   invoke: vi.fn(),
@@ -128,6 +129,65 @@ describe('useDocumentStore', () => {
     await store.changeSectionType('s1', 'chapter')
     expect(invoke).toHaveBeenCalledWith('change_section_type', { id: 's1', newType: 'chapter' })
     expect(store.isModified).toBe(true)
+  })
+
+  it('moves section via Rust', async () => {
+    const updatedDoc = {
+      title: 'Test',
+      sections: [makeSection('s2'), makeSection('s1')],
+    }
+    invoke.mockResolvedValue(updatedDoc)
+    const store = useDocumentStore()
+    store.doc = {
+      title: 'Test',
+      sections: [makeSection('s1'), makeSection('s2')],
+    }
+    await store.moveSection('s1', 's2')
+    // Tauri v1 maps the JS camelCase arg to Rust's to_after_id.
+    expect(invoke).toHaveBeenCalledWith('move_section', { id: 's1', toAfterId: 's2' })
+    // Rust's returned doc (with the reordered sections) is assigned back.
+    expect(store.doc.sections.map((s) => s.id)).toEqual(['s2', 's1'])
+    expect(store.isModified).toBe(true)
+  })
+
+  it('maps a null destination to Rust None (front) when moving a section', async () => {
+    invoke.mockResolvedValue({ title: 'Test', sections: [] })
+    const store = useDocumentStore()
+    store.doc = { title: 'Test', sections: [makeSection('s1'), makeSection('s2')] }
+    await store.moveSection('s2', null)
+    expect(invoke).toHaveBeenCalledWith('move_section', { id: 's2', toAfterId: null })
+  })
+
+  it('flushes pending edits before invoking moveSection', async () => {
+    const updatedDoc = { title: 'Test', sections: [] }
+    invoke.mockResolvedValue(updatedDoc)
+    const store = useDocumentStore()
+    store.doc = { title: 'Test', sections: [makeSection('s1')] }
+    store.isModified = true
+    await store.moveSection('s1', null)
+    // The FIRST invoke is the flush (sync_document shipping the pending
+    // edits to Rust) — without it, assigning the returned doc would discard
+    // the un-synced edits.
+    expect(invoke.mock.calls[0][0]).toBe('sync_document')
+    expect(invoke).toHaveBeenCalledWith('move_section', { id: 's1', toAfterId: null })
+  })
+
+  it('reports an error when moving a section fails', async () => {
+    invoke.mockRejectedValue(new Error('MoveSection: section nope not found'))
+    const store = useDocumentStore()
+    const original = { title: 'Test', sections: [makeSection('s1')] }
+    store.doc = original
+
+    const toasts = useToastsStore()
+    vi.spyOn(toasts, 'pushToast')
+
+    await store.moveSection('nope', 's1')
+    // The catch swallows the failure but surfaces it as a labeled toast.
+    // (toEqual, not toBe: Pinia hands back a reactive proxy of the doc.)
+    expect(store.doc).toEqual(original) // untouched
+    expect(toasts.pushToast).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'error', message: expect.stringContaining('nope not found') }),
+    )
   })
 
   it('autosaves when lastPath and isModified are set', async () => {

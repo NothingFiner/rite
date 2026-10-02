@@ -15,9 +15,10 @@ mod summary;
 
 use commands::{
     apply_text_style, autosave_document, change_section_type, delete_section,
-    diff_against_current, get_document, list_history, merge_paragraphs, open_document,
-    reconstruct_version, redo, rename_section, replace_all, replace_current, restore_version,
-    save_document, save_snapshot, search_document, split_paragraph, sync_document, undo,
+    diff_against_current, get_document, list_history, merge_paragraphs, move_section,
+    open_document, reconstruct_version, redo, rename_section, replace_all, replace_current,
+    restore_version, save_document, save_snapshot, search_document, split_paragraph,
+    sync_document, undo,
 };
 use export_docx::export_docx;
 use export_text::export_text;
@@ -111,6 +112,7 @@ fn main() {
             delete_section,
             rename_section,
             change_section_type,
+            move_section,
             apply_text_style,
             split_paragraph,
             merge_paragraphs,
