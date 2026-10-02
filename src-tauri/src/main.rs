@@ -43,10 +43,15 @@ use summary::{retrieve_stale_summary_section_ids, retrieve_summaries, summarize_
 /// with no relaunch. Setting it later (e.g. in `.setup()`) only takes effect
 /// after a restart, because the webview already exists by then.
 ///
-/// There is no JS API to add words to the macOS system spellchecker
-/// (`NSSpellChecker`), so the ignore-list (5.8b, if needed) also goes through
-/// `objc`. This function is the prerequisite for any of that to be visible —
-/// squiggles have to render before "ignore this word" means anything.
+/// The rest of the spellcheck story comes free with this flag: with continuous
+/// spell checking on, WKWebView's own right-click context menu offers
+/// Learn/Ignore/Unlearn Spelling on squiggle-marked words — and clicking Learn
+/// clears the marker — so no custom ignore-list command is needed (the 5.8b
+/// `objc`/`NSSpellChecker` path was planned for this, then found unnecessary).
+/// There is no JS API for any of that, which is why the menu can't be driven
+/// from the web side; the native menu already covers it. Verified manually
+/// 2026-10-02 in `npx tauri dev` — squiggle rendering and the native menu
+/// aren't observable from unit tests (no live WKWebView there).
 #[cfg(target_os = "macos")]
 // objc 0.2's `msg_send!`/`sel_impl!` macros emit `cfg(cargo-clippy)` checks
 // that the modern `unexpected_cfgs` lint flags. It's a known wart of the old
