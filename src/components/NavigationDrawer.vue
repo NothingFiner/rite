@@ -8,8 +8,18 @@
             v-for="item in sections"
             :key="item.id"
             class="nav-section"
-            :class="{ active: props.activeId === item.id }"
+            :class="{
+              active: props.activeId === item.id,
+              dragging: draggingId === item.id,
+              'drop-above': dropTarget?.id === item.id && dropTarget.half === 'before',
+              'drop-below': dropTarget?.id === item.id && dropTarget.half === 'after',
+            }"
+            :draggable="!editingIds.has(item.id)"
             @click="selectSection(item.id)"
+            @dragstart="onDragStart(item)"
+            @dragover="onDragOver($event, item)"
+            @drop="onDrop($event, item)"
+            @dragend="onDragEnd"
           >
             <span v-if="editingIds.has(item.id)" class="nav-edit-row">
               <input
@@ -72,6 +82,7 @@
 
 <script setup>
 import { ref, computed, nextTick, watch } from 'vue'
+import { dropHalf, toAfterIdFor, reorderedIds } from '../composables/useOutlineDrag.js'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -80,7 +91,7 @@ const props = defineProps({
   activeId: { type: String, default: null },
 })
 
-const emit = defineEmits(['scrollTo', 'insertSection', 'renameSection', 'changeSectionType', 'update:expanded', 'select', 'deleteItem'])
+const emit = defineEmits(['scrollTo', 'insertSection', 'renameSection', 'changeSectionType', 'moveSection', 'update:expanded', 'select', 'deleteItem'])
 
 const sectionInput = ref(null)
 const editingIds = ref(new Set())
@@ -111,6 +122,58 @@ function selectSection(id) {
 
 function onDelete(id) {
   emit('deleteItem', id)
+}
+
+// --- drag-to-reorder (roadmap 5.5) --------------------------------------------
+// Native HTML5 DnD, no dependency: `draggable` on the rows plus these four
+// handlers. The dragged id lives in a component-internal ref, NOT in
+// event.dataTransfer — there is only ever one drag at a time, and jsdom has
+// no DataTransfer implementation, so the component state keeps the spec
+// testable. The dragged id never crosses the wire; Rust identifies the section
+// and destination by id.
+
+const draggingId = ref(null)
+// { id, half } of the hovered row while dragging — drives the insertion-line
+// CSS classes. Null when not hovering a valid target.
+const dropTarget = ref(null)
+
+function onDragStart(item) {
+  draggingId.value = item.id
+}
+
+// Marking the hovered row as the drop target REQUIRES preventDefault on
+// dragover — without it the browser shows "no drop" and `drop` never fires.
+// The dragged row itself and rows mid-rename are never valid targets (a
+// rename row hosts a text input whose text selection a drag would fight).
+function onDragOver(e, item) {
+  if (!draggingId.value || draggingId.value === item.id || editingIds.value.has(item.id)) return
+  e.preventDefault()
+  dropTarget.value = { id: item.id, half: dropHalf(e.currentTarget.getBoundingClientRect(), e.clientY) }
+}
+
+function onDrop(e, item) {
+  const draggedId = draggingId.value
+  if (draggedId && draggedId !== item.id && !editingIds.value.has(item.id)) {
+    e.preventDefault()
+    const half = dropHalf(e.currentTarget.getBoundingClientRect(), e.clientY)
+    const targetIndex = sections.value.findIndex((s) => s.id === item.id)
+    const toAfterId = toAfterIdFor(sections.value, targetIndex, half)
+    const currentIds = sections.value.map((s) => s.id)
+    // A drop back onto the row's own position is a no-op — skip the invoke
+    // entirely (reorderedIds returns null when the order wouldn't change).
+    if (reorderedIds(currentIds, draggedId, toAfterId)) {
+      emit('moveSection', draggedId, toAfterId)
+    }
+  }
+  onDragEnd()
+}
+
+// dragend fires on the SOURCE row no matter where the pointer ended up
+// (including a cancelled drag or a drop outside any row) — the single place
+// all drag state is cleared.
+function onDragEnd() {
+  draggingId.value = null
+  dropTarget.value = null
 }
 
 // Toggle a section between auto-numbered Chapter and freeform Section. The
@@ -229,6 +292,22 @@ watch(sections, () => {
 .nav-section:hover,
 .nav-section.active {
   background: var(--hover-bg);
+}
+
+/* Source row while its drag is in flight. */
+.nav-section.dragging {
+  opacity: 0.4;
+}
+
+/* Insertion line at the hovered row's top/bottom edge while dragging — the
+   drop preview. Inset box-shadow (not border) so the row's height and layout
+   don't shift as the pointer moves, which would flicker the half-detection. */
+.nav-section.drop-above {
+  box-shadow: inset 0 2px 0 0 var(--accent);
+}
+
+.nav-section.drop-below {
+  box-shadow: inset 0 -2px 0 0 var(--accent);
 }
 
 .nav-title {

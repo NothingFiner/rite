@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -146,7 +147,8 @@ pub struct TextStyleDelta {
 ///
 /// Chapter numbers are render-derived, so **no variant carries a number** —
 /// `InsertSection`/`DeleteSection` carry the section's `title` (subtitle) and
-/// `section_type`; renames carry titles; type changes carry types. Renumbering
+/// `section_type`; renames carry titles; type changes carry types; moves carry
+/// before/after predecessor ids. Renumbering
 /// is invisible to the delta protocol.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "snake_case", tag = "type")]
@@ -161,6 +163,17 @@ pub enum DocOp {
         /// restores the correct position (mirrors the `DeleteParagraph` fix).
         after_id: Option<String>,
         old: Section,
+    },
+    MoveSection {
+        id: String,
+        /// Predecessor section id in the OLD position, so `invert` can swap
+        /// the two ids and produce a reverse move without re-reading the
+        /// document (mirrors the `after_id`-carried-for-invert pattern of
+        /// `DeleteSection`/`DeleteParagraph`). Unused by `apply`.
+        from_after_id: Option<String>,
+        /// New position: insert after this section id, or at the front when
+        /// `None`.
+        to_after_id: Option<String>,
     },
     RenameSection {
         id: String,
@@ -210,8 +223,11 @@ pub enum MetadataField {
 
 /// Compute the sequence of operations that transforms `old` into `new`.
 /// Sections are matched by stable `id`; paragraphs within a section are matched
-/// by `id`. Reorders are detected as delete+insert pairs (functionally correct,
-/// not optimal — reordering is rare in prose).
+/// by `id`. A section that exists in both lists at a different position is a
+/// MOVE: emitted as a single `MoveSection` (never a delete+insert pair — the
+/// old pair interleaved a blind positional insert with a delete-by-first-id,
+/// and forward replay of that pair cancelled itself, so redo silently no-oped
+/// and journaled history reconstructed the wrong order).
 pub fn compute_doc_ops(old: &Document, new: &Document) -> Vec<DocOp> {
     let mut ops = Vec::new();
 
@@ -268,8 +284,31 @@ pub fn compute_doc_ops(old: &Document, new: &Document) -> Vec<DocOp> {
     let mut j = 0usize;
     let old_secs = &old.sections;
     let new_secs = &new.sections;
+    // Ids already emitted as a `MoveSection` in this batch. The old cursor
+    // walks past such a section again later (it advanced only `j` at emit
+    // time); without this set it would emit a spurious `DeleteSection` for a
+    // section that merely moved.
+    let mut moved: HashSet<String> = HashSet::new();
+    // The section ids in INTERMEDIATE order — the state of the document as
+    // the emitted ops apply one by one (starts as `old`). Two jobs:
+    //   (1) the else branch stamps `from_after_id` from `sim`, NOT from the
+    //       old list: an earlier move in the same batch changes a section's
+    //       actual predecessor, and `invert` must move it back to where it
+    //       REALLY sat at apply time — a stale old-list predecessor makes the
+    //       inverse an identity and undo silently stops restoring the order;
+    //   (2) invariant kept by every branch: after the walk processes
+    //       new[0..j), sim[0..j) == new[0..j) — so the else branch's move can
+    //       always drop the section at index j.
+    let mut sim: Vec<String> = old_secs.iter().map(|s| s.id.clone()).collect();
 
     while i < old_secs.len() || j < new_secs.len() {
+        // Skip old sections already handled by an earlier MoveSection: their
+        // new position (and content diff) was emitted when the new cursor
+        // first encountered them.
+        if i < old_secs.len() && moved.contains(&old_secs[i].id) {
+            i += 1;
+            continue;
+        }
         if i < old_secs.len() && j < new_secs.len() && old_secs[i].id == new_secs[j].id {
             let id = old_secs[i].id.clone();
             if old_secs[i].title != new_secs[j].title {
@@ -305,6 +344,7 @@ pub fn compute_doc_ops(old: &Document, new: &Document) -> Vec<DocOp> {
                 after_id,
                 section: new_secs[j].clone(),
             });
+            sim.insert(j, new_secs[j].id.clone());
             j += 1;
         } else if i < old_secs.len()
             && (j >= new_secs.len() || !new_secs.iter().skip(j).any(|s| s.id == old_secs[i].id))
@@ -319,31 +359,65 @@ pub fn compute_doc_ops(old: &Document, new: &Document) -> Vec<DocOp> {
                 after_id,
                 old: old_secs[i].clone(),
             });
+            if let Some(sim_idx) = sim.iter().position(|id| id == &old_secs[i].id) {
+                sim.remove(sim_idx);
+            }
             i += 1;
         } else {
-            // Both sections exist elsewhere in the opposite list: treat as a
-            // reorder (delete old[i], insert new[j]). Functionally correct but
-            // not optimal; reordering sections is rare.
-            let after_id = if i == 0 {
+            // Both sections exist elsewhere in the opposite list: `new[j]`
+            // MOVED. Emit a single MoveSection (not delete+insert — see the
+            // fn doc), diff its content against its old occurrence right here
+            // (MoveSection carries no content, so rename/type/paragraph
+            // changes must ride in the same batch), and advance ONLY the new
+            // cursor: the old occurrence is skipped later via `moved`.
+            let old_idx = old_secs
+                .iter()
+                .position(|s| s.id == new_secs[j].id)
+                .expect("else branch is only reached when the id exists in old");
+            // The predecessor in the INTERMEDIATE state (see `sim` above) —
+            // this is where the section REALLY sits when the op applies.
+            let sim_idx = sim
+                .iter()
+                .position(|id| id == &new_secs[j].id)
+                .expect("else branch is only reached when the id exists in the intermediate state");
+            let from_after_id = if sim_idx == 0 {
                 None
             } else {
-                Some(old_secs[i - 1].id.clone())
+                Some(sim[sim_idx - 1].clone())
             };
-            ops.push(DocOp::DeleteSection {
-                id: old_secs[i].id.clone(),
-                after_id,
-                old: old_secs[i].clone(),
-            });
-            let ins_after_id = if j == 0 {
+            let to_after_id = if j == 0 {
                 None
             } else {
                 Some(new_secs[j - 1].id.clone())
             };
-            ops.push(DocOp::InsertSection {
-                after_id: ins_after_id,
-                section: new_secs[j].clone(),
+            ops.push(DocOp::MoveSection {
+                id: new_secs[j].id.clone(),
+                from_after_id,
+                to_after_id,
             });
-            i += 1;
+            sim.remove(sim_idx);
+            sim.insert(j, new_secs[j].id.clone());
+            let id = new_secs[j].id.clone();
+            if old_secs[old_idx].title != new_secs[j].title {
+                ops.push(DocOp::RenameSection {
+                    id: id.clone(),
+                    old_title: old_secs[old_idx].title.clone(),
+                    new_title: new_secs[j].title.clone(),
+                });
+            }
+            if old_secs[old_idx].section_type != new_secs[j].section_type {
+                ops.push(DocOp::ChangeSectionType {
+                    id: id.clone(),
+                    old_type: old_secs[old_idx].section_type,
+                    new_type: new_secs[j].section_type,
+                });
+            }
+            ops.extend(compute_paragraph_ops(
+                &old_secs[old_idx].paragraphs,
+                &new_secs[j].paragraphs,
+                &id,
+            ));
+            moved.insert(id);
             j += 1;
         }
     }
@@ -444,6 +518,18 @@ impl DocOp {
             } => DocOp::InsertSection {
                 after_id: after_id.clone(),
                 section: old.clone(),
+            },
+            // A move inverts to the reverse move: the old position becomes
+            // the new destination. Swapping the ids is enough because `apply`
+            // never reads `from_after_id` — only invert does.
+            DocOp::MoveSection {
+                id,
+                from_after_id,
+                to_after_id,
+            } => DocOp::MoveSection {
+                id: id.clone(),
+                from_after_id: to_after_id.clone(),
+                to_after_id: from_after_id.clone(),
             },
             DocOp::RenameSection {
                 id,
@@ -566,6 +652,46 @@ pub fn apply_doc_ops(doc: &mut Document, ops: &[DocOp]) -> Result<(), String> {
                     doc.sections.remove(idx);
                 } else {
                     return Err(format!("DeleteSection: section {} not found", id));
+                }
+            }
+            DocOp::MoveSection {
+                id,
+                from_after_id: _,
+                to_after_id,
+            } => {
+                let from_idx = doc
+                    .sections
+                    .iter()
+                    .position(|s| s.id == *id)
+                    .ok_or_else(|| format!("MoveSection: section {} not found", id))?;
+                // A section can't follow itself — `to_after_id == id` would
+                // otherwise remove the section and reinsert it relative to
+                // its own (now gone) position, silently corrupting the order.
+                if to_after_id.as_deref() == Some(id.as_str()) {
+                    return Err(format!("MoveSection: section {} cannot follow itself", id));
+                }
+                // Validate the destination BEFORE mutating: apply_doc_ops'
+                // contract is precondition-first (see the fn doc) — a failed
+                // op must leave the document untouched, so the removal below
+                // only happens once the destination is known to exist.
+                if let Some(to_after_id) = to_after_id {
+                    if !doc.sections.iter().any(|s| s.id == *to_after_id) {
+                        return Err(format!(
+                            "MoveSection: to_after_id {} not found",
+                            to_after_id
+                        ));
+                    }
+                }
+                let section = doc.sections.remove(from_idx);
+                if let Some(to_after_id) = to_after_id {
+                    let to_idx = doc
+                        .sections
+                        .iter()
+                        .position(|s| s.id == *to_after_id)
+                        .expect("destination validated above");
+                    doc.sections.insert(to_idx + 1, section);
+                } else {
+                    doc.sections.insert(0, section);
                 }
             }
             DocOp::RenameSection {
@@ -841,6 +967,226 @@ mod tests {
         let mut reconstructed = old.clone();
         apply_doc_ops(&mut reconstructed, &ops).unwrap();
         assert_eq!(reconstructed, new);
+    }
+
+    #[test]
+    fn test_compute_doc_ops_swap_sections_emits_single_move() {
+        // The regression the old code failed: this used to emit an
+        // interleaved delete+insert pair whose forward replay cancelled
+        // itself (reconstructed the OLD order, so redo silently no-oped).
+        let old = create_document(vec![
+            create_section("s1", "One", SectionType::Chapter, vec![create_paragraph("p1", "a")]),
+            create_section("s2", "Two", SectionType::Chapter, vec![create_paragraph("p2", "b")]),
+        ]);
+        let new = create_document(vec![
+            create_section("s2", "Two", SectionType::Chapter, vec![create_paragraph("p2", "b")]),
+            create_section("s1", "One", SectionType::Chapter, vec![create_paragraph("p1", "a")]),
+        ]);
+        let ops = compute_doc_ops(&old, &new);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(
+            &ops[0],
+            DocOp::MoveSection { id, from_after_id, to_after_id }
+                if id == "s2"
+                    && from_after_id.as_deref() == Some("s1")
+                    && to_after_id.is_none()
+        ));
+
+        let mut reconstructed = old.clone();
+        apply_doc_ops(&mut reconstructed, &ops).unwrap();
+        assert_eq!(reconstructed, new);
+    }
+
+    #[test]
+    fn test_compute_doc_ops_full_reversal_emits_two_moves() {
+        let old = create_document(vec![
+            create_section("s1", "One", SectionType::Section, vec![create_paragraph("p1", "a")]),
+            create_section("s2", "Two", SectionType::Section, vec![create_paragraph("p2", "b")]),
+            create_section("s3", "Three", SectionType::Section, vec![create_paragraph("p3", "c")]),
+        ]);
+        let new = create_document(vec![
+            create_section("s3", "Three", SectionType::Section, vec![create_paragraph("p3", "c")]),
+            create_section("s2", "Two", SectionType::Section, vec![create_paragraph("p2", "b")]),
+            create_section("s1", "One", SectionType::Section, vec![create_paragraph("p1", "a")]),
+        ]);
+        let ops = compute_doc_ops(&old, &new);
+        assert_eq!(ops.len(), 2);
+        assert!(matches!(&ops[0], DocOp::MoveSection { id, to_after_id, .. }
+            if id == "s3" && to_after_id.is_none()));
+        assert!(matches!(&ops[1], DocOp::MoveSection { id, to_after_id, .. }
+            if id == "s2" && to_after_id.as_deref() == Some("s3")));
+
+        let mut reconstructed = old.clone();
+        apply_doc_ops(&mut reconstructed, &ops).unwrap();
+        assert_eq!(reconstructed, new);
+    }
+
+    #[test]
+    fn test_compute_doc_ops_move_plus_insert() {
+        // A moved section and a brand-new section in one batch: the new
+        // section inserts, the existing one moves — no spurious delete.
+        let old = create_document(vec![
+            create_section("s1", "One", SectionType::Section, vec![create_paragraph("p1", "a")]),
+            create_section("s2", "Two", SectionType::Section, vec![create_paragraph("p2", "b")]),
+            create_section("s3", "Three", SectionType::Section, vec![create_paragraph("p3", "c")]),
+        ]);
+        let new = create_document(vec![
+            create_section("s1", "One", SectionType::Section, vec![create_paragraph("p1", "a")]),
+            create_section("sx", "New", SectionType::Section, vec![create_paragraph("px", "x")]),
+            create_section("s3", "Three", SectionType::Section, vec![create_paragraph("p3", "c")]),
+            create_section("s2", "Two", SectionType::Section, vec![create_paragraph("p2", "b")]),
+        ]);
+        let ops = compute_doc_ops(&old, &new);
+        assert_eq!(ops.len(), 2);
+        assert!(matches!(&ops[0], DocOp::InsertSection { after_id, section }
+            if after_id.as_deref() == Some("s1") && section.id == "sx"));
+        assert!(matches!(&ops[1], DocOp::MoveSection { id, to_after_id, .. }
+            if id == "s3" && to_after_id.as_deref() == Some("sx")));
+
+        let mut reconstructed = old.clone();
+        apply_doc_ops(&mut reconstructed, &ops).unwrap();
+        assert_eq!(reconstructed, new);
+    }
+
+    #[test]
+    fn test_compute_doc_ops_move_with_content_change() {
+        // MoveSection carries no content: a moved section that ALSO changed
+        // must have its rename/paragraph ops emitted in the same batch.
+        let old = create_document(vec![
+            create_section("s1", "One", SectionType::Section, vec![create_paragraph("p1", "a")]),
+            create_section("s2", "Two", SectionType::Section, vec![create_paragraph("p2", "old")]),
+        ]);
+        let new = create_document(vec![
+            create_section("s2", "Two!", SectionType::Section, vec![create_paragraph("p2", "new")]),
+            create_section("s1", "One", SectionType::Section, vec![create_paragraph("p1", "a")]),
+        ]);
+        let ops = compute_doc_ops(&old, &new);
+        assert_eq!(ops.len(), 3);
+        assert!(matches!(&ops[0], DocOp::MoveSection { id, .. } if id == "s2"));
+        assert!(matches!(&ops[1], DocOp::RenameSection { id, new_title, .. }
+            if id == "s2" && new_title == "Two!"));
+        assert!(matches!(&ops[2], DocOp::UpdateParagraph { id, .. } if id == "p2"));
+
+        let mut reconstructed = old.clone();
+        apply_doc_ops(&mut reconstructed, &ops).unwrap();
+        assert_eq!(reconstructed, new);
+    }
+
+    #[test]
+    fn test_move_section_invert_round_trips_order() {
+        // Undo of a move batch = invert + reverse + apply must land exactly
+        // back on the original order; redo (forward apply) re-moves.
+        let old = create_document(vec![
+            create_section("s1", "One", SectionType::Section, vec![create_paragraph("p1", "a")]),
+            create_section("s2", "Two", SectionType::Section, vec![create_paragraph("p2", "b")]),
+            create_section("s3", "Three", SectionType::Section, vec![create_paragraph("p3", "c")]),
+        ]);
+        let new = create_document(vec![
+            create_section("s3", "Three", SectionType::Section, vec![create_paragraph("p3", "c")]),
+            create_section("s1", "One", SectionType::Section, vec![create_paragraph("p1", "a")]),
+            create_section("s2", "Two", SectionType::Section, vec![create_paragraph("p2", "b")]),
+        ]);
+        let ops = compute_doc_ops(&old, &new);
+
+        let mut doc = old.clone();
+        apply_doc_ops(&mut doc, &ops).unwrap();
+        assert_eq!(doc, new);
+
+        let inverted: Vec<DocOp> = ops.iter().rev().map(|op| op.invert()).collect();
+        apply_doc_ops(&mut doc, &inverted).unwrap();
+        assert_eq!(doc, old);
+
+        apply_doc_ops(&mut doc, &ops).unwrap();
+        assert_eq!(doc, new);
+    }
+
+    #[test]
+    fn test_move_first_section_to_end_normalizes_to_two_moves() {
+        // Dragging the FIRST section to the end: the walk advances the NEW
+        // cursor, so it expresses this as "move the other two to the front"
+        // rather than "move s1 to the back" — two normalized MoveSections
+        // instead of one. Not minimal, but both apply and invert round-trip
+        // exactly (minimality is not the walk's contract; correctness is).
+        let old = create_document(vec![
+            create_section("s1", "One", SectionType::Section, vec![create_paragraph("p1", "a")]),
+            create_section("s2", "Two", SectionType::Section, vec![create_paragraph("p2", "b")]),
+            create_section("s3", "Three", SectionType::Section, vec![create_paragraph("p3", "c")]),
+        ]);
+        let new = create_document(vec![
+            create_section("s2", "Two", SectionType::Section, vec![create_paragraph("p2", "b")]),
+            create_section("s3", "Three", SectionType::Section, vec![create_paragraph("p3", "c")]),
+            create_section("s1", "One", SectionType::Section, vec![create_paragraph("p1", "a")]),
+        ]);
+        let ops = compute_doc_ops(&old, &new);
+        assert_eq!(ops.len(), 2);
+        assert!(matches!(&ops[0], DocOp::MoveSection { id, to_after_id, .. }
+            if id == "s2" && to_after_id.is_none()));
+        assert!(matches!(&ops[1], DocOp::MoveSection { id, to_after_id, .. }
+            if id == "s3" && to_after_id.as_deref() == Some("s2")));
+
+        let mut reconstructed = old.clone();
+        apply_doc_ops(&mut reconstructed, &ops).unwrap();
+        assert_eq!(reconstructed, new);
+
+        let inverted: Vec<DocOp> = ops.iter().rev().map(|op| op.invert()).collect();
+        apply_doc_ops(&mut reconstructed, &inverted).unwrap();
+        assert_eq!(reconstructed, old);
+    }
+
+    #[test]
+    fn test_move_section_apply_guards() {
+        let mut doc = create_document(vec![
+            create_section("s1", "One", SectionType::Section, vec![create_paragraph("p1", "a")]),
+            create_section("s2", "Two", SectionType::Section, vec![create_paragraph("p2", "b")]),
+        ]);
+
+        // Missing section.
+        let missing = DocOp::MoveSection {
+            id: "zz".to_string(),
+            from_after_id: None,
+            to_after_id: Some("s1".to_string()),
+        };
+        assert!(apply_doc_ops(&mut doc, &[missing]).is_err());
+
+        // Missing destination.
+        let missing_dest = DocOp::MoveSection {
+            id: "s1".to_string(),
+            from_after_id: None,
+            to_after_id: Some("zz".to_string()),
+        };
+        assert!(apply_doc_ops(&mut doc, &[missing_dest]).is_err());
+
+        // A section cannot follow itself.
+        let self_after = DocOp::MoveSection {
+            id: "s1".to_string(),
+            from_after_id: Some("s2".to_string()),
+            to_after_id: Some("s1".to_string()),
+        };
+        assert!(apply_doc_ops(&mut doc, &[self_after]).is_err());
+
+        // None of the failed ops mutated the document.
+        assert_eq!(doc.sections[0].id, "s1");
+        assert_eq!(doc.sections[1].id, "s2");
+    }
+
+    #[test]
+    fn test_move_section_to_same_position_is_noop() {
+        // Dropping a row exactly where it already is produces no ops at all.
+        let old = create_document(vec![
+            create_section("s1", "One", SectionType::Section, vec![create_paragraph("p1", "a")]),
+            create_section("s2", "Two", SectionType::Section, vec![create_paragraph("p2", "b")]),
+        ]);
+        let mut doc = old.clone();
+        apply_doc_ops(
+            &mut doc,
+            &[DocOp::MoveSection {
+                id: "s2".to_string(),
+                from_after_id: Some("s1".to_string()),
+                to_after_id: Some("s1".to_string()),
+            }],
+        )
+        .unwrap();
+        assert_eq!(doc, old);
     }
 
     #[test]

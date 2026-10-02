@@ -93,6 +93,10 @@ export const useDocumentStore = defineStore('document', {
 
     async deleteSection(id) {
       try {
+        // Flush pending typing BEFORE invoking (same rationale as undo): the
+        // command returns Rust's doc, and assigning that back would discard
+        // ≤1s of un-synced edits. Harmless when nothing is pending.
+        await this.syncToRust()
         const updated = await invoke('delete_section', { id })
         this.doc = updated
         this.isModified = true
@@ -103,6 +107,8 @@ export const useDocumentStore = defineStore('document', {
 
     async renameSection(id, title) {
       try {
+        // Same flush-before-invoke rationale as deleteSection.
+        await this.syncToRust()
         const updated = await invoke('rename_section', { id, title })
         this.doc = updated
         this.isModified = true
@@ -113,11 +119,28 @@ export const useDocumentStore = defineStore('document', {
 
     async changeSectionType(id, newType) {
       try {
+        // Same flush-before-invoke rationale as deleteSection.
+        await this.syncToRust()
         const updated = await invoke('change_section_type', { id, newType })
         this.doc = updated
         this.isModified = true
       } catch (e) {
         this.notifyError(e, 'Failed to change section type')
+      }
+    },
+
+    async moveSection(id, toAfterId) {
+      try {
+        // Same flush-before-invoke rationale as undo/redo: move_section
+        // operates on Rust's doc and returns it; assigning that back without
+        // flushing would silently discard ≤1s of un-synced edits.
+        await this.syncToRust()
+        // Tauri v1 maps toAfterId → to_after_id; null maps to None = front.
+        const updated = await invoke('move_section', { id, toAfterId })
+        this.doc = updated
+        this.isModified = true
+      } catch (e) {
+        this.notifyError(e, 'Failed to move section')
       }
     },
 
