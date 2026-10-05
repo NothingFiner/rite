@@ -119,4 +119,34 @@ test.describe('Rite App', () => {
     await page.keyboard.type('One two three')
     await expect(page.locator('.word-count')).toContainText('3 words')
   })
+
+  test('a chapter inserted without a subtitle renders as just "Chapter 1" (5.9)', async ({ page }) => {
+    // The subtitle is optional data: an unnamed chapter must render clean —
+    // no colon, no subtitle span — once its fresh (inline-typing) state ends.
+    // Insert is LOCAL (no invoke), so no IPC mock is needed; the debounced
+    // sync fails silently after the assertions.
+    await page.click('button[title="Sections"]')
+    // The drawer slides open (250ms transform) — settle before clicking in it.
+    await page.waitForTimeout(350)
+    await page.click('.drawer.left.open .add-btn')
+    await page.click('.drawer.left.open .add-confirm:has-text("+ Chapter")')
+
+    // Fresh: the heading is editable with the empty subtitle span (the
+    // inline type-a-subtitle affordance).
+    const heading = page.locator('.editor-sheet .section-title.chapter')
+    await expect(heading).toHaveCount(1)
+    await expect(heading.locator('.section-subtitle')).toHaveCount(1)
+
+    // Click away on the editor → the fresh state ends and the heading
+    // collapses to "Chapter 1" with no colon and no subtitle span. Close the
+    // drawer first so it doesn't overlay the click target, then land the
+    // click-away inside a paragraph (the sheet's mousedown handler is what
+    // ends the fresh state).
+    await page.click('button[title="Sections"]')
+    await expect(page.locator('.drawer.left.open')).toHaveCount(0)
+    await page.click('.editor-sheet .paragraph', { position: { x: 100, y: 10 } })
+    await expect(heading).toHaveText('Chapter 1')
+    await expect(heading.locator('.section-subtitle')).toHaveCount(0)
+    await expect(heading).toHaveAttribute('contenteditable', 'false')
+  })
 })

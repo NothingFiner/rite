@@ -57,6 +57,17 @@ describe('useEditorReadback — pure helpers', () => {
       el.dataset.sectionType = 'section'
       expect(readSectionTitleText(el)).toBe('')
     })
+
+    it('returns empty string for a subtitle-less chapter rendered with no subtitle span (5.9)', () => {
+      // A chapter with no subtitle renders ONLY the prefix span — readback
+      // must read '' (matching the stored empty title), never wipe or
+      // misread the derived prefix.
+      const el = document.createElement('div')
+      el.className = 'section-title'
+      el.dataset.sectionType = 'chapter'
+      el.innerHTML = '<span class="chapter-prefix" contenteditable="false">Chapter 3</span>'
+      expect(readSectionTitleText(el)).toBe('')
+    })
   })
 
   describe('bakeChapterIndices', () => {
