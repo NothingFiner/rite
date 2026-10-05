@@ -14,10 +14,9 @@
               'drop-above': dropTarget?.id === item.id && dropTarget.half === 'before',
               'drop-below': dropTarget?.id === item.id && dropTarget.half === 'after',
             }"
-            :draggable="!editingIds.has(item.id)"
             :data-nav-id="item.id"
-            @click="selectSection(item.id)"
-            @dragstart="onDragStart($event, item)"
+            @click="onRowClick(item.id)"
+            @pointerdown="onPointerDown($event, item)"
           >
             <span v-if="editingIds.has(item.id)" class="nav-edit-row">
               <input
@@ -113,35 +112,32 @@ function addSection() {
   emit('insertSection', 'section')
 }
 
-function selectSection(id) {
-  emit('select', id)
-  emit('scrollTo', id)
-}
-
 function onDelete(id) {
   emit('deleteItem', id)
 }
 
 // --- drag-to-reorder (roadmap 5.5) --------------------------------------------
-// Native HTML5 DnD, no dependency. The dragged id lives in a component-internal
-// ref; it never crosses the wire — Rust identifies the section and destination
-// by id. The dataTransfer is still REQUIRED: WebKit cancels an element drag
-// whose dragstart sets no data (it fell back to a text-selection drag and
-// `drop` never fired). All dataTransfer accesses are optional-chained so
-// jsdom's bare Events (no dataTransfer) keep the unit specs running.
-//
-// THE WKWEBVIEW LESSON (2nd manual round): WebKit MISROUTES drag events inside
-// this drawer — a transformed panel with a scrolling list. A hover over
-// chapter 3 painted the insertion line on chapter 15 (one scroll-offset
-// away), and the drop was delivered to an element our row handlers never
-// saw, so sections never moved. So dragover/drop/dragend are handled at the
-// DOCUMENT level (every misrouted event still bubbles there), and the
+// CUSTOM pointer-event drag — deliberately NOT native HTML5 drag-and-drop.
+// Two rounds of real-WKWebView testing showed WebKit's drag sessions are
+// unreliable in this embedded webview: a dragstart with no dataTransfer
+// payload gets cancelled/downgraded to a text-selection drag, and once that
+// was fixed, the dragover/drop events were misrouted (a hover over chapter 3
+// delivered events — with coordinates that were not the pointer's — a
+// scroll-offset away, so nothing moved). Chromium can't reproduce either,
+// so no e2e would ever have caught them. Pointer events are the plain
+// machinery the editor's caret placement already relies on; they arrive
+// correctly in WKWebView. The gesture: pointerdown arms a drag CANDIDATE,
+// movement past a 4px threshold starts the drag (a plain click keeps
+// working), pointermove over the list paints the insertion line, pointerup
+// emits the move. Everything is handled at the DOCUMENT level, and the
 // hovered row is computed from the POINTER COORDINATES against each row's
-// real rect — geometry read in JS is trustworthy; only WebKit's internal
-// hit-testing is broken. The rows keep only dragstart, which fires reliably
-// on the source.
+// real rect — the dragged id lives in a component ref and never crosses the
+// wire; Rust identifies the section and destination by id.
 
 const draggingId = ref(null)
+// { id, startX, startY } between pointerdown and the movement threshold. A
+// pointerup while this is still set is a plain click, not a drag.
+const dragCandidate = ref(null)
 // { id, half } of the row under the pointer while dragging — drives the
 // insertion-line CSS classes. Null when the pointer is off the list, over
 // the dragged row itself, or over a row mid-rename.
@@ -149,23 +145,23 @@ const dropTarget = ref(null)
 // The <ul> — the geometry source for drop targeting.
 const navTreeRef = ref(null)
 
-// The offscreen element shown as the drag ghost. The NATIVE ghost is a
-// snapshot of the dragged row — but this drawer sits in a backdrop-filter
-// glass panel, and WKWebView snapshots the page text BEHIND the drawer, so
-// the ghost showed unrelated editor text. setDragImage replaces it with a
-// clean pill. Styled inline: it's appended to <body>, outside this
-// component's scoped-style reach.
+// A completed drag ends with pointerup inside the row, and the browser then
+// fires a CLICK on it — which must not also select/scroll the editor to the
+// dragged section. One clean swallow; the flag resets on the next pointerdown.
+let suppressNextClick = false
+
+// The pill that follows the pointer while dragging. It is appended to <body>
+// (outside this component's scoped-style reach — hence inline styles) and
+// never intercepts the pointer.
 let dragGhost = null
 
-function makeDragGhost(item) {
+function makeDragGhost(item, clientX, clientY) {
   removeDragGhost()
   dragGhost = document.createElement('div')
   dragGhost.className = 'nav-drag-ghost'
   dragGhost.textContent = item.displayTitle
   const style = dragGhost.style
   style.position = 'fixed'
-  style.top = '-9999px' // offscreen but rendered — setDragImage snapshots it
-  style.left = '0'
   style.padding = '4px 10px'
   style.borderRadius = '4px'
   style.background = 'var(--accent)'
@@ -173,8 +169,16 @@ function makeDragGhost(item) {
   style.fontSize = '13px'
   style.fontWeight = '600'
   style.whiteSpace = 'nowrap'
+  style.pointerEvents = 'none'
+  style.zIndex = '100'
   document.body.appendChild(dragGhost)
-  return dragGhost
+  positionDragGhost(clientX, clientY)
+}
+
+function positionDragGhost(clientX, clientY) {
+  if (!dragGhost) return
+  dragGhost.style.left = clientX + 12 + 'px'
+  dragGhost.style.top = clientY + 12 + 'px'
 }
 
 function removeDragGhost() {
@@ -184,9 +188,9 @@ function removeDragGhost() {
   }
 }
 
-// The row { id, half } under the pointer, from geometry WE read (see the
-// block comment above for why this is not just `event.target`). Returns null
-// off the list, or when the list has no rows.
+// The row { id, half } under the pointer, from geometry WE read (never the
+// event's target — see the block comment above). Returns null off the list,
+// or when the list has no rows.
 function dropTargetUnder(clientX, clientY) {
   const list = navTreeRef.value
   if (!list) return null
@@ -212,81 +216,107 @@ function dropTargetUnder(clientX, clientY) {
   return lastEl ? { id: lastEl.dataset.navId, half: 'after' } : null
 }
 
-// Prevent the drop ANYWHERE on the page while our drag is in flight —
-// otherwise WebKit's default would let the payload land as text into
-// whatever it (mis)hit-tests, e.g. inserting it into the editor prose.
-// dropEffect must AGREE with dragstart's effectAllowed ('move').
-function onDocumentDragOver(e) {
-  if (!draggingId.value) return
-  e.preventDefault()
-  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
+function onPointerDown(e, item) {
+  // Right/middle clicks and the context menu are not drags.
+  if (e.button !== 0) return
+  // Touch drags would fight the drawer's scroll gesture; this is a desktop
+  // app, so mouse/pen only.
+  if (e.pointerType === 'touch') return
+  // A pointerdown on interactive row controls is their gesture, not a drag
+  // start — the rename input, the type toggle, and the edit/delete buttons
+  // keep their clicks. And a row being renamed is never draggable.
+  if (e.target.closest('button, input')) return
+  if (editingIds.value.has(item.id)) return
+  dragCandidate.value = { id: item.id, startX: e.clientX, startY: e.clientY }
+  suppressNextClick = false
+  // Capture guarantees the pointerup arrives even if it happens outside the
+  // webview window; captured events still bubble to document. Optional-
+  // chained: jsdom elements have no capture API (and synthetic events pass
+  // no pointerId).
+  if (e.pointerId !== undefined) e.currentTarget.setPointerCapture?.(e.pointerId)
+  if (!documentPointerListenersActive) {
+    document.addEventListener('pointermove', onDocumentPointerMove)
+    document.addEventListener('pointerup', onDocumentPointerUp)
+    document.addEventListener('pointercancel', cleanupDrag)
+    documentPointerListenersActive = true
+  }
+}
+
+function onDocumentPointerMove(e) {
+  if (!dragCandidate.value && !draggingId.value) return
+  if (dragCandidate.value && !draggingId.value) {
+    // Not a drag until the pointer moves past the threshold — otherwise no
+    // row click (selection) would ever work.
+    const candidate = dragCandidate.value
+    const movedFarEnough =
+      Math.abs(e.clientX - candidate.startX) > 4 || Math.abs(e.clientY - candidate.startY) > 4
+    if (!movedFarEnough) return
+    const item = sections.value.find((s) => s.id === candidate.id)
+    if (!item) {
+      dragCandidate.value = null
+      return
+    }
+    draggingId.value = candidate.id
+    dragCandidate.value = null
+    makeDragGhost(item, e.clientX, e.clientY)
+  }
+  positionDragGhost(e.clientX, e.clientY)
   const target = dropTargetUnder(e.clientX, e.clientY)
   // The dragged row itself and rows mid-rename are never valid targets (a
-  // rename row hosts a text input whose text selection a drag would fight).
+  // rename row hosts a text input the drag would fight).
   dropTarget.value =
     target && target.id !== draggingId.value && !editingIds.value.has(target.id)
       ? target
       : null
 }
 
-function onDocumentDrop(e) {
-  if (!draggingId.value) return
-  e.preventDefault()
-  const target = dropTargetUnder(e.clientX, e.clientY)
-  if (target && target.id !== draggingId.value && !editingIds.value.has(target.id)) {
-    const targetIndex = sections.value.findIndex((s) => s.id === target.id)
-    const toAfterId = toAfterIdFor(sections.value, targetIndex, target.half)
-    const currentIds = sections.value.map((s) => s.id)
-    // A drop back onto the row's own position is a no-op — skip the invoke
-    // entirely (reorderedIds returns null when the order wouldn't change).
-    if (reorderedIds(currentIds, draggingId.value, toAfterId)) {
-      emit('moveSection', draggingId.value, toAfterId)
+function onDocumentPointerUp(e) {
+  if (draggingId.value) {
+    suppressNextClick = true
+    const target = dropTargetUnder(e.clientX, e.clientY)
+    if (target && target.id !== draggingId.value && !editingIds.value.has(target.id)) {
+      const targetIndex = sections.value.findIndex((s) => s.id === target.id)
+      const toAfterId = toAfterIdFor(sections.value, targetIndex, target.half)
+      const currentIds = sections.value.map((s) => s.id)
+      // A drop back onto the row's own position is a no-op — skip the invoke
+      // entirely (reorderedIds returns null when the order wouldn't change).
+      if (reorderedIds(currentIds, draggingId.value, toAfterId)) {
+        emit('moveSection', draggingId.value, toAfterId)
+      }
     }
   }
   cleanupDrag()
 }
 
-// dragend fires on the SOURCE row no matter where the pointer ended up
-// (cancelled drag, drop outside any row) — the single place all drag state
-// is cleared. Document-level because (per the block comment) even the
-// source row's own listeners can be bypassed by WebKit's routing; dragend
-// still bubbles.
-function onDocumentDragEnd() {
-  cleanupDrag()
-}
-
-let documentDragListenersActive = false
+let documentPointerListenersActive = false
 
 function cleanupDrag() {
   draggingId.value = null
+  dragCandidate.value = null
   dropTarget.value = null
   removeDragGhost()
-  if (documentDragListenersActive) {
-    document.removeEventListener('dragover', onDocumentDragOver)
-    document.removeEventListener('drop', onDocumentDrop)
-    document.removeEventListener('dragend', onDocumentDragEnd)
-    documentDragListenersActive = false
-  }
-}
-
-function onDragStart(e, item) {
-  draggingId.value = item.id
-  // The payload is informational (the component state carries the real id) —
-  // but WebKit cancels the drag entirely without it.
-  e.dataTransfer?.setData?.('text/plain', item.id)
-  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
-  e.dataTransfer?.setDragImage?.(makeDragGhost(item), 60, 16)
-  if (!documentDragListenersActive) {
-    document.addEventListener('dragover', onDocumentDragOver)
-    document.addEventListener('drop', onDocumentDrop)
-    document.addEventListener('dragend', onDocumentDragEnd)
-    documentDragListenersActive = true
+  if (documentPointerListenersActive) {
+    document.removeEventListener('pointermove', onDocumentPointerMove)
+    document.removeEventListener('pointerup', onDocumentPointerUp)
+    document.removeEventListener('pointercancel', cleanupDrag)
+    documentPointerListenersActive = false
   }
 }
 
 // If the component unmounts mid-drag (view switch), the document listeners
 // must not outlive it — their closures hold refs into this component.
 onBeforeUnmount(cleanupDrag)
+
+// Row click = select + scroll to the section (unless this click is the tail
+// of a just-completed drag).
+function onRowClick(id) {
+  if (suppressNextClick) {
+    suppressNextClick = false
+    return
+  }
+  emit('select', id)
+  emit('scrollTo', id)
+}
 
 // Toggle a section between auto-numbered Chapter and freeform Section. The
 // round-trip change_section_type command is undoable.
@@ -399,9 +429,9 @@ watch(sections, () => {
   color: var(--text-primary);
   transition: background 0.15s;
   margin-bottom: 2px;
-  /* A mousedown on row text must start an ELEMENT drag, never a text-selection
-     drag — in WKWebView a selection drag preempts the draggable row (the
-     "ghost shows stray page text" bug). The rename input opts back in. */
+  /* No text selection on rows: a press-drag over row text must never start
+     a selection (it would fight the custom pointer drag and drag-select
+     editor text through the glass). The rename input opts back in. */
   user-select: none;
   -webkit-user-select: none;
 }
