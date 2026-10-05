@@ -157,7 +157,22 @@ function lockFreshSection() {
   const root = sheetRef.value
   if (root) {
     const el = root.querySelector(`[data-section-id="${freshSectionId.value}"]`)
-    if (el) el.setAttribute('contenteditable', 'false')
+    if (el) {
+      el.setAttribute('contenteditable', 'false')
+      // 5.9: a chapter left without a typed subtitle collapses to the clean
+      // "Chapter N" render the moment it locks — the fresh rendering (colon +
+      // empty editable span) is only the inline-typing affordance. Mirrors
+      // sectionTitleToHTML's empty-subtitle rule; without this the stale
+      // fresh DOM would dangle "Chapter 1: " indefinitely, because a
+      // section insert never triggers a reconcile (the syncSection emit is
+      // watcher-skipped and nothing else re-renders the heading).
+      if (el.dataset.sectionType === 'chapter' && !readSectionTitleText(el)) {
+        const subtitleSpan = el.querySelector('.section-subtitle')
+        if (subtitleSpan) subtitleSpan.remove()
+        const prefixSpan = el.querySelector('.chapter-prefix')
+        if (prefixSpan) prefixSpan.textContent = prefixSpan.textContent.replace(/: $/, '')
+      }
+    }
   }
   freshSectionId.value = null
 }

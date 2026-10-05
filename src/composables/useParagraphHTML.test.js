@@ -139,11 +139,29 @@ describe('useParagraphHTML', () => {
       expect(html).toContain('The Arrival')
     })
 
-    it('renders a chapter subtitle as <br> when empty', () => {
+    it('renders a subtitle-less chapter as just the prefix — no colon, no subtitle span (5.9)', () => {
       const section = { id: 's1', title: '', sectionType: 'chapter' }
       const html = sectionTitleToHTML(section, 3, 'Chapter 3: ', { fresh: false })
+      // "Chapter 3" clean: the ': ' separator joins prefix+subtitle — with
+      // no subtitle there is nothing to join, so nothing else renders.
+      expect(html).toContain('Chapter 3')
+      expect(html).not.toContain(':')
+      expect(html).not.toContain('section-subtitle')
+      expect(html).toContain('contenteditable="false"')
+    })
+
+    it('keeps the colon + editable empty subtitle span for a FRESH chapter (inline typing)', () => {
+      const section = { id: 's1', title: '', sectionType: 'chapter' }
+      const html = sectionTitleToHTML(section, 3, 'Chapter 3: ', { fresh: true })
       expect(html).toContain('Chapter 3: ')
       expect(html).toContain('<span class="section-subtitle"><br></span>')
+    })
+
+    it('renders a chapter WITH a subtitle exactly as before (colon + span regression guard)', () => {
+      const section = { id: 's1', title: 'The Arrival', sectionType: 'chapter' }
+      const html = sectionTitleToHTML(section, 1, 'Chapter 1: ', { fresh: false })
+      expect(html).toContain('Chapter 1: ')
+      expect(html).toContain('<span class="section-subtitle">The Arrival</span>')
     })
 
     it('renders a freeform section with one editable title span', () => {
@@ -168,6 +186,15 @@ describe('useParagraphHTML', () => {
       const html = sectionTitleToHTML(section, 1, 'Chapter 1: ', { manuscript: true })
       expect(html).toContain('class="ms-para chapter"')
       expect(html).toContain('Chapter 1: The Arrival')
+    })
+
+    it('renders a manuscript-mode subtitle-less chapter as just "Chapter N"', () => {
+      const section = { id: 's1', title: '', sectionType: 'chapter' }
+      const html = sectionTitleToHTML(section, 1, 'Chapter 1: ', { manuscript: true })
+      expect(html).toContain('class="ms-para chapter"')
+      expect(html).toContain('Chapter 1')
+      expect(html).not.toContain(':')
+      expect(html).not.toContain('<br>')
     })
 
     it('renders a manuscript-mode section as one styled ms-para line', () => {

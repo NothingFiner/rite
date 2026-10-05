@@ -162,6 +162,15 @@ describe('documentToText', () => {
     expect(text).toContain('A quiet scene.')
   })
 
+  it('headers a subtitle-less chapter as just "Chapter N" — no dangling separator (5.9)', () => {
+    const doc = makeDocument([
+      makeSection('s1', '', 'chapter', [makeParagraph('p1', 'The door opened.')]),
+    ])
+    const text = documentToText(doc, 'document')
+    expect(text).toContain('Chapter 1')
+    expect(text).not.toContain('Chapter 1:')
+  })
+
   it('uses a section title verbatim (no chapter prefix) for section-type', () => {
     const doc = sampleDocument()
     const text = documentToText(doc, 'section', '', 's2')

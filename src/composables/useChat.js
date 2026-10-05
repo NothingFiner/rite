@@ -145,8 +145,12 @@ export function documentToText(doc, scope, selectionText = '', sectionId = null)
   // block from the flat walk.
   const sectionToText = (titleBlock, chapterIndex) => {
     const isChapter = titleBlock.sectionType === 'chapter'
+    // A subtitle-less chapter renders as just "Chapter N" — no dangling
+    // separator (same rule the editor/manuscript renderer follows).
     const header = isChapter
-      ? `Chapter ${chapterIndex}: ${titleBlock.title || ''}`.trim()
+      ? titleBlock.title
+        ? `Chapter ${chapterIndex}: ${titleBlock.title}`
+        : `Chapter ${chapterIndex}`
       : (titleBlock.title || 'Untitled Section')
     const section = doc.sections.find((s) => s.id === titleBlock.sectionId)
     let body = ''

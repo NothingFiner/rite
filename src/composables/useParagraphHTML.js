@@ -75,11 +75,16 @@ export function paragraphsToHTML(paragraphs, options = {}) {
 }
 
 /// Render a section title (the heading). A Chapter shows a locked, render-
-/// derived prefix ("Chapter 3: ") followed by an editable subtitle span; a
-/// Section shows its full title as one editable span. The chapter NUMBER is
-/// never stored — it is derived from `chapterIndex` (1-based position among
-/// Chapter-type sections) and baked into the prefix here, so inserting/deleting
-/// a chapter renumbers all chapters with zero delta churn.
+/// derived prefix ("Chapter 3: ") followed by a subtitle span when the
+/// chapter HAS a subtitle; a subtitle-less chapter renders just "Chapter 3"
+/// (the ': ' separator is stripped — the subtitle is optional data and
+/// emptiness IS the off state, 5.9). The one exception: a FRESH chapter
+/// (editor, just inserted) keeps the colon and renders the empty subtitle
+/// span so the user can type the subtitle inline. A Section shows its full
+/// title as one editable span. The chapter NUMBER is never stored — it is
+/// derived from `chapterIndex` (1-based position among Chapter-type
+/// sections) and baked into the prefix here, so inserting/deleting a
+/// chapter renumbers all chapters with zero delta churn.
 ///
 ///   chapterPrefix: pre-formatted "Chapter 3: " string for a Chapter (the
 ///     caller computes it via useSectionFormat so this module stays Vue-free).
@@ -94,7 +99,13 @@ export function sectionTitleToHTML(section, chapterIndex, chapterPrefix, options
 
   if (manuscript) {
     if (section.sectionType === 'chapter') {
-      const text = escapeHtml(chapterPrefix || '') + escapeHtml(section.title || '')
+      // The ': ' trailing on chapterPrefix exists to join prefix and
+      // subtitle; a subtitle-less chapter has nothing to join, so it
+      // renders as just "Chapter 2" (the subtitle is optional data —
+      // emptiness IS the off state). Same strip idiom as the nav rows'
+      // displayTitleFor.
+      const prefixText = section.title ? chapterPrefix : (chapterPrefix || '').replace(/: $/, '')
+      const text = escapeHtml(prefixText || '') + escapeHtml(section.title || '')
       return `<p class="ms-para chapter"${idAttr}>${text || '<br>'}</p>`
     }
     return `<p class="ms-para section"${idAttr}>${escapeHtml(section.title || '') || '<br>'}</p>`
@@ -104,6 +115,14 @@ export function sectionTitleToHTML(section, chapterIndex, chapterPrefix, options
 
   if (section.sectionType === 'chapter') {
     const subtitle = section.title || ''
+    // Show the subtitle span when there is one, or while the section is
+    // fresh (the empty span is the inline type-a-subtitle affordance —
+    // on blur it renders clean). Otherwise render ONLY the prefix.
+    const showSubtitle = Boolean(subtitle) || fresh
+    if (!showSubtitle) {
+      const prefixText = (chapterPrefix || '').replace(/: $/, '')
+      return `<div class="section-title chapter"${idAttr}${typeAttr} contenteditable="${editable}"><span class="chapter-prefix" contenteditable="false">${escapeHtml(prefixText)}</span></div>`
+    }
     const subtitleHtml = subtitle ? escapeHtml(subtitle) : '<br>'
     // The prefix span is always contenteditable=false — the derived number is
     // never user-editable. The subtitle span inherits editability from the
