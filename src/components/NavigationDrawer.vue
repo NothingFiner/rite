@@ -16,7 +16,7 @@
             }"
             :draggable="!editingIds.has(item.id)"
             @click="selectSection(item.id)"
-            @dragstart="onDragStart(item)"
+            @dragstart="onDragStart($event, item)"
             @dragover="onDragOver($event, item)"
             @drop="onDrop($event, item)"
             @dragend="onDragEnd"
@@ -126,28 +126,74 @@ function onDelete(id) {
 
 // --- drag-to-reorder (roadmap 5.5) --------------------------------------------
 // Native HTML5 DnD, no dependency: `draggable` on the rows plus these four
-// handlers. The dragged id lives in a component-internal ref, NOT in
-// event.dataTransfer — there is only ever one drag at a time, and jsdom has
-// no DataTransfer implementation, so the component state keeps the spec
-// testable. The dragged id never crosses the wire; Rust identifies the section
-// and destination by id.
+// handlers. The dragged id lives in a component-internal ref (single drag at a
+// time; it never crosses the wire — Rust identifies the section and
+// destination by id). The dataTransfer is still REQUIRED, though: WebKit
+// (WKWebView) aborts an element drag whose dragstart sets no data — it falls
+// back to dragging the raw TEXT SELECTION (stray page text as the ghost, and
+// `drop` never fires on the rows). So dragstart MUST set a payload, and the
+// dataTransfer accesses are optional-chained so jsdom's bare Events (no
+// dataTransfer) keep the unit specs running.
 
 const draggingId = ref(null)
 // { id, half } of the hovered row while dragging — drives the insertion-line
 // CSS classes. Null when not hovering a valid target.
 const dropTarget = ref(null)
 
-function onDragStart(item) {
+// The offscreen element shown as the drag ghost. The NATIVE ghost is a
+// snapshot of the dragged row — but this drawer sits in a backdrop-filter
+// glass panel, and WKWebView snapshots the page text BEHIND the drawer, so
+// the ghost showed unrelated editor text. setDragImage replaces it with a
+// clean pill. Styled inline: it's appended to <body>, outside this
+// component's scoped-style reach.
+let dragGhost = null
+
+function makeDragGhost(item) {
+  removeDragGhost()
+  dragGhost = document.createElement('div')
+  dragGhost.className = 'nav-drag-ghost'
+  dragGhost.textContent = item.displayTitle
+  const style = dragGhost.style
+  style.position = 'fixed'
+  style.top = '-9999px' // offscreen but rendered — setDragImage snapshots it
+  style.left = '0'
+  style.padding = '4px 10px'
+  style.borderRadius = '4px'
+  style.background = 'var(--accent)'
+  style.color = '#fff'
+  style.fontSize = '13px'
+  style.fontWeight = '600'
+  style.whiteSpace = 'nowrap'
+  document.body.appendChild(dragGhost)
+  return dragGhost
+}
+
+function removeDragGhost() {
+  if (dragGhost) {
+    dragGhost.remove()
+    dragGhost = null
+  }
+}
+
+function onDragStart(e, item) {
   draggingId.value = item.id
+  // The payload is informational (the component state carries the real id) —
+  // but WebKit cancels the drag entirely without it.
+  e.dataTransfer?.setData?.('text/plain', item.id)
+  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
+  e.dataTransfer?.setDragImage?.(makeDragGhost(item), 60, 16)
 }
 
 // Marking the hovered row as the drop target REQUIRES preventDefault on
 // dragover — without it the browser shows "no drop" and `drop` never fires.
-// The dragged row itself and rows mid-rename are never valid targets (a
-// rename row hosts a text input whose text selection a drag would fight).
+// dropEffect must AGREE with dragstart's effectAllowed ('move'), or WebKit
+// again refuses the drop. The dragged row itself and rows mid-rename are
+// never valid targets (a rename row hosts a text input whose text selection
+// a drag would fight).
 function onDragOver(e, item) {
   if (!draggingId.value || draggingId.value === item.id || editingIds.value.has(item.id)) return
   e.preventDefault()
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
   dropTarget.value = { id: item.id, half: dropHalf(e.currentTarget.getBoundingClientRect(), e.clientY) }
 }
 
@@ -170,10 +216,11 @@ function onDrop(e, item) {
 
 // dragend fires on the SOURCE row no matter where the pointer ended up
 // (including a cancelled drag or a drop outside any row) — the single place
-// all drag state is cleared.
+// all drag state is cleared, ghost included.
 function onDragEnd() {
   draggingId.value = null
   dropTarget.value = null
+  removeDragGhost()
 }
 
 // Toggle a section between auto-numbered Chapter and freeform Section. The
@@ -287,6 +334,16 @@ watch(sections, () => {
   color: var(--text-primary);
   transition: background 0.15s;
   margin-bottom: 2px;
+  /* A mousedown on row text must start an ELEMENT drag, never a text-selection
+     drag — in WKWebView a selection drag preempts the draggable row (the
+     "ghost shows stray page text" bug). The rename input opts back in. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.nav-section .nav-input {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .nav-section:hover,

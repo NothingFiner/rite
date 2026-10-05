@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import NavigationDrawer from './NavigationDrawer.vue'
 
@@ -103,5 +103,40 @@ describe('NavigationDrawer drag-reorder', () => {
     // And a drop there neither emits nor throws.
     await rowsAfter[0].trigger('drop')
     expect(wrapper.emitted('moveSection')).toBeUndefined()
+  })
+
+  it('puts a drag payload, move effects, and a clean ghost on the dataTransfer', async () => {
+    // WebKit cancels an element drag whose dragstart sets NO data (the
+    // real-WKWebView bug: the drag fell back to a text-selection drag and
+    // drop never fired). jsdom has no DataTransfer/DragEvent, so simulate
+    // one on a plain Event — properties are assignable pre-dispatch.
+    const wrapper = makeDrawer()
+    const rows = wrapper.findAll('.nav-section')
+    const dataTransfer = {
+      setData: vi.fn(),
+      setDragImage: vi.fn(),
+      effectAllowed: '',
+      dropEffect: '',
+    }
+
+    const dragstart = new Event('dragstart', { bubbles: true })
+    dragstart.dataTransfer = dataTransfer
+    rows[0].element.dispatchEvent(dragstart)
+
+    expect(dataTransfer.setData).toHaveBeenCalledWith('text/plain', 'a')
+    expect(dataTransfer.effectAllowed).toBe('move')
+    expect(dataTransfer.setDragImage).toHaveBeenCalled()
+    // The ghost replaces the native row snapshot (WKWebView snapshots the
+    // page text behind the backdrop-filter drawer) and lives until dragend.
+    expect(document.querySelector('.nav-drag-ghost')).not.toBeNull()
+
+    const dragover = new Event('dragover', { bubbles: true, cancelable: true })
+    dragover.dataTransfer = dataTransfer
+    rows[1].element.dispatchEvent(dragover)
+    // dragover's dropEffect must AGREE with dragstart's effectAllowed.
+    expect(dataTransfer.dropEffect).toBe('move')
+
+    await rows[0].trigger('dragend')
+    expect(document.querySelector('.nav-drag-ghost')).toBeNull()
   })
 })
