@@ -92,24 +92,36 @@ test('outline drag-reorder moves a section via move_section', async ({ page }) =
   await expect(rows.nth(1)).toContainText('Two')
 
   // Drag "One" (row 0) onto the LOWER half of "Two" (row 1) → One after Two.
-  // clientY far below the row's midpoint makes dropHalf deterministically
-  // pick 'after'. Synthetic drag events (real DataTransfer in Chromium).
+  // Pointer coordinates come from the rows' REAL bounding boxes: the
+  // component targets by geometry (clientX within the list, clientY vs each
+  // row's rect), so a 75%-depth point in row 1 makes dropHalf deterministically
+  // pick 'after'. And per the WKWebView misroute this guards against, the
+  // dragover/drop are deliberately dispatched on ROW 0's element with row 1's
+  // coordinates — the target must follow the POINTER, not the event's target.
+  // Synthetic drag events (real DataTransfer in Chromium).
+  const row0box = await rows.nth(0).boundingBox()
+  const row1box = await rows.nth(1).boundingBox()
+  const pointer = {
+    clientX: row1box.x + row1box.width / 2,
+    clientY: row1box.y + row1box.height * 0.75,
+  }
   const dataTransfer = await page.evaluateHandle(() => new DataTransfer())
-  const dispatchDrag = (index, type, clientY) =>
-    rows.nth(index).evaluate((el, { type, clientY, dataTransfer }) => {
+  const dispatchDrag = (index, type, at) =>
+    rows.nth(index).evaluate((el, { type, at, dataTransfer }) => {
       el.dispatchEvent(new DragEvent(type, {
         bubbles: true,
         cancelable: true,
-        clientY,
+        clientX: at.clientX,
+        clientY: at.clientY,
         dataTransfer,
       }))
-    }, { type, clientY, dataTransfer })
+    }, { type, at, dataTransfer })
 
-  await dispatchDrag(0, 'dragstart', 0)
-  await dispatchDrag(1, 'dragover', 99999)
-  // The insertion line renders below the hovered row while dragging.
+  await dispatchDrag(0, 'dragstart', { clientX: row0box.x + 10, clientY: row0box.y + 5 })
+  await dispatchDrag(0, 'dragover', pointer)
+  // The insertion line renders below the GEOMETRY-targeted row while dragging.
   await expect(rows.nth(1)).toHaveClass(/drop-below/)
-  await dispatchDrag(1, 'drop', 99999)
+  await dispatchDrag(0, 'drop', pointer)
 
   // The store invoked move_section (mocked) and assigned the returned doc:
   // the drawer re-renders as Two, One, Three.
