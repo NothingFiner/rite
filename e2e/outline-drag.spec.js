@@ -1,16 +1,16 @@
 import { test, expect } from '@playwright/test'
 
-// Drag-reorder e2e (roadmap 5.5). jsdom can't exercise the drag handlers'
-// dataTransfer contract (no DataTransfer), so this drives the REAL
-// Chromium drag-event machinery end-to-end: dragstart → dragover → drop →
-// invoke('move_section') → store reassign → drawer re-renders. The harness
-// runs pure Vite with no Tauri runtime, so `move_section` is served by an
-// IPC mock that mirrors the real command's contract: given
-// { id, toAfterId } it returns the document with the section moved
-// (after `toAfterId`, null = front) — exactly what the Rust command does.
-// The WKWebView-specific quirk this guards against (a dragstart that sets
-// no data gets cancelled) is covered by the unit spec's mock-dataTransfer
-// test; Chromium's real DataTransfer proves the payload calls actually work.
+// Drag-reorder e2e (roadmap 5.5). Drives the REAL pointer-input machinery
+// end-to-end with Playwright's mouse API (pointerdown → 4px threshold →
+// pointermove → pointerup) → invoke('move_section') → store reassign →
+// drawer re-renders. The harness runs pure Vite with no Tauri runtime, so
+// `move_section` is served by an IPC mock that mirrors the real command's
+// contract: given { id, toAfterId } it returns the document with the
+// section moved (after `toAfterId`, null = front) — exactly what the Rust
+// command does. The component uses a CUSTOM pointer drag (not native HTML5
+// DnD) because WKWebView misroutes drag-session events; unit-spec coverage
+// of the gesture lives in NavigationDrawer.spec.js, this proves the whole
+// chain in a real browser.
 
 function makeParagraph(id, content) {
   return {
@@ -84,44 +84,40 @@ test('outline drag-reorder moves a section via move_section', async ({ page }) =
   await page.waitForSelector('.editor-sheet', { timeout: 5000 })
 
   // Open the Sections drawer and confirm the three rows in initial order.
+  // The drawer SLIDES open (transform transition, 250ms) and real mouse
+  // input needs its final geometry — waitForSelector succeeds the moment
+  // .open is set, so let the transition finish before measuring boxes.
   await page.click('button[title="Sections"]')
   await page.waitForSelector('.drawer.left.open .nav-section')
+  await page.waitForTimeout(350)
   const rows = page.locator('.drawer.left.open .nav-section')
   await expect(rows).toHaveCount(3)
   await expect(rows.nth(0)).toContainText('One')
   await expect(rows.nth(1)).toContainText('Two')
 
   // Drag "One" (row 0) onto the LOWER half of "Two" (row 1) → One after Two.
-  // Pointer coordinates come from the rows' REAL bounding boxes: the
-  // component targets by geometry (clientX within the list, clientY vs each
-  // row's rect), so a 75%-depth point in row 1 makes dropHalf deterministically
-  // pick 'after'. And per the WKWebView misroute this guards against, the
-  // dragover/drop are deliberately dispatched on ROW 0's element with row 1's
-  // coordinates — the target must follow the POINTER, not the event's target.
-  // Synthetic drag events (real DataTransfer in Chromium).
-  const row0box = await rows.nth(0).boundingBox()
-  const row1box = await rows.nth(1).boundingBox()
-  const pointer = {
-    clientX: row1box.x + row1box.width / 2,
-    clientY: row1box.y + row1box.height * 0.75,
-  }
-  const dataTransfer = await page.evaluateHandle(() => new DataTransfer())
-  const dispatchDrag = (index, type, at) =>
-    rows.nth(index).evaluate((el, { type, at, dataTransfer }) => {
-      el.dispatchEvent(new DragEvent(type, {
-        bubbles: true,
-        cancelable: true,
-        clientX: at.clientX,
-        clientY: at.clientY,
-        dataTransfer,
-      }))
-    }, { type, at, dataTransfer })
-
-  await dispatchDrag(0, 'dragstart', { clientX: row0box.x + 10, clientY: row0box.y + 5 })
-  await dispatchDrag(0, 'dragover', pointer)
-  // The insertion line renders below the GEOMETRY-targeted row while dragging.
+  // REAL trusted pointer input through the actual gesture: press on the
+  // title area (clear of the row's buttons), move past the 4px threshold,
+  // over the target row, release. No synthetic events — this exercises the
+  // same pointerdown/pointermove/pointerup chain WKWebView will run, which
+  // is the whole point of the custom pointer-drag (native HTML5 DnD was
+  // abandoned after two rounds of WKWebView drag-session misrouting).
+  const row0 = await rows.nth(0).boundingBox()
+  const row1 = await rows.nth(1).boundingBox()
+  const press = { x: row0.x + row0.width * 0.2, y: row0.y + row0.height / 2 }
+  const drop = { x: row1.x + row1.width * 0.2, y: row1.y + row1.height * 0.75 }
+  await page.mouse.move(press.x, press.y)
+  await page.mouse.down()
+  // Cross the threshold straight up (off the row, onto the heading area),
+  // then over the target — the same two-phase shape a human drag has.
+  await page.mouse.move(press.x, press.y - 10, { steps: 2 })
+  await page.mouse.move(drop.x, drop.y, { steps: 5 })
+  // While dragging: source row dimmed, insertion line below the target row,
+  // and the ghost pill follows the pointer.
+  await expect(rows.nth(0)).toHaveClass(/dragging/)
   await expect(rows.nth(1)).toHaveClass(/drop-below/)
-  await dispatchDrag(0, 'drop', pointer)
+  await expect(page.locator('.nav-drag-ghost')).toBeVisible()
+  await page.mouse.up()
 
   // The store invoked move_section (mocked) and assigned the returned doc:
   // the drawer re-renders as Two, One, Three.
@@ -129,7 +125,10 @@ test('outline drag-reorder moves a section via move_section', async ({ page }) =
   await expect(rows.nth(1)).toContainText('One')
   await expect(rows.nth(2)).toContainText('Three')
 
-  // And the drag state cleared (no lingering insertion line / dimmed row).
+  // And the drag state cleared (no lingering insertion line / dimmed row /
+  // ghost). The click that follows the pointerup must be swallowed — the
+  // dragged section is not selected.
   await expect(rows.nth(0)).not.toHaveClass(/dragging/)
   await expect(rows.nth(1)).not.toHaveClass(/drop-below/)
+  await expect(page.locator('.nav-drag-ghost')).toHaveCount(0)
 })
