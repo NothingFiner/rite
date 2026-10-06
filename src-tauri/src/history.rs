@@ -106,7 +106,7 @@ pub struct RiteFile {
 /// it were today's shape — guessing at an unknown format would silently
 /// corrupt the user's document. Bump this only when the on-disk structure
 /// changes; pair it with a migration step in `migrate_rite_file`.
-pub const CURRENT_RITE_SCHEMA_VERSION: u32 = 1;
+pub const CURRENT_RITE_SCHEMA_VERSION: u32 = 2;
 
 /// A sortable, filesystem-safe UTC timestamp with millisecond precision.
 /// Format: `2026-07-19T10-00-00-123`. Fixed width means `String::cmp` orders
@@ -181,13 +181,15 @@ pub fn read_rite_file(json: &str) -> Result<RiteFile, String> {
 /// open path (see `commands::open_document`), so the rest of the app only ever
 /// sees a file at the current schema.
 ///
-/// Today there are no migrations: the current schema is 1 and legacy version-0
-/// files (written before `schema_version` existed) read directly into the
-/// current shape. The `match` is here so the shape is ready to grow — when a
-/// future bump makes the current version 2, the `0 =>` and `1 =>` arms become
-/// the incremental `0→1→2…` migration steps, each falling through to the next.
-/// A version *higher* than this build knows about is a hard error for the same
-/// reason as in `read_rite_file`: an unknown format must not be guessed at.
+/// v2 (5.10) removed the document-level epigram fields and added
+/// `Section.hidden`. Neither needs a data migration: serde ignores the stale
+/// `hasEpigram`/`epigramText` keys in old files, `hidden` defaults to `false`
+/// for sections written before the field, and old files whose embedded
+/// history contained epigram metadata deltas already failed deserialization
+/// in `read_rite_file` (the epigram feature removal is a deliberate break —
+/// the user re-imports affected documents fresh). A version *higher* than
+/// this build knows about is a hard error for the same reason as in
+/// `read_rite_file`: an unknown format must not be guessed at.
 pub fn migrate_rite_file(mut file: RiteFile) -> Result<RiteFile, String> {
     match file.schema_version {
         0 => {
@@ -197,9 +199,16 @@ pub fn migrate_rite_file(mut file: RiteFile) -> Result<RiteFile, String> {
             Ok(file)
         }
         1 => {
+            // v1 deserializes directly into the v2 shape (see the doc
+            // comment); a resave stamps the current version via
+            // `write_rite_file`.
+            let _ = &mut file; // no migration steps needed; keep the binding
+                               // mutable so future arms can mutate in place.
+            Ok(file)
+        }
+        2 => {
             // Current: nothing to do.
-            let _ = &mut file; // no migrations yet; keep the binding mutable so
-                               // future arms can mutate in place without churn.
+            let _ = &mut file;
             Ok(file)
         }
         v if v > CURRENT_RITE_SCHEMA_VERSION => Err(format!(
@@ -453,8 +462,6 @@ mod tests {
             author: "A".to_string(),
             author_contact: "C".to_string(),
             has_toc: false,
-            has_epigram: false,
-            epigram_text: String::new(),
             sections: vec![Section {
                 id: "s1".to_string(),
                 title: String::new(),
@@ -798,16 +805,72 @@ mod tests {
 
     #[test]
     fn migrate_rite_file_passes_current_and_legacy_through_unchanged() {
-        // A current (v1) file passes through migrate untouched.
+        // A current (v2) file passes through migrate untouched.
         let current = make_rite_file(CURRENT_RITE_SCHEMA_VERSION);
         let migrated = migrate_rite_file(current.clone()).unwrap();
         assert_eq!(migrated, current);
 
-        // A legacy (v0) file also passes through — there are no migrations yet,
-        // and v0 already deserializes into the current shape.
+        // A v1 file (pre-5.10: no Section.hidden, document-level epigram
+        // fields) also passes through — it deserializes directly into the
+        // current shape (`hidden` defaults to false; stale epigram keys are
+        // ignored), and a resave stamps v2 via write_rite_file.
+        let v1 = make_rite_file(1);
+        let migrated = migrate_rite_file(v1.clone()).unwrap();
+        assert_eq!(migrated, v1);
+
+        // A legacy (v0) file also passes through — v0 already deserializes
+        // into the current shape.
         let legacy = make_rite_file(0);
         let migrated = migrate_rite_file(legacy.clone()).unwrap();
         assert_eq!(migrated, legacy);
+    }
+
+    #[test]
+    fn v1_file_without_epigram_history_deltas_still_reads() {
+        // The deliberate 5.10 break is narrower than "all old files": only v1
+        // files whose EMBEDDED HISTORY holds epigram metadata deltas fail (the
+        // MetadataField variants are gone). A v1 file with ordinary deltas —
+        // and stale `hasEpigram`/`epigramText` keys inside `document`, plus
+        // sections with no `hidden` key — must still open.
+        let v1_json = serde_json::json!({
+            "document": {
+                "title": "T",
+                "author": "A",
+                "authorContact": "C",
+                "hasTOC": false,
+                "hasEpigram": true,
+                "epigramText": "stale",
+                "sections": [{
+                    "id": "s1",
+                    "title": "One",
+                    "sectionType": "section",
+                    "paragraphs": [{
+                        "id": "p1",
+                        "elements": [{ "textRun": {
+                            "content": "hello",
+                            "textStyle": {},
+                        }}],
+                        "leftIndent": null,
+                        "rightIndent": null,
+                        "firstLineIndent": null,
+                    }],
+                }],
+            },
+            "history": [
+                { "kind": "delta",
+                  "timestamp": "2026-01-01T00-00-00-000",
+                  "ops": [{ "type": "rename_section",
+                            "id": "s1", "old_title": "Old", "new_title": "One" }] },
+            ],
+            "schemaVersion": 1,
+        })
+        .to_string();
+        let file = read_rite_file(&v1_json).unwrap();
+        let file = migrate_rite_file(file).unwrap();
+        assert_eq!(file.document.sections[0].hidden, false);
+        assert_eq!(file.document.sections[0].title, "One");
+        let migrated = migrate_rite_file(file).unwrap();
+        assert_eq!(migrated.schema_version, 1);
     }
 
     #[test]

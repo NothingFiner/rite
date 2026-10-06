@@ -16,8 +16,6 @@ pub struct Document {
     // readable, so this is backward-compatible.
     #[serde(rename = "hasTOC", alias = "hasToc")]
     pub has_toc: bool,
-    pub has_epigram: bool,
-    pub epigram_text: String,
     /// First-class, flat structural units. Each section owns its body paragraphs
     /// (single source of truth — moving/deleting a section is one array op, no
     /// parallel-structure sync). The editor renders a *flat* DOM and translates
@@ -33,8 +31,6 @@ impl Default for Document {
             author_contact:
                 "123 Writer's Lane\nNew York, NY 10001\n(555) 123-4567\nauthor@example.com".into(),
             has_toc: false,
-            has_epigram: false,
-            epigram_text: String::new(),
             sections: vec![Section::default()],
         }
     }
@@ -237,8 +233,6 @@ pub enum MetadataField {
     Author { old: String, new: String },
     AuthorContact { old: String, new: String },
     HasToc { old: bool, new: bool },
-    HasEpigram { old: bool, new: bool },
-    EpigramText { old: String, new: String },
 }
 
 /// Compute the sequence of operations that transforms `old` into `new`.
@@ -280,22 +274,6 @@ pub fn compute_doc_ops(old: &Document, new: &Document) -> Vec<DocOp> {
             field: MetadataField::HasToc {
                 old: old.has_toc,
                 new: new.has_toc,
-            },
-        });
-    }
-    if old.has_epigram != new.has_epigram {
-        ops.push(DocOp::UpdateMetadata {
-            field: MetadataField::HasEpigram {
-                old: old.has_epigram,
-                new: new.has_epigram,
-            },
-        });
-    }
-    if old.epigram_text != new.epigram_text {
-        ops.push(DocOp::UpdateMetadata {
-            field: MetadataField::EpigramText {
-                old: old.epigram_text.clone(),
-                new: new.epigram_text.clone(),
             },
         });
     }
@@ -635,14 +613,6 @@ impl DocOp {
                         old: *new,
                         new: *old,
                     },
-                    MetadataField::HasEpigram { old, new } => MetadataField::HasEpigram {
-                        old: *new,
-                        new: *old,
-                    },
-                    MetadataField::EpigramText { old, new } => MetadataField::EpigramText {
-                        old: new.clone(),
-                        new: old.clone(),
-                    },
                 },
             },
         }
@@ -861,18 +831,6 @@ pub fn apply_doc_ops(doc: &mut Document, ops: &[DocOp]) -> Result<(), String> {
                     }
                     doc.has_toc = *new;
                 }
-                MetadataField::HasEpigram { old, new } => {
-                    if doc.has_epigram != *old {
-                        return Err("UpdateMetadata: has_epigram does not match old value".into());
-                    }
-                    doc.has_epigram = *new;
-                }
-                MetadataField::EpigramText { old, new } => {
-                    if doc.epigram_text != *old {
-                        return Err("UpdateMetadata: epigram_text does not match old value".into());
-                    }
-                    doc.epigram_text = new.clone();
-                }
             },
         }
     }
@@ -938,8 +896,6 @@ mod tests {
             author: "A".to_string(),
             author_contact: "C".to_string(),
             has_toc: false,
-            has_epigram: false,
-            epigram_text: String::new(),
             sections,
         }
     }

@@ -330,8 +330,6 @@ mod tests {
             author: "A".to_string(),
             author_contact: "C".to_string(),
             has_toc: false,
-            has_epigram: false,
-            epigram_text: String::new(),
             sections: vec![
                 create_section(
                     "s1",
@@ -400,8 +398,6 @@ mod tests {
             author: "A".to_string(),
             author_contact: "C".to_string(),
             has_toc: false,
-            has_epigram: false,
-            epigram_text: String::new(),
             sections: vec![
                 create_section("s1", "First", SectionType::Chapter, vec![create_paragraph("p1", "a")]),
                 create_section("s2", "Interlude", SectionType::Section, vec![create_paragraph("p2", "b")]),
@@ -447,8 +443,6 @@ mod tests {
             author: "A".to_string(),
             author_contact: "C".to_string(),
             has_toc: false,
-            has_epigram: false,
-            epigram_text: String::new(),
             sections: vec![create_section("s1", "S", SectionType::Section, vec![para])],
         };
         let body = read_part(&document_to_docx(&doc), "word/document.xml");
@@ -473,8 +467,6 @@ mod tests {
             author: "A".to_string(),
             author_contact: "C".to_string(),
             has_toc: false,
-            has_epigram: false,
-            epigram_text: String::new(),
             sections: vec![create_section("s1", "S", SectionType::Section, vec![para])],
         };
         let body = read_part(&document_to_docx(&doc), "word/document.xml");
@@ -490,8 +482,6 @@ mod tests {
             author: "A".to_string(),
             author_contact: "C".to_string(),
             has_toc: false,
-            has_epigram: false,
-            epigram_text: String::new(),
             sections: vec![create_section("s1", "  ", SectionType::Chapter, vec![create_paragraph("p1", "body")])],
         };
         let body = read_part(&document_to_docx(&doc), "word/document.xml");
@@ -506,8 +496,6 @@ mod tests {
             author: "A".to_string(),
             author_contact: "C".to_string(),
             has_toc: false,
-            has_epigram: false,
-            epigram_text: String::new(),
             sections: vec![create_section("s2", "", SectionType::Section, vec![create_paragraph("p2", "body two")])],
         };
         let body = read_part(&document_to_docx(&doc), "word/document.xml");
@@ -529,8 +517,6 @@ mod tests {
             author: "A".to_string(),
             author_contact: "C".to_string(),
             has_toc: false,
-            has_epigram: false,
-            epigram_text: String::new(),
             sections: vec![epigram],
         };
         let body = read_part(&document_to_docx(&doc), "word/document.xml");
@@ -554,8 +540,6 @@ mod tests {
             author: "A".to_string(),
             author_contact: "C".to_string(),
             has_toc: false,
-            has_epigram: false,
-            epigram_text: String::new(),
             sections: vec![
                 hidden_chapter,
                 create_section(
