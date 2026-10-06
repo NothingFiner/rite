@@ -82,6 +82,16 @@ fn section_header(
     chapter_count: &mut u32,
 ) -> Option<String> {
     let title = section.title.trim();
+    // A hidden section renders NO header line, but its body still exports.
+    // A hidden CHAPTER still advances the counter — chapter numbers are
+    // render-derived positionally (same as the editor), so hiding one must
+    // not renumber the chapters after it.
+    if section.hidden {
+        if section.section_type == SectionType::Chapter {
+            *chapter_count += 1;
+        }
+        return None;
+    }
     match format {
         ExportFormat::Markdown => match section.section_type {
             SectionType::Chapter => {
@@ -214,6 +224,7 @@ mod tests {
             id: id.to_string(),
             title: title.to_string(),
             section_type,
+            hidden: false,
             paragraphs,
         }
     }
@@ -275,6 +286,70 @@ It was a dark and stormy night.\n\n\
 Notes\n\n\
 A section for stray thoughts.\n\n";
         assert_eq!(rendered, expected);
+    }
+
+    #[test]
+    fn hidden_section_omits_header_but_renders_body() {
+        let mut epigram = create_section(
+            "s1",
+            "Epigram",
+            SectionType::Section,
+            vec![create_paragraph("p1", "Only connect.")],
+        );
+        epigram.hidden = true;
+        let doc = Document {
+            title: "T".to_string(),
+            author: "A".to_string(),
+            author_contact: "C".to_string(),
+            has_toc: false,
+            has_epigram: false,
+            epigram_text: String::new(),
+            sections: vec![epigram],
+        };
+
+        // Markdown: front matter leads, then the epigram's body text with NO
+        // `## Epigram` header line. Same for plain text.
+        let rendered = document_to_text(&doc, ExportFormat::Markdown);
+        assert!(rendered.contains("Only connect."));
+        assert!(!rendered.contains("Epigram"));
+
+        let rendered = document_to_text(&doc, ExportFormat::PlainText);
+        assert!(rendered.contains("Only connect."));
+        assert!(!rendered.contains("Epigram"));
+    }
+
+    #[test]
+    fn hidden_chapter_still_advances_numbering() {
+        // Chapter numbers are render-derived positionally; hiding one must
+        // not renumber the chapters after it.
+        let mut hidden_chapter = create_section(
+            "s1",
+            "Cut",
+            SectionType::Chapter,
+            vec![create_paragraph("p1", "removed scene")],
+        );
+        hidden_chapter.hidden = true;
+        let doc = Document {
+            title: "T".to_string(),
+            author: "A".to_string(),
+            author_contact: "C".to_string(),
+            has_toc: false,
+            has_epigram: false,
+            epigram_text: String::new(),
+            sections: vec![
+                hidden_chapter,
+                create_section(
+                    "s2",
+                    "The Arrival",
+                    SectionType::Chapter,
+                    vec![create_paragraph("p2", "body")],
+                ),
+            ],
+        };
+
+        let rendered = document_to_text(&doc, ExportFormat::Markdown);
+        assert!(rendered.contains("## Chapter 2: The Arrival"));
+        assert!(!rendered.contains("Cut"));
     }
 
     #[test]

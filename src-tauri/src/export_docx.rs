@@ -135,6 +135,16 @@ fn section_heading(
     chapter_count: &mut u32,
 ) -> Option<String> {
     let title = section.title.trim();
+    // A hidden section emits no heading paragraph, but its body paragraphs
+    // still export. A hidden CHAPTER still advances the counter — chapter
+    // numbers are render-derived positionally (same as the editor), so
+    // hiding one must not renumber the chapters after it.
+    if section.hidden {
+        if section.section_type == SectionType::Chapter {
+            *chapter_count += 1;
+        }
+        return None;
+    }
     match section.section_type {
         SectionType::Chapter => {
             *chapter_count += 1;
@@ -309,6 +319,7 @@ mod tests {
             id: id.to_string(),
             title: title.to_string(),
             section_type,
+            hidden: false,
             paragraphs,
         }
     }
@@ -502,6 +513,65 @@ mod tests {
         let body = read_part(&document_to_docx(&doc), "word/document.xml");
         assert!(!body.contains("Heading1"));
         assert!(body.contains("body two"));
+    }
+
+    #[test]
+    fn hidden_section_omits_heading_paragraph_but_keeps_body() {
+        let mut epigram = create_section(
+            "s1",
+            "Epigram",
+            SectionType::Section,
+            vec![create_paragraph("p1", "Only connect.")],
+        );
+        epigram.hidden = true;
+        let doc = Document {
+            title: "T".to_string(),
+            author: "A".to_string(),
+            author_contact: "C".to_string(),
+            has_toc: false,
+            has_epigram: false,
+            epigram_text: String::new(),
+            sections: vec![epigram],
+        };
+        let body = read_part(&document_to_docx(&doc), "word/document.xml");
+        // No heading paragraph at all, but the epigram's body text exports.
+        assert!(!body.contains("Heading1"));
+        assert!(!body.contains("Epigram"));
+        assert!(body.contains("Only connect."));
+    }
+
+    #[test]
+    fn hidden_chapter_still_advances_numbering() {
+        let mut hidden_chapter = create_section(
+            "s1",
+            "Cut",
+            SectionType::Chapter,
+            vec![create_paragraph("p1", "removed scene")],
+        );
+        hidden_chapter.hidden = true;
+        let doc = Document {
+            title: "T".to_string(),
+            author: "A".to_string(),
+            author_contact: "C".to_string(),
+            has_toc: false,
+            has_epigram: false,
+            epigram_text: String::new(),
+            sections: vec![
+                hidden_chapter,
+                create_section(
+                    "s2",
+                    "The Arrival",
+                    SectionType::Chapter,
+                    vec![create_paragraph("p2", "body")],
+                ),
+            ],
+        };
+        let body = read_part(&document_to_docx(&doc), "word/document.xml");
+        // The visible chapter keeps its positionally derived number (2), and
+        // the hidden chapter's title/heading never renders.
+        assert!(body.contains("Chapter 2: The Arrival"));
+        assert!(!body.contains("Cut"));
+        assert!(!body.contains("Heading2\"><w:r><w:t>Chapter 1"));
     }
 
     #[test]

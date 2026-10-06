@@ -459,6 +459,7 @@ mod tests {
                 id: "s1".to_string(),
                 title: String::new(),
                 section_type: SectionType::Section,
+                hidden: false,
                 paragraphs: vec![create_paragraph("p1", text)],
             }],
         }

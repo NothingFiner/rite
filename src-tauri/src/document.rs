@@ -52,6 +52,20 @@ pub struct Section {
     /// chapters with zero delta churn (no RenameSection cascade).
     pub title: String,
     pub section_type: SectionType,
+    /// When true the section renders NO heading — in the manuscript, the
+    /// exports, and the printed TOC — but its body text still renders and it
+    /// still starts its own page (the every-section-forces-a-page-break rule
+    /// is unchanged). Purpose: a section named "Epigram"/"Dedication" whose
+    /// title must not render as a header. The editor still shows the title
+    /// div (dimmed) so it can be selected/renamed/re-toggled, and the nav
+    /// drawer still lists it.
+    ///
+    /// `#[serde(default)]` because serde is strict by default — a missing key
+    /// in the JSON is a hard deserialization error. With `default`, any
+    /// section without `"hidden"` (every `.rite` written before this field
+    /// existed, any importer that doesn't set it) reads as `false`.
+    #[serde(default)]
+    pub hidden: bool,
     pub paragraphs: Vec<Paragraph>,
 }
 
@@ -61,6 +75,7 @@ impl Default for Section {
             id: format!("s-{}", uuid::Uuid::new_v4()),
             title: String::new(),
             section_type: SectionType::Section,
+            hidden: false,
             paragraphs: vec![Paragraph::default()],
         }
     }
@@ -184,6 +199,11 @@ pub enum DocOp {
         id: String,
         old_type: SectionType,
         new_type: SectionType,
+    },
+    ChangeSectionHidden {
+        id: String,
+        old_hidden: bool,
+        new_hidden: bool,
     },
     InsertParagraph {
         section_id: String,
@@ -325,6 +345,13 @@ pub fn compute_doc_ops(old: &Document, new: &Document) -> Vec<DocOp> {
                     new_type: new_secs[j].section_type,
                 });
             }
+            if old_secs[i].hidden != new_secs[j].hidden {
+                ops.push(DocOp::ChangeSectionHidden {
+                    id: id.clone(),
+                    old_hidden: old_secs[i].hidden,
+                    new_hidden: new_secs[j].hidden,
+                });
+            }
             ops.extend(compute_paragraph_ops(
                 &old_secs[i].paragraphs,
                 &new_secs[j].paragraphs,
@@ -410,6 +437,13 @@ pub fn compute_doc_ops(old: &Document, new: &Document) -> Vec<DocOp> {
                     id: id.clone(),
                     old_type: old_secs[old_idx].section_type,
                     new_type: new_secs[j].section_type,
+                });
+            }
+            if old_secs[old_idx].hidden != new_secs[j].hidden {
+                ops.push(DocOp::ChangeSectionHidden {
+                    id: id.clone(),
+                    old_hidden: old_secs[old_idx].hidden,
+                    new_hidden: new_secs[j].hidden,
                 });
             }
             ops.extend(compute_paragraph_ops(
@@ -548,6 +582,15 @@ impl DocOp {
                 id: id.clone(),
                 old_type: *new_type,
                 new_type: *old_type,
+            },
+            DocOp::ChangeSectionHidden {
+                id,
+                old_hidden,
+                new_hidden,
+            } => DocOp::ChangeSectionHidden {
+                id: id.clone(),
+                old_hidden: *new_hidden,
+                new_hidden: *old_hidden,
             },
             DocOp::InsertParagraph {
                 section_id,
@@ -724,6 +767,21 @@ pub fn apply_doc_ops(doc: &mut Document, ops: &[DocOp]) -> Result<(), String> {
                 }
                 section.section_type = *new_type;
             }
+            DocOp::ChangeSectionHidden {
+                id,
+                old_hidden,
+                new_hidden,
+            } => {
+                let section = find_section_mut(doc, id)
+                    .ok_or_else(|| format!("ChangeSectionHidden: section {} not found", id))?;
+                if section.hidden != *old_hidden {
+                    return Err(format!(
+                        "ChangeSectionHidden: old_hidden does not match current state for {}",
+                        id
+                    ));
+                }
+                section.hidden = *new_hidden;
+            }
             DocOp::InsertParagraph {
                 section_id,
                 after_id,
@@ -869,6 +927,7 @@ mod tests {
             id: id.to_string(),
             title: title.to_string(),
             section_type,
+            hidden: false,
             paragraphs: paras,
         }
     }
@@ -967,6 +1026,141 @@ mod tests {
         let mut reconstructed = old.clone();
         apply_doc_ops(&mut reconstructed, &ops).unwrap();
         assert_eq!(reconstructed, new);
+    }
+
+    #[test]
+    fn test_compute_doc_ops_change_section_hidden() {
+        let mut hidden_section = create_section("s1", "Epigram", SectionType::Section, vec![
+            create_paragraph("p1", "quote"),
+        ]);
+        hidden_section.hidden = true;
+        let old = create_document(vec![create_section("s1", "Epigram", SectionType::Section, vec![
+            create_paragraph("p1", "quote"),
+        ])]);
+        let new = create_document(vec![hidden_section]);
+        let ops = compute_doc_ops(&old, &new);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(&ops[0], DocOp::ChangeSectionHidden { id, old_hidden, new_hidden }
+            if id == "s1" && !*old_hidden && *new_hidden));
+
+        let mut reconstructed = old.clone();
+        apply_doc_ops(&mut reconstructed, &ops).unwrap();
+        assert_eq!(reconstructed, new);
+    }
+
+    #[test]
+    fn test_compute_doc_ops_hidden_change_rides_with_move() {
+        // A moved section that also toggled hidden: MoveSection carries no
+        // content, so the hidden change must ride in the same batch — the
+        // same rationale as the existing rename/type ride-along.
+        let mut moved_and_hidden = create_section("s1", "One", SectionType::Section, vec![
+            create_paragraph("p1", "a"),
+        ]);
+        moved_and_hidden.hidden = true;
+        let old = create_document(vec![
+            create_section("s1", "One", SectionType::Section, vec![create_paragraph("p1", "a")]),
+            create_section("s2", "Two", SectionType::Section, vec![create_paragraph("p2", "b")]),
+        ]);
+        let new = create_document(vec![
+            create_section("s2", "Two", SectionType::Section, vec![create_paragraph("p2", "b")]),
+            moved_and_hidden,
+        ]);
+        let ops = compute_doc_ops(&old, &new);
+        assert!(ops.len() >= 2);
+        // The walk normalizes "move s1 to the end" as "move s2 to the front"
+        // (same as test_move_first_section_to_end), so the MoveSection may
+        // target either id — what matters is that the hidden change rides in
+        // the SAME batch rather than being dropped.
+        assert!(ops.iter().any(|op| matches!(op, DocOp::MoveSection { .. })));
+        assert!(ops.iter().any(|op| matches!(op,
+            DocOp::ChangeSectionHidden { id, old_hidden, new_hidden }
+                if id == "s1" && !*old_hidden && *new_hidden)));
+
+        let mut reconstructed = old.clone();
+        apply_doc_ops(&mut reconstructed, &ops).unwrap();
+        assert_eq!(reconstructed, new);
+    }
+
+    #[test]
+    fn test_change_section_hidden_invert_round_trips() {
+        let mut hidden_section = create_section("s1", "Epigram", SectionType::Section, vec![
+            create_paragraph("p1", "quote"),
+        ]);
+        hidden_section.hidden = true;
+        let old = create_document(vec![create_section("s1", "Epigram", SectionType::Section, vec![
+            create_paragraph("p1", "quote"),
+        ])]);
+        let new = create_document(vec![hidden_section]);
+        let ops = compute_doc_ops(&old, &new);
+
+        let mut doc = old.clone();
+        apply_doc_ops(&mut doc, &ops).unwrap();
+        assert_eq!(doc, new);
+
+        let inverted: Vec<DocOp> = ops.iter().rev().map(|op| op.invert()).collect();
+        apply_doc_ops(&mut doc, &inverted).unwrap();
+        assert_eq!(doc, old);
+
+        apply_doc_ops(&mut doc, &ops).unwrap();
+        assert_eq!(doc, new);
+    }
+
+    #[test]
+    fn test_apply_change_section_hidden_validates_precondition() {
+        let mut doc = create_document(vec![create_section("s1", "X", SectionType::Section, vec![
+            create_paragraph("p1", "hello"),
+        ])]);
+        let before = doc.clone();
+
+        // old_hidden says true but the section is currently visible → error,
+        // and the document is left untouched.
+        let op = DocOp::ChangeSectionHidden {
+            id: "s1".to_string(),
+            old_hidden: true,
+            new_hidden: false,
+        };
+        let result = apply_doc_ops(&mut doc, &[op]);
+        assert!(result.is_err());
+        assert_eq!(doc, before);
+
+        // Unknown section id → error.
+        let op = DocOp::ChangeSectionHidden {
+            id: "nope".to_string(),
+            old_hidden: false,
+            new_hidden: true,
+        };
+        assert!(apply_doc_ops(&mut doc, &[op]).is_err());
+        assert_eq!(doc, before);
+    }
+
+    #[test]
+    fn test_hidden_survives_insert_delete_roundtrip() {
+        // InsertSection carries the WHOLE section, so hidden round-trips
+        // through insert; inverting it yields DeleteSection whose full-
+        // Section-equality precondition must match the hidden section —
+        // undoing a delete of a hidden section restores it hidden.
+        let mut hidden_section = create_section("s9", "Epigram", SectionType::Section, vec![
+            create_paragraph("p9", "quote"),
+        ]);
+        hidden_section.hidden = true;
+        let old = create_document(vec![create_section("s1", "One", SectionType::Section, vec![
+            create_paragraph("p1", "a"),
+        ])]);
+        let new = create_document(vec![
+            create_section("s1", "One", SectionType::Section, vec![create_paragraph("p1", "a")]),
+            hidden_section,
+        ]);
+        let ops = compute_doc_ops(&old, &new);
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(&ops[0], DocOp::InsertSection { section, .. } if section.hidden));
+
+        let mut doc = old.clone();
+        apply_doc_ops(&mut doc, &ops).unwrap();
+        assert_eq!(doc, new);
+
+        let inverted: Vec<DocOp> = ops.iter().rev().map(|op| op.invert()).collect();
+        apply_doc_ops(&mut doc, &inverted).unwrap();
+        assert_eq!(doc, old);
     }
 
     #[test]
