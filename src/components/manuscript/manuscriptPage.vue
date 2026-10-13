@@ -116,6 +116,15 @@ const pageStyle = computed(() => {
   text-indent: 0;
 }
 
+/* Hidden section (5.10): the pagination measurer needs the empty
+   `.ms-para.section-hidden` element present to keep block indices aligned,
+   but the visible page shows nothing for it — no heading text, no gap. The
+   section's own-page rule comes from the pagination section loop, which is
+   unaffected by this display:none. */
+.page-body :deep(.ms-para.section-hidden) {
+  display: none;
+}
+
 /* Title page */
 .manuscript-page.title-page :deep(.contact-block) {
   display: flex;

@@ -78,9 +78,11 @@ function buildTitlePage() {
 }
 
 // Flat TOC: one line per section (the nav already derives display titles with
-// chapter numbers). No Part/Chapter grouping.
+// chapter numbers). No Part/Chapter grouping. HIDDEN sections are excluded —
+// the printed manuscript TOC is the one place hidden sections do not appear
+// (the nav drawer still lists them; that's the only way to reach one).
 function buildTocPage() {
-  const tocItems = Array.isArray(props.tocItems) ? props.tocItems : []
+  const tocItems = (Array.isArray(props.tocItems) ? props.tocItems : []).filter(item => !item.hidden)
   const items = tocItems.map(item => `
     <li class="toc-ms-item">
       <span class="toc-ms-title">${escapeHtml(item.displayTitle)}</span>
@@ -141,7 +143,7 @@ function buildContentPages() {
         const idx = b.sectionType === 'chapter' ? ++chapterIndex : null
         const chapterPrefix = idx != null ? sectionFormat.formatChapter(idx) : ''
         return sectionTitleToHTML(
-          { id: b.sectionId, title: b.title, sectionType: b.sectionType },
+          { id: b.sectionId, title: b.title, sectionType: b.sectionType, hidden: b.hidden },
           idx,
           chapterPrefix,
           { manuscript: true }
@@ -161,7 +163,7 @@ function buildContentPages() {
 
 const allPages = computed(() => {
   const pages = [buildTitlePage()]
-  if (props.modelValue?.hasTOC && Array.isArray(props.tocItems) && props.tocItems.length > 0) {
+  if (props.modelValue?.hasTOC && Array.isArray(props.tocItems) && props.tocItems.some(i => !i.hidden)) {
     pages.push(buildTocPage())
   }
   if (props.modelValue.hasEpigram && props.modelValue.epigramText) {

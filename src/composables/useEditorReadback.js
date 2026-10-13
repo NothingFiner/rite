@@ -107,6 +107,7 @@ export function domToBlocks(root, zoom) {
         sectionId: child.dataset.sectionId || generateSectionId(),
         sectionType: child.dataset.sectionType || 'section',
         title: readSectionTitleText(child),
+        hidden: child.dataset.sectionHidden === 'true',
       })
     } else if (child.classList?.contains('paragraph')) {
       blocks.push({
@@ -279,6 +280,7 @@ export function useEditorReadback({ sheetRef, modelRef, zoomRef, lastRenderedBlo
       sectionId,
       sectionType: titleEl.dataset.sectionType || 'section',
       title: readSectionTitleText(titleEl),
+      hidden: titleEl.dataset.sectionHidden === 'true',
     }
     // Preserve the render-derived chapterIndex from the retained baseline — a
     // typing edit doesn't change the title or type, so the index is unchanged and
@@ -338,7 +340,7 @@ export function useEditorReadback({ sheetRef, modelRef, zoomRef, lastRenderedBlo
     lastRenderedBlocks.value = all.slice(0, startIdx).concat(blocks, all.slice(endIdx))
 
     skipNextWatcher.value = true
-    emit('syncSection', { id: s.id, title: s.title, paragraphs: s.paragraphs })
+    emit('syncSection', { id: s.id, title: s.title, sectionType: s.sectionType, hidden: s.hidden, paragraphs: s.paragraphs })
   }
 
   return { syncFromDOM, fullSyncFromDOM }

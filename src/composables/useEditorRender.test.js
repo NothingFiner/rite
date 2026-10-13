@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { buildEditorHTML } from './useEditorRender.js'
+import { renderBlockHTML } from './useEditorReconcile.js'
 
 // buildEditorHTML is pure (no Vue, no DOM) so it's fully unit-testable. The
 // render-derived chapter prefix is injected via `formatChapter` so the tests
@@ -155,5 +156,39 @@ describe('buildEditorHTML', () => {
     buildEditorHTML(sections, { formatChapter })
     // The store's reactive paragraph object is untouched.
     expect(sections[0].paragraphs[1].firstLineIndent).toBe(originalIndent)
+  })
+
+  it('renders a hidden section title as a dimmed marker with data-section-hidden (5.10)', () => {
+    const sections = [{ ...section('s1', 'Epigram', ['p1']), hidden: true }]
+    const { html, blocks } = buildEditorHTML(sections, { formatChapter })
+    expect(blocks[0].hidden).toBe(true)
+    expect(html).toContain('class="section-title section-hidden"')
+    expect(html).toContain('data-section-hidden="true"')
+    // The title text still renders — the marker is how the writer finds it.
+    expect(html).toContain('Epigram')
+    // The section's body paragraphs render normally.
+    expect(html).toContain('p1-text')
+  })
+
+  it('stamps hidden:false on title blocks when the sections are not hidden', () => {
+    const sections = [section('s1', 'T', ['p1'])]
+    const { blocks } = buildEditorHTML(sections, { formatChapter })
+    expect(blocks[0].hidden).toBe(false)
+  })
+
+  // Byte-identity (5.10): buildEditorHTML and renderBlockHTML must emit the
+  // same HTML for the same block — the reconciler decides keep-vs-replace by
+  // one string compare, so a hidden section rendered by one but not the
+  // other would falsely `replace` every title on every reconcile.
+  it('is byte-identical to renderBlockHTML joined over the baked blocks (incl. a hidden section)', () => {
+    const sections = [
+      { ...section('s1', 'Epigram', ['p1']), hidden: true },
+      section('c1', 'One', ['p2'], 'chapter'),
+      section('s2', 'Opening', ['p3']),
+    ]
+    const opts = { freshSectionId: null, formatChapter }
+    const { html, blocks } = buildEditorHTML(sections, opts)
+    const perBlock = blocks.map((b) => renderBlockHTML(b, opts)).join('')
+    expect(html).toBe(perBlock)
   })
 })

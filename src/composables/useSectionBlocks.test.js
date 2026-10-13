@@ -47,6 +47,27 @@ describe('flattenSections', () => {
     expect(blocks).toHaveLength(1)
     expect(blocks[0].kind).toBe('section-title')
   })
+
+  it('stamps hidden on the title block (Boolean-coerced, false when absent)', () => {
+    const blocks = flattenSections([
+      { id: 's1', title: 'Epigram', sectionType: 'section', hidden: true, paragraphs: [para('p1')] },
+      section('s2', 'One', 'chapter', [para('p2')]),
+    ])
+    expect(blocks[0].hidden).toBe(true)
+    // A section without the key reads as hidden:false — matches Rust's
+    // #[serde(default)] so an old .rite round-trips the same both sides.
+    expect(blocks[2].hidden).toBe(false)
+  })
+
+  it('counts a hidden chapter toward chapterIndex (numbering is positional)', () => {
+    const blocks = flattenSections([
+      { id: 's1', title: 'Cut', sectionType: 'chapter', hidden: true, paragraphs: [] },
+      section('s2', 'The Arrival', 'chapter', []),
+    ])
+    expect(blocks[0].chapterIndex).toBe(1)
+    expect(blocks[0].hidden).toBe(true)
+    expect(blocks[1].chapterIndex).toBe(2)
+  })
 })
 
 describe('groupBlocks', () => {
@@ -103,6 +124,29 @@ describe('groupBlocks', () => {
       expect(rebuilt[i].sectionType).toBe(original[i].sectionType)
       expect(rebuilt[i].paragraphs.map(p => p.id)).toEqual(original[i].paragraphs.map(p => p.id))
     }
+  })
+
+  it('round-trips hidden both ways (true and false)', () => {
+    // A miss here silently un-hides a section on the first keystroke after
+    // toggling: the DOM readback groups blocks back into sections, so group
+    // must carry the flag or syncSection writes a section without it.
+    const original = [
+      { id: 's1', title: 'Epigram', sectionType: 'section', hidden: true, paragraphs: [para('p1')] },
+      section('s2', 'One', 'chapter', [para('p2')]),
+    ]
+    const rebuilt = groupBlocks(flattenSections(original))
+    expect(rebuilt[0].hidden).toBe(true)
+    expect(rebuilt[1].hidden).toBe(false)
+  })
+
+  it('defaults a hidden-less title block and the synthetic leading section to hidden:false', () => {
+    const blocks = [
+      { kind: 'paragraph', sectionId: undefined, paragraphId: 'p0', paragraph: para('p0') },
+      { kind: 'section-title', sectionId: 's1', sectionType: 'section', title: 'A' },
+    ]
+    const sections = groupBlocks(blocks)
+    expect(sections[0].hidden).toBe(false)
+    expect(sections[1].hidden).toBe(false)
   })
 })
 

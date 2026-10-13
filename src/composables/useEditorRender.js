@@ -59,7 +59,7 @@ export function buildEditorHTML(sections, { freshSectionId, formatChapter, hasEp
       const idx = b.chapterIndex
       const chapterPrefix = idx != null ? (formatChapter ? formatChapter(idx) : '') : ''
       return sectionTitleToHTML(
-        { id: b.sectionId, title: b.title, sectionType: b.sectionType },
+        { id: b.sectionId, title: b.title, sectionType: b.sectionType, hidden: b.hidden },
         idx,
         chapterPrefix,
         { fresh: b.sectionId === freshSectionId }

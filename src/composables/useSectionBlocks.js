@@ -35,6 +35,7 @@ export function flattenSections(sections) {
       sectionId: section.id,
       sectionType: section.sectionType,
       title: section.title,
+      hidden: Boolean(section.hidden),
       chapterIndex: displayChapterIndex,
     })
     for (const paragraph of section.paragraphs) {
@@ -64,11 +65,12 @@ export function groupBlocks(blocks) {
         id: block.sectionId,
         title: block.title,
         sectionType: block.sectionType,
+        hidden: Boolean(block.hidden),
         paragraphs: [],
       }
     } else if (block.kind === 'paragraph') {
       if (!current) {
-        current = { id: generateSectionId(), title: '', sectionType: 'section', paragraphs: [] }
+        current = { id: generateSectionId(), title: '', sectionType: 'section', hidden: false, paragraphs: [] }
       }
       current.paragraphs.push(block.paragraph)
     }

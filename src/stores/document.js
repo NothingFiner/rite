@@ -129,6 +129,20 @@ export const useDocumentStore = defineStore('document', {
       }
     },
 
+    async setSectionHidden(id, hidden) {
+      try {
+        // Same flush-before-invoke rationale as deleteSection: the command
+        // returns Rust's doc, so a pending typing batch must land in Rust first
+        // or this assignment would silently discard it.
+        await this.syncToRust()
+        const updated = await invoke('set_section_hidden', { id, hidden })
+        this.doc = updated
+        this.isModified = true
+      } catch (e) {
+        this.notifyError(e, 'Failed to hide/unhide section')
+      }
+    },
+
     async moveSection(id, toAfterId) {
       try {
         // Same flush-before-invoke rationale as undo/redo: move_section
@@ -345,11 +359,17 @@ export const useDocumentStore = defineStore('document', {
     /// the edited section rather than churning the whole document per
     /// keystroke. `syncSections` (whole-array replace) is still used for
     /// array-level changes like `insertSection`.
-    syncSection({ id, title, paragraphs }) {
+    syncSection({ id, title, sectionType, hidden, paragraphs }) {
       if (!this.doc) return
       const s = this.doc.sections.find(s => s.id === id)
       if (!s) return
       s.title = title
+      // sectionType/hidden ride the localized readback for completeness — a
+      // typing edit can't actually change either (locked titles block input;
+      // hidden lives on the same locked surface), but writing them back keeps
+      // the DOM and model from ever disagreeing about a section's shape.
+      if (sectionType) s.sectionType = sectionType
+      if (typeof hidden === 'boolean') s.hidden = hidden
       s.paragraphs = paragraphs
       this.markModified()
     },

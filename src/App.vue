@@ -33,6 +33,7 @@
       @insert-section="onInsertSection"
       @rename-section="nav.renameSection"
       @change-section-type="nav.changeSectionType"
+      @toggle-hidden="nav.setSectionHidden"
       @move-section="nav.moveSection"
       @delete-item="nav.deleteSection"
       @select="nav.selectedNavId = $event"

@@ -62,6 +62,18 @@ describe('usePagination', () => {
       expect(calculateBreaksFromHeights(heights, blocks, CONTENT_HEIGHT)).toEqual([1])
     })
 
+    it('still forces the break at a ZERO-HEIGHT hidden title when content precedes it (5.10)', () => {
+      // A hidden section's manuscript heading is an empty `.ms-para` that
+      // measures height 0 — but the break rule reads `currentHeight` (the
+      // content accumulated BEFORE the title), so the hidden section still
+      // starts its own page. Guard: this is why the hidden heading renders as
+      // an empty element instead of being omitted (dropping it would shift
+      // every later positional height measurement).
+      const blocks = [paraBlock(), { ...titleBlock(), hidden: true }, paraBlock()]
+      const heights = [100, 0, 100]
+      expect(calculateBreaksFromHeights(heights, blocks, CONTENT_HEIGHT)).toEqual([1])
+    })
+
     it('breaks when a single block exceeds page height', () => {
       const blocks = [paraBlock(), paraBlock()]
       const heights = [100, 900]

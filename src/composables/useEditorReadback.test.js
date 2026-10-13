@@ -227,6 +227,25 @@ describe('useEditorReadback — DOM walkers', () => {
     it('returns an empty array for an empty sheet', () => {
       expect(domToBlocks(root, 16)).toEqual([])
     })
+
+    it('reads the hidden flag from data-section-hidden (5.10)', () => {
+      // A miss here silently un-hides on the first keystroke after toggling:
+      // readback groups blocks into sections, groupBlocks carries `hidden`,
+      // and syncSection writes it back to the store.
+      root.innerHTML = `
+        <div class="section-title section-hidden" data-section-id="s1" data-section-type="section" data-section-hidden="true">
+          <span class="section-title-text">Epigram</span>
+        </div>
+        <div class="paragraph" data-para-id="p1" data-section-id="s1">Only connect.</div>
+        <div class="section-title" data-section-id="s2" data-section-type="section">
+          <span class="section-title-text">Opening</span>
+        </div>
+      `
+      const blocks = domToBlocks(root, 16)
+      expect(blocks[0].hidden).toBe(true)
+      // Absent attr reads as false — matches a section never toggled.
+      expect(blocks[2].hidden).toBe(false)
+    })
   })
 })
 
@@ -260,6 +279,19 @@ describe('useEditorReadback — factory', () => {
   }
 
   describe('fullSyncFromDOM', () => {
+    it('carries the hidden flag through the DOM→sections readback (5.10)', () => {
+      root.innerHTML = `
+        <div class="section-title section-hidden" data-section-id="s1" data-section-type="section" data-section-hidden="true">
+          <span class="section-title-text">Epigram</span>
+        </div>
+        <div class="paragraph" data-para-id="p1" data-section-id="s1">Only connect.</div>
+      `
+      const r = makeReadback(root)
+      r.fullSyncFromDOM()
+      const sections = r.emitted[0].payload
+      expect(sections[0].hidden).toBe(true)
+    })
+
     it('reads the whole sheet, emits syncSections, and updates the retained baseline', () => {
       root.innerHTML = `
         <div class="section-title" data-section-id="s1" data-section-type="section">

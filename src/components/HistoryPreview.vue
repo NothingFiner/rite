@@ -33,11 +33,12 @@ const renderedHtml = computed(() => {
   for (const block of blocks) {
     if (block.kind === 'section-title') {
       // Reconstruct a minimal Section for the helper (it only reads id/title/
-      // sectionType). The chapter prefix is derived from chapterIndex.
+      // sectionType/hidden). The chapter prefix is derived from chapterIndex.
       const section = {
         id: block.sectionId,
         title: block.title,
         sectionType: block.sectionType,
+        hidden: block.hidden,
       }
       const prefix = block.sectionType === 'chapter'
         ? sectionFormat.formatChapter(block.chapterIndex)
@@ -81,6 +82,11 @@ const renderedHtml = computed(() => {
 
 .history-preview-doc :deep(.section-title.chapter) {
   font-size: 1.6em;
+}
+
+/* Hidden sections dim the same way the editor marks them (5.10). */
+.history-preview-doc :deep(.section-title.section-hidden) {
+  opacity: 0.45;
 }
 
 .history-preview-doc :deep(.paragraph) {

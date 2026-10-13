@@ -807,6 +807,13 @@ defineExpose({
   margin-bottom: 1em;
 }
 
+/* Hidden section (5.10): the title div ALWAYS renders in the editor (the
+   drift gate counts `.section-title`s; the scroll/nav machinery queries them)
+   — it just dims, so the writer can still find, rename, and re-toggle it. */
+.editor-sheet :deep(.section-title.section-hidden) {
+  opacity: 0.45;
+}
+
 .editor-sheet :deep(.section-title .chapter-prefix) {
   /* locked, derived — no special styling beyond inheriting the title's look */
 }

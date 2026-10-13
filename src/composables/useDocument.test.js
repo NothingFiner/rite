@@ -80,6 +80,24 @@ describe('useDocumentStore', () => {
     expect(store.doc).toBeNull()
   })
 
+  it('syncSection writes the title, type, and hidden flag from the localized readback', () => {
+    const store = useDocumentStore()
+    store.doc = { title: 'Test', sections: [makeSection('s1', 'Old', 'section', [makePara('p1', 'x')])] }
+    store.syncSection({ id: 's1', title: 'New', sectionType: 'section', hidden: true, paragraphs: [makePara('p1', 'y')] })
+    const s = store.doc.sections[0]
+    expect(s.title).toBe('New')
+    expect(s.hidden).toBe(true)
+    expect(s.paragraphs[0].elements[0].textRun.content).toBe('y')
+    expect(store.isModified).toBe(true)
+  })
+
+  it('syncSection leaves hidden untouched when the readback omits it', () => {
+    const store = useDocumentStore()
+    store.doc = { title: 'Test', sections: [{ id: 's1', title: 'E', sectionType: 'section', hidden: true, paragraphs: [] }] }
+    store.syncSection({ id: 's1', title: 'E', paragraphs: [] })
+    expect(store.doc.sections[0].hidden).toBe(true)
+  })
+
   it('loads initial document from Rust', async () => {
     const mockDoc = { title: 'Initial', sections: [] }
     invoke.mockResolvedValue(mockDoc)
@@ -129,6 +147,32 @@ describe('useDocumentStore', () => {
     await store.changeSectionType('s1', 'chapter')
     expect(invoke).toHaveBeenCalledWith('change_section_type', { id: 's1', newType: 'chapter' })
     expect(store.isModified).toBe(true)
+  })
+
+  it('sets a section hidden via Rust (flush-first, Rust doc assigned back)', async () => {
+    const updatedDoc = { title: 'Test', sections: [{ id: 's1', title: 'Epigram', sectionType: 'section', hidden: true, paragraphs: [] }] }
+    invoke.mockResolvedValue(updatedDoc)
+    const store = useDocumentStore()
+    store.doc = { title: 'Test', sections: [makeSection('s1', 'Epigram')] }
+    store.isModified = true // a pending typing batch must flush before the invoke
+    const docBeforeFlush = store.doc // the flush ships THIS doc, before the command's return replaces it
+    await store.setSectionHidden('s1', true)
+    // The pending sync ships the live doc first, THEN the command runs.
+    expect(invoke).toHaveBeenNthCalledWith(1, 'sync_document', { data: docBeforeFlush })
+    expect(invoke).toHaveBeenNthCalledWith(2, 'set_section_hidden', { id: 's1', hidden: true })
+    expect(store.doc.sections[0].hidden).toBe(true)
+    expect(store.isModified).toBe(true)
+  })
+
+  it('setSectionHidden skips the flush when nothing is pending', async () => {
+    const updatedDoc = { title: 'Test', sections: [makeSection('s1')] }
+    invoke.mockResolvedValue(updatedDoc)
+    const store = useDocumentStore()
+    store.doc = { title: 'Test', sections: [makeSection('s1')] }
+    // isModified false → syncToRust early-returns; only the command runs.
+    await store.setSectionHidden('s1', false)
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(invoke).toHaveBeenCalledWith('set_section_hidden', { id: 's1', hidden: false })
   })
 
   it('moves section via Rust', async () => {
