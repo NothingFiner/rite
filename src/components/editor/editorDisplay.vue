@@ -17,7 +17,6 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, nextTick, watch, computed, toRef } from 'vue'
-import { escapeHtml } from '../../composables/useParagraphHTML.js'
 import { flattenSections, computeFirstLineIndent } from '../../composables/useSectionBlocks.js'
 import { computeReconcileOps, blockKey, renderBlockHTML } from '../../composables/useEditorReconcile.js'
 import { buildEditorHTML } from '../../composables/useEditorRender.js'
@@ -204,7 +203,7 @@ function layoutPageBreaks() {
 // full `innerHTML` rebuild renderEditor performs — so the cursor and scroll
 // stay where the user left them. The pure op computation lives in
 // useEditorReconcile.js; this function owns the DOM application, cursor
-// save/restore, the epigram, and a drift-gate fallback to renderEditor.
+// save/restore, and a drift-gate fallback to renderEditor.
 
 /// renderBlockHTML (the single-block renderer computeReconcileOps injects as
 /// its renderBlockFn) now lives in useEditorReconcile.js — extracted in roadmap
@@ -296,31 +295,15 @@ function reconcileEditor() {
   root.querySelectorAll('.page-break-line').forEach(el => el.remove())
   root.querySelectorAll('.editor-sentinel').forEach(el => el.remove())
 
-  // Epigram: a non-content block at the very front, not part of flattenSections.
-  const wantEpigram = !!(props.modelValue.hasEpigram && props.modelValue.epigramText)
-  let epigramNode = root.querySelector('.epigram-block')
-  if (wantEpigram) {
-    const epigramHtml = `<div class="epigram-block">${escapeHtml(props.modelValue.epigramText).replace(/\n/g, '<br>')}</div>`
-    if (!epigramNode) {
-      epigramNode = document.createElement('div')
-      root.insertBefore(epigramNode, root.firstChild)
-    }
-    if (epigramNode.outerHTML !== epigramHtml) epigramNode.outerHTML = epigramHtml
-    epigramNode = root.querySelector('.epigram-block')
-  } else if (epigramNode) {
-    epigramNode.remove()
-    epigramNode = null
-  }
-
   const { ops, removedKeys } = computeReconcileOps(
     oldBlocks, newBlocks,
     (block) => renderBlockHTML(block, { freshSectionId: freshSectionId.value, formatChapter: sectionFormat.formatChapter })
   )
 
   // Apply ops in new order, keeping a prevNode cursor so each block lands in the
-  // right place. Content blocks live after the epigram (if any); the hr/sentinel
-  // are gone, so epigram + content are the only children while we patch.
-  let prevNode = epigramNode || null
+  // right place. The trailing decorations are gone, so the content blocks are
+  // the only children while we patch.
+  let prevNode = null
   for (const op of ops) {
     let node
     if (op.op === 'keep') {
@@ -334,9 +317,7 @@ function reconcileEditor() {
       else root.insertAdjacentHTML('afterbegin', op.html)
       node = root.querySelector(blockSelector(op.key))
     }
-    const expectedNext = prevNode
-      ? prevNode.nextSibling
-      : (epigramNode ? epigramNode.nextSibling : root.firstChild)
+    const expectedNext = prevNode ? prevNode.nextSibling : root.firstChild
     if (node && node !== expectedNext) root.insertBefore(node, expectedNext)
     prevNode = node
   }
@@ -417,7 +398,7 @@ function renderEditor() {
   if (!root) return
 
   // The full-sheet build (flatten → bake first-line indents → render each
-  // block → prepend the epigram) lives in useEditorRender.js now (roadmap 5.6
+  // block) lives in useEditorRender.js now (roadmap 5.6
   // PR4); it returns the baked block list + section count so we record them as
   // the retained baseline the reconciler diffs against next time.
   const { html, blocks, sectionCount } = buildEditorHTML(
@@ -425,8 +406,6 @@ function renderEditor() {
     {
       freshSectionId: freshSectionId.value,
       formatChapter: sectionFormat.formatChapter,
-      hasEpigram: props.modelValue?.hasEpigram,
-      epigramText: props.modelValue?.epigramText,
     }
   )
 
@@ -807,16 +786,15 @@ defineExpose({
   margin-bottom: 1em;
 }
 
-.editor-sheet :deep(.section-title .chapter-prefix) {
-  /* locked, derived — no special styling beyond inheriting the title's look */
+/* Hidden section (5.10): the title div ALWAYS renders in the editor (the
+   drift gate counts `.section-title`s; the scroll/nav machinery queries them)
+   — it just dims, so the writer can still find, rename, and re-toggle it. */
+.editor-sheet :deep(.section-title.section-hidden) {
+  opacity: 0.45;
 }
 
-.editor-sheet :deep(.epigram-block) {
-  font-style: italic;
-  text-align: center;
-  margin-bottom: 1.5em;
-  white-space: pre-line;
-  opacity: 0.7;
+.editor-sheet :deep(.section-title .chapter-prefix) {
+  /* locked, derived — no special styling beyond inheriting the title's look */
 }
 
 /* Page break visuals are rendered via CSS pseudo-elements on the first block of

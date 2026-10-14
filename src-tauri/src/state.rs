@@ -333,12 +333,11 @@ mod tests {
             author: "A".to_string(),
             author_contact: "C".to_string(),
             has_toc: false,
-            has_epigram: false,
-            epigram_text: String::new(),
             sections: vec![Section {
                 id: "s1".to_string(),
                 section_type: SectionType::Section,
                 title: String::new(),
+                hidden: false,
                 paragraphs: vec![Paragraph {
                     id: "p1".to_string(),
                     elements: vec![Element {

@@ -40,7 +40,7 @@ pub fn document_to_text(doc: &Document, format: ExportFormat) -> String {
     let mut out = String::new();
     let mut chapter_count = 0u32;
 
-    // Front matter (title / author / epigram) leads the document in Markdown
+    // Front matter (title / author) leads the document in Markdown
     // only — the `# title` is Markdown, and the plan scopes front matter to the
     // Markdown export. Plain text keeps the bare section walk. See
     // `document_front_matter` for the per-piece rules.
@@ -82,6 +82,16 @@ fn section_header(
     chapter_count: &mut u32,
 ) -> Option<String> {
     let title = section.title.trim();
+    // A hidden section renders NO header line, but its body still exports.
+    // A hidden CHAPTER still advances the counter — chapter numbers are
+    // render-derived positionally (same as the editor), so hiding one must
+    // not renumber the chapters after it.
+    if section.hidden {
+        if section.section_type == SectionType::Chapter {
+            *chapter_count += 1;
+        }
+        return None;
+    }
     match format {
         ExportFormat::Markdown => match section.section_type {
             SectionType::Chapter => {
@@ -122,16 +132,12 @@ fn section_header(
     }
 }
 
-/// Build the front matter (title / byline / epigram) that leads the document,
-/// or an empty string when there is none to emit.
+/// Build the front matter (title / byline) that leads the document, or an
+/// empty string when there is none to emit.
 ///
 /// Markdown only: the title becomes a level-1 heading (`# title`) and the
-/// author a byline (`*by author*`). The epigram, when the document has one
-/// (`has_epigram` and a non-empty `epigram_text`), becomes a Markdown
-/// blockquote — each line prefixed with `> ` — mirroring how the manuscript
-/// renders an epigram page. Plain text returns empty: the plan scopes front
-/// matter to the Markdown export, and a plain-text blockquote would just be a
-/// literal `>` with no reader recognizing it.
+/// author a byline (`*by author*`). Plain text returns empty: the plan scopes
+/// front matter to the Markdown export.
 ///
 /// Empty pieces are skipped (no empty heading, no blank byline), so a document
 /// with only a title emits just `# title` followed by its sections.
@@ -148,21 +154,6 @@ fn document_front_matter(doc: &Document, format: ExportFormat) -> String {
     let author = doc.author.trim();
     if !author.is_empty() {
         out.push_str(&format!("*by {}*\n\n", author));
-    }
-    if doc.has_epigram {
-        let epigram = doc.epigram_text.trim();
-        if !epigram.is_empty() {
-            // Markdown blockquote: prefix every line with `> `. Using `.lines()`
-            // (not `.split('\n')`) collapses a trailing newline so we don't emit
-            // a bare `> ` line for the final newline.
-            for line in epigram.lines() {
-                out.push_str("> ");
-                out.push_str(line);
-                out.push('\n');
-            }
-            // A blank line separates the blockquote from the first section.
-            out.push('\n');
-        }
     }
 
     out
@@ -214,6 +205,7 @@ mod tests {
             id: id.to_string(),
             title: title.to_string(),
             section_type,
+            hidden: false,
             paragraphs,
         }
     }
@@ -226,8 +218,6 @@ mod tests {
             author: "A".to_string(),
             author_contact: "C".to_string(),
             has_toc: false,
-            has_epigram: false,
-            epigram_text: String::new(),
             sections: vec![
                 create_section(
                     "s1",
@@ -278,6 +268,66 @@ A section for stray thoughts.\n\n";
     }
 
     #[test]
+    fn hidden_section_omits_header_but_renders_body() {
+        let mut epigram = create_section(
+            "s1",
+            "Epigram",
+            SectionType::Section,
+            vec![create_paragraph("p1", "Only connect.")],
+        );
+        epigram.hidden = true;
+        let doc = Document {
+            title: "T".to_string(),
+            author: "A".to_string(),
+            author_contact: "C".to_string(),
+            has_toc: false,
+            sections: vec![epigram],
+        };
+
+        // Markdown: front matter leads, then the epigram's body text with NO
+        // `## Epigram` header line. Same for plain text.
+        let rendered = document_to_text(&doc, ExportFormat::Markdown);
+        assert!(rendered.contains("Only connect."));
+        assert!(!rendered.contains("Epigram"));
+
+        let rendered = document_to_text(&doc, ExportFormat::PlainText);
+        assert!(rendered.contains("Only connect."));
+        assert!(!rendered.contains("Epigram"));
+    }
+
+    #[test]
+    fn hidden_chapter_still_advances_numbering() {
+        // Chapter numbers are render-derived positionally; hiding one must
+        // not renumber the chapters after it.
+        let mut hidden_chapter = create_section(
+            "s1",
+            "Cut",
+            SectionType::Chapter,
+            vec![create_paragraph("p1", "removed scene")],
+        );
+        hidden_chapter.hidden = true;
+        let doc = Document {
+            title: "T".to_string(),
+            author: "A".to_string(),
+            author_contact: "C".to_string(),
+            has_toc: false,
+            sections: vec![
+                hidden_chapter,
+                create_section(
+                    "s2",
+                    "The Arrival",
+                    SectionType::Chapter,
+                    vec![create_paragraph("p2", "body")],
+                ),
+            ],
+        };
+
+        let rendered = document_to_text(&doc, ExportFormat::Markdown);
+        assert!(rendered.contains("## Chapter 2: The Arrival"));
+        assert!(!rendered.contains("Cut"));
+    }
+
+    #[test]
     fn chapter_number_increments_across_chapters_only() {
         // Two chapters with a section sandwiched between: the section must not
         // advance the chapter counter, so the second chapter is `Chapter 2`.
@@ -286,8 +336,6 @@ A section for stray thoughts.\n\n";
             author: "A".to_string(),
             author_contact: "C".to_string(),
             has_toc: false,
-            has_epigram: false,
-            epigram_text: String::new(),
             sections: vec![
                 create_section("s1", "First", SectionType::Chapter, vec![create_paragraph("p1", "a")]),
                 create_section("s2", "Interlude", SectionType::Section, vec![create_paragraph("p2", "b")]),
@@ -312,8 +360,6 @@ A section for stray thoughts.\n\n";
             author: "A".to_string(),
             author_contact: "C".to_string(),
             has_toc: false,
-            has_epigram: false,
-            epigram_text: String::new(),
             sections: vec![
                 create_section("s1", "  ", SectionType::Chapter, vec![create_paragraph("p1", "body one")]),
                 create_section("s2", "", SectionType::Section, vec![create_paragraph("p2", "body two")]),
@@ -337,8 +383,6 @@ A section for stray thoughts.\n\n";
             author: "A".to_string(),
             author_contact: "C".to_string(),
             has_toc: false,
-            has_epigram: false,
-            epigram_text: String::new(),
             sections: vec![create_section(
                 "s1",
                 "One",
@@ -359,15 +403,13 @@ A section for stray thoughts.\n\n";
         assert_eq!(rendered, expected);
     }
 
-    /// A doc with a title, author, and epigram, for the front-matter tests.
-    fn front_matter_document(epigram: &str) -> Document {
+    /// A doc with a title and author, for the front-matter tests.
+    fn front_matter_document() -> Document {
         Document {
             title: "The Glass Hotel".to_string(),
             author: "Amal El-Mohtar".to_string(),
             author_contact: String::new(),
             has_toc: false,
-            has_epigram: !epigram.is_empty(),
-            epigram_text: epigram.to_string(),
             sections: vec![create_section(
                 "s1",
                 "Chapter One",
@@ -378,17 +420,14 @@ A section for stray thoughts.\n\n";
     }
 
     #[test]
-    fn markdown_prepends_title_byline_and_epigram_blockquote() {
-        let doc = front_matter_document("Lines written on\nthe back of a receipt");
+    fn markdown_prepends_title_byline() {
+        let doc = front_matter_document();
         let rendered = document_to_text(&doc, ExportFormat::Markdown);
 
-        // Title -> H1, author -> byline, epigram -> blockquote (each line
-        // prefixed `> `), then the first section's heading and body.
+        // Title -> H1, author -> byline, then the first section's heading and
+        // body.
         let expected = "# The Glass Hotel\n\n\
 *by Amal El-Mohtar*\n\n\
-> Lines written on\n\
-> the back of a receipt\n\
-\n\
 ## Chapter 1: Chapter One\n\n\
 Body of the first chapter.\n\n";
         assert_eq!(rendered, expected);
@@ -396,15 +435,13 @@ Body of the first chapter.\n\n";
 
     #[test]
     fn markdown_omits_front_matter_pieces_that_are_empty() {
-        // No title, no author, no epigram -> nothing is prepended; the output
-        // starts at the first section. (has_epigram is false here.)
+        // No title, no author -> nothing is prepended; the output
+        // starts at the first section.
         let doc = Document {
             title: String::new(),
             author: String::new(),
             author_contact: String::new(),
             has_toc: false,
-            has_epigram: false,
-            epigram_text: String::new(),
             sections: vec![create_section(
                 "s1",
                 "One",
@@ -413,32 +450,20 @@ Body of the first chapter.\n\n";
             )],
         };
         let rendered = document_to_text(&doc, ExportFormat::Markdown);
-        // No empty heading, no empty byline, no blockquote.
+        // No empty heading, no empty byline.
         assert!(!rendered.contains("# \n"));
         assert!(!rendered.contains("*by"));
-        assert!(!rendered.contains("> "));
         assert!(rendered.starts_with("## One\n\n"));
-    }
-
-    #[test]
-    fn markdown_skips_epigram_blockquote_when_flag_set_but_text_empty() {
-        // has_epigram is true but the text is whitespace: emit no blockquote
-        // rather than a bare `> ` line. Title/byline still render.
-        let doc = front_matter_document("   \n  ");
-        let rendered = document_to_text(&doc, ExportFormat::Markdown);
-        assert!(rendered.contains("# The Glass Hotel\n\n*by Amal El-Mohtar*\n\n"));
-        assert!(!rendered.contains("> "));
     }
 
     #[test]
     fn plain_text_has_no_front_matter() {
         // Front matter is Markdown-only: the plain-text export starts straight
         // at the first section header, with no `# title` or byline.
-        let doc = front_matter_document("an epigram");
+        let doc = front_matter_document();
         let rendered = document_to_text(&doc, ExportFormat::PlainText);
         assert!(rendered.starts_with("Chapter 1: Chapter One\n\n"));
         assert!(!rendered.contains("# The Glass Hotel"));
         assert!(!rendered.contains("*by"));
-        assert!(!rendered.contains("> "));
     }
 }

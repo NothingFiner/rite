@@ -144,6 +144,10 @@ export function documentToText(doc, scope, selectionText = '', sectionId = null)
   // original (nested) doc so we get the real paragraphs, not just the title
   // block from the flat walk.
   const sectionToText = (titleBlock, chapterIndex) => {
+    // Hidden sections (5.10) contribute their BODY ONLY — no header line,
+    // matching the manuscript/exports. An epigraph reaches the model as its
+    // quoted text without an "Epigram" heading pretending to be context.
+    const includeHeader = !titleBlock.hidden
     const isChapter = titleBlock.sectionType === 'chapter'
     // A subtitle-less chapter renders as just "Chapter N" — no dangling
     // separator (same rule the editor/manuscript renderer follows).
@@ -160,7 +164,7 @@ export function documentToText(doc, scope, selectionText = '', sectionId = null)
         if (paraText.trim()) body += paraText + '\n'
       }
     }
-    return `${header}\n${body}`.trim()
+    return includeHeader ? `${header}\n${body}`.trim() : body.trim()
   }
 
   const blocks = flattenSections(doc.sections)
@@ -190,14 +194,17 @@ export function documentToText(doc, scope, selectionText = '', sectionId = null)
     return ''
   }
 
-  // scope === 'document': all sections in order.
+  // scope === 'document': all sections in order. A hidden section with an
+  // empty body yields '' from sectionToText — skip it rather than stacking
+  // separator blank lines.
   let text = ''
   let chapterIndex = 0
   for (const block of blocks) {
     if (block.kind === 'section-title') {
       const isChapter = block.sectionType === 'chapter'
       const displayIndex = isChapter ? ++chapterIndex : null
-      text += sectionToText(block, displayIndex) + '\n\n'
+      const chunkText = sectionToText(block, displayIndex)
+      if (chunkText) text += chunkText + '\n\n'
     }
   }
   return text.trim()

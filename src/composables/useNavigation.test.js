@@ -15,6 +15,7 @@ const mockStore = {
   renameSection: vi.fn(),
   deleteSection: vi.fn(),
   changeSectionType: vi.fn(),
+  setSectionHidden: vi.fn(),
 }
 
 vi.mock('../stores/document.js', () => ({
@@ -138,5 +139,26 @@ describe('useNavigation', () => {
     const nav = useNavigation(ref({ sections: [] }), ref(null))
     await nav.changeSectionType('s1', 'chapter')
     expect(mockStore.changeSectionType).toHaveBeenCalledWith('s1', 'chapter')
+  })
+
+  it('calls setSectionHidden through the store', async () => {
+    const nav = useNavigation(ref({ sections: [] }), ref(null))
+    await nav.setSectionHidden('s1', true)
+    expect(mockStore.setSectionHidden).toHaveBeenCalledWith('s1', true)
+  })
+
+  it('tocItems carry the hidden flag (5.10)', () => {
+    const docRef = ref({
+      sections: [
+        { id: 's1', title: 'Epigram', sectionType: 'section', hidden: true, paragraphs: [makePara('p1')] },
+        makeSection('s2', 'One', 'chapter', [makePara('p2')]),
+      ],
+    })
+    const nav = useNavigation(docRef, ref(null), mockPagination)
+    expect(nav.tocItems.value[0].hidden).toBe(true)
+    // The drawer still LISTS hidden sections — hidden only affects what they
+    // cost the manuscript/TOC renders.
+    expect(nav.tocItems.value).toHaveLength(2)
+    expect(nav.tocItems.value[1].hidden).toBe(false)
   })
 })

@@ -55,7 +55,7 @@ export function renderBlockHTML(block, { freshSectionId, formatChapter } = {}) {
     const idx = block.chapterIndex
     const chapterPrefix = idx != null ? (formatChapter ? formatChapter(idx) : '') : ''
     return sectionTitleToHTML(
-      { id: block.sectionId, title: block.title, sectionType: block.sectionType },
+      { id: block.sectionId, title: block.title, sectionType: block.sectionType, hidden: block.hidden },
       idx,
       chapterPrefix,
       { fresh: block.sectionId === freshSectionId }

@@ -116,6 +116,15 @@ const pageStyle = computed(() => {
   text-indent: 0;
 }
 
+/* Hidden section (5.10): the pagination measurer needs the empty
+   `.ms-para.section-hidden` element present to keep block indices aligned,
+   but the visible page shows nothing for it — no heading text, no gap. The
+   section's own-page rule comes from the pagination section loop, which is
+   unaffected by this display:none. */
+.page-body :deep(.ms-para.section-hidden) {
+  display: none;
+}
+
 /* Title page */
 .manuscript-page.title-page :deep(.contact-block) {
   display: flex;
@@ -208,23 +217,5 @@ const pageStyle = computed(() => {
 
 .page-body :deep(.toc-ms-page) {
   white-space: nowrap;
-}
-
-/* Epigram page */
-.manuscript-page.epigram-page {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.page-body :deep(.epigram-body) {
-  font-family: var(--ms-font-family);
-  font-size: var(--ms-font-size);
-  line-height: var(--ms-line-height);
-  text-align: center;
-  white-space: pre-line;
-  font-style: italic;
-  color: var(--ms-text-color);
-  max-width: 400px;
 }
 </style>

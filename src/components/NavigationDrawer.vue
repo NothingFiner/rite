@@ -11,6 +11,7 @@
             :class="{
               active: props.activeId === item.id,
               dragging: draggingId === item.id,
+              'section-hidden': item.hidden,
               'drop-above': dropTarget?.id === item.id && dropTarget.half === 'before',
               'drop-below': dropTarget?.id === item.id && dropTarget.half === 'after',
             }"
@@ -51,6 +52,14 @@
                 ? 'Chapter (auto-numbered). Click to make a freeform Section.'
                 : 'Section (freeform title). Click to make an auto-numbered Chapter.'"
             >{{ item.sectionType === 'chapter' ? 'Ch' : '§' }}</button>
+            <button
+              class="nav-hidden-toggle"
+              :class="{ hidden: item.hidden }"
+              @click.stop="toggleHidden(item)"
+              :title="item.hidden
+                ? 'Hidden: no heading in the manuscript or its TOC (body still renders, own page). Click to show the heading.'
+                : 'Shown. Click to hide this heading from the manuscript and its TOC.'"
+            ><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16"><path d="M16 8s-3-5.5-8-5.5S0 8 0 8s3 5.5 8 5.5S16 8 16 8z"/><circle cx="8" cy="8" r="2.2" class="nav-hidden-pupil" fill="var(--input-bg)"/></svg></button>
             <span class="nav-page">p. {{ item.page }}</span>
           </li>
         </ul>
@@ -88,7 +97,7 @@ const props = defineProps({
   activeId: { type: String, default: null },
 })
 
-const emit = defineEmits(['scrollTo', 'insertSection', 'renameSection', 'changeSectionType', 'moveSection', 'update:expanded', 'select', 'deleteItem'])
+const emit = defineEmits(['scrollTo', 'insertSection', 'renameSection', 'changeSectionType', 'toggleHidden', 'moveSection', 'update:expanded', 'select', 'deleteItem'])
 
 const sectionInput = ref(null)
 const editingIds = ref(new Set())
@@ -325,6 +334,13 @@ function toggleType(item) {
   emit('changeSectionType', item.id, newType)
 }
 
+// Toggle a section's hidden flag (5.10): hidden = no heading in the
+// manuscript, exports, or printed TOC (body still renders, own page). The
+// round-trip set_section_hidden command is undoable, same as the type toggle.
+function toggleHidden(item) {
+  emit('toggleHidden', item.id, !item.hidden)
+}
+
 function startRename(item) {
   editingIds.value.add(item.id)
   draftTitles.value[item.id] = item.title
@@ -506,6 +522,44 @@ watch(sections, () => {
 .nav-type-toggle.chapter {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* Hidden-section toggle badge (5.10) — same chrome as the type toggle. The
+   drawer still LISTS hidden sections (the only way to reach/rename/re-toggle
+   them), so the row itself dims to signal the state. */
+.nav-hidden-toggle {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 1px solid var(--bg-glass-border);
+  background: var(--input-bg);
+  color: var(--text-secondary);
+  font-size: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 4px;
+  opacity: 0.55;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
+}
+
+.nav-hidden-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  opacity: 1;
+}
+
+.nav-hidden-toggle.hidden {
+  border-color: var(--accent);
+  color: var(--accent);
+  opacity: 1;
+}
+
+/* The hidden row's title reads dimmed, matching the editor marker heading. */
+.nav-section.section-hidden .nav-title {
+  opacity: 0.5;
 }
 
 .nav-edit {

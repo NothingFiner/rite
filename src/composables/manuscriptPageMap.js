@@ -1,11 +1,11 @@
 /// Pure helpers for the manuscript's front-matter ↔ content-page mapping.
 ///
-/// The manuscript renders front matter (title / TOC / epigram) BEFORE the
+/// The manuscript renders front matter (title / TOC) BEFORE the
 /// numbered content pages. Content pages are keyed `content-${i}` with a
 /// 0-based `i` (buildContentPages), and their ManuscriptPage header shows
 /// `i + 1` — which is the shared pagination page number (the same number the
 /// editor uses, because pagination is a single shared instance: roadmap 2.5).
-/// Front-matter pages use literal keys (`title`, `toc`, `epigram`) and have NO
+/// Front-matter pages use literal keys (`title`, `toc`) and have NO
 /// content-page number.
 ///
 /// View-aware switching (5.1b) needs to translate between a pagination page
@@ -18,7 +18,7 @@
 ///   content page N  ↔  key `content-${N-1}`
 
 // The pagination page number a content page represents, or null when the key is
-// front matter (title/toc/epigram) — callers treat null as "page 1" so a switch
+// front matter (title/toc) — callers treat null as "page 1" so a switch
 // from front matter lands on the first content page, not page 0.
 export function contentPageNumberFromKey(key) {
   if (typeof key !== 'string' || !key.startsWith('content-')) return null

@@ -8,7 +8,7 @@
 // flatten sections into a block list (section-title block, then its paragraph
 // blocks, repeat), and at sync time we group the flat DOM blocks back into
 // sections. A `.section-title` is a non-paragraph structural sibling, exactly
-// like epigram-block / page-break-line already are.
+// like page-break lines already are.
 //
 // Chapter numbers are render-derived: a Chapter's number is its 1-based index
 // among Chapter-type sections, computed during the flatten walk. It is never
@@ -35,6 +35,7 @@ export function flattenSections(sections) {
       sectionId: section.id,
       sectionType: section.sectionType,
       title: section.title,
+      hidden: Boolean(section.hidden),
       chapterIndex: displayChapterIndex,
     })
     for (const paragraph of section.paragraphs) {
@@ -64,11 +65,12 @@ export function groupBlocks(blocks) {
         id: block.sectionId,
         title: block.title,
         sectionType: block.sectionType,
+        hidden: Boolean(block.hidden),
         paragraphs: [],
       }
     } else if (block.kind === 'paragraph') {
       if (!current) {
-        current = { id: generateSectionId(), title: '', sectionType: 'section', paragraphs: [] }
+        current = { id: generateSectionId(), title: '', sectionType: 'section', hidden: false, paragraphs: [] }
       }
       current.paragraphs.push(block.paragraph)
     }

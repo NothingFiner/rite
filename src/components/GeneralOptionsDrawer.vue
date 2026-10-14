@@ -63,14 +63,6 @@
             <input id="toc" type="checkbox" :checked="store.doc?.hasTOC" @change="e => { store.doc.hasTOC = e.target.checked; store.markModified() }" />
             <label for="toc">Table of Contents</label>
           </div>
-          <div class="drawer-check">
-            <input id="epigram" type="checkbox" :checked="store.doc?.hasEpigram" @change="e => { store.doc.hasEpigram = e.target.checked; store.markModified() }" />
-            <label for="epigram">Epigram Page</label>
-          </div>
-          <template v-if="store.doc?.hasEpigram">
-            <label class="drawer-label">Epigram Text</label>
-            <textarea class="drawer-textarea" :value="store.doc?.epigramText || ''" @input="e => { store.doc.epigramText = e.target.value; store.markModified() }" rows="3" />
-          </template>
         </div>
 
         <!-- AI Assistant accordion — BYOK provider config. Endpoint + model +

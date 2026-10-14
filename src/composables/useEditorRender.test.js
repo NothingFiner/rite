@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { buildEditorHTML } from './useEditorRender.js'
+import { renderBlockHTML } from './useEditorReconcile.js'
 
 // buildEditorHTML is pure (no Vue, no DOM) so it's fully unit-testable. The
 // render-derived chapter prefix is injected via `formatChapter` so the tests
@@ -119,41 +120,45 @@ describe('buildEditorHTML', () => {
     expect(html).toContain('class="section-title chapter"')
   })
 
-  it('prepends an epigram block when hasEpigram and epigramText are both truthy', () => {
-    const sections = [section('s1', 'T', ['p1'])]
-    const { html } = buildEditorHTML(sections, {
-      formatChapter,
-      hasEpigram: true,
-      epigramText: 'A quote\non two lines',
-    })
-    expect(html.indexOf('<div class="epigram-block">')).toBe(0) // epigram is FIRST
-    expect(html).toContain('A quote<br>on two lines') // newlines → <br>
-  })
-
-  it('does not prepend an epigram block when hasEpigram is false or text is empty', () => {
-    const sections = [section('s1', 'T', ['p1'])]
-    const noFlag = buildEditorHTML(sections, { formatChapter, hasEpigram: false, epigramText: 'x' })
-    expect(noFlag.html).not.toContain('epigram-block')
-    const noText = buildEditorHTML(sections, { formatChapter, hasEpigram: true, epigramText: '' })
-    expect(noText.html).not.toContain('epigram-block')
-  })
-
-  it('escapes HTML in the epigram text', () => {
-    const sections = [section('s1', 'T', ['p1'])]
-    const { html } = buildEditorHTML(sections, {
-      formatChapter,
-      hasEpigram: true,
-      epigramText: '<script>',
-    })
-    expect(html).toContain('&lt;script&gt;')
-    expect(html).not.toContain('<script>')
-  })
-
   it('shallow-copies paragraph blocks so baking indents does not mutate the input paragraphs', () => {
     const sections = [section('s1', 'T', ['p1', 'p2'])]
     const originalIndent = sections[0].paragraphs[1].firstLineIndent
     buildEditorHTML(sections, { formatChapter })
     // The store's reactive paragraph object is untouched.
     expect(sections[0].paragraphs[1].firstLineIndent).toBe(originalIndent)
+  })
+
+  it('renders a hidden section title as a dimmed marker with data-section-hidden (5.10)', () => {
+    const sections = [{ ...section('s1', 'Epigram', ['p1']), hidden: true }]
+    const { html, blocks } = buildEditorHTML(sections, { formatChapter })
+    expect(blocks[0].hidden).toBe(true)
+    expect(html).toContain('class="section-title section-hidden"')
+    expect(html).toContain('data-section-hidden="true"')
+    // The title text still renders — the marker is how the writer finds it.
+    expect(html).toContain('Epigram')
+    // The section's body paragraphs render normally.
+    expect(html).toContain('p1-text')
+  })
+
+  it('stamps hidden:false on title blocks when the sections are not hidden', () => {
+    const sections = [section('s1', 'T', ['p1'])]
+    const { blocks } = buildEditorHTML(sections, { formatChapter })
+    expect(blocks[0].hidden).toBe(false)
+  })
+
+  // Byte-identity (5.10): buildEditorHTML and renderBlockHTML must emit the
+  // same HTML for the same block — the reconciler decides keep-vs-replace by
+  // one string compare, so a hidden section rendered by one but not the
+  // other would falsely `replace` every title on every reconcile.
+  it('is byte-identical to renderBlockHTML joined over the baked blocks (incl. a hidden section)', () => {
+    const sections = [
+      { ...section('s1', 'Epigram', ['p1']), hidden: true },
+      section('c1', 'One', ['p2'], 'chapter'),
+      section('s2', 'Opening', ['p3']),
+    ]
+    const opts = { freshSectionId: null, formatChapter }
+    const { html, blocks } = buildEditorHTML(sections, opts)
+    const perBlock = blocks.map((b) => renderBlockHTML(b, opts)).join('')
+    expect(html).toBe(perBlock)
   })
 })

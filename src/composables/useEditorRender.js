@@ -3,10 +3,10 @@
 // sheet render `renderEditor` used to inline: it flattens the doc's sections
 // into the flat block list the contenteditable renders, bakes the section-aware
 // first-line indents (shallow-copying paragraph blocks so the store's reactive
-// paragraphs are NOT mutated), renders each block to HTML, and prepends the
-// epigram block when present. It returns the HTML string PLUS the baked block
-// list + section count, so the orchestrator can record them as the retained
-// baseline the reconciler diffs against on the next external change.
+// paragraphs are NOT mutated), renders each block to HTML. It returns the HTML
+// string PLUS the baked block list + section count, so the orchestrator can
+// record them as the retained baseline the reconciler diffs against on the
+// next external change.
 //
 // The single-block renderer `renderBlockHTML` lives in useEditorReconcile.js
 // (it's the `renderBlockFn` computeReconcileOps injects); the two share the
@@ -21,7 +21,7 @@
 // editable so the user can type its subtitle inline.
 
 import { flattenSections, computeFirstLineIndent } from './useSectionBlocks.js'
-import { paragraphToHTML, sectionTitleToHTML, escapeHtml } from './useParagraphHTML.js'
+import { paragraphToHTML, sectionTitleToHTML } from './useParagraphHTML.js'
 
 /// Build the editor's full `innerHTML` from the doc's sections, plus the baked
 /// block list and section count the orchestrator retains as its diff baseline.
@@ -32,16 +32,13 @@ import { paragraphToHTML, sectionTitleToHTML, escapeHtml } from './useParagraphH
 ///     otherwise.
 ///   - `formatChapter(index)`: renders the locked "Chapter N: " prefix for a
 ///     Chapter's render-derived index. Injected so this module is Vue-free.
-///   - `hasEpigram` / `epigramText`: when both are truthy a non-content
-///     `.epigram-block` div is prepended (not part of flattenSections, so it
-///     never becomes a model block).
 ///
 /// Returns `{ html, blocks, sectionCount }`. `blocks` is the baked flat list
 /// (paragraph blocks shallow-copied + firstLineIndent baked; title blocks carry
 /// the `chapterIndex` flattenSections stamps); `sectionCount` is the number of
 /// section-title blocks. Paragraph blocks are shallow-copied so baking
 /// `firstLineIndent` does not mutate the store's reactive paragraph objects.
-export function buildEditorHTML(sections, { freshSectionId, formatChapter, hasEpigram, epigramText } = {}) {
+export function buildEditorHTML(sections, { freshSectionId, formatChapter } = {}) {
   // Shallow-copy paragraph blocks so baking computed indents does not mutate
   // the store's reactive paragraphs.
   const blocks = flattenSections(sections || []).map(b => {
@@ -59,7 +56,7 @@ export function buildEditorHTML(sections, { freshSectionId, formatChapter, hasEp
       const idx = b.chapterIndex
       const chapterPrefix = idx != null ? (formatChapter ? formatChapter(idx) : '') : ''
       return sectionTitleToHTML(
-        { id: b.sectionId, title: b.title, sectionType: b.sectionType },
+        { id: b.sectionId, title: b.title, sectionType: b.sectionType, hidden: b.hidden },
         idx,
         chapterPrefix,
         { fresh: b.sectionId === freshSectionId }
@@ -68,12 +65,6 @@ export function buildEditorHTML(sections, { freshSectionId, formatChapter, hasEp
     return paragraphToHTML(b.paragraph, { sectionId: b.sectionId })
   }).join('')
 
-  let fullHtml = html
-  if (hasEpigram && epigramText) {
-    const epigramHtml = `<div class="epigram-block">${escapeHtml(epigramText).replace(/\n/g, '<br>')}</div>`
-    fullHtml = epigramHtml + fullHtml
-  }
-
   const sectionCount = blocks.filter(b => b.kind === 'section-title').length
-  return { html: fullHtml, blocks, sectionCount }
+  return { html, blocks, sectionCount }
 }

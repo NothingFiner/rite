@@ -288,3 +288,38 @@ describe('NavigationDrawer drag-reorder', () => {
     expect(wrapper.emitted('moveSection')).toBeUndefined()
   })
 })
+
+describe('NavigationDrawer hidden-section toggle (5.10)', () => {
+  it('emits toggleHidden with the inverted flag when the eye badge is clicked', async () => {
+    const wrapper = makeDrawer()
+    const rows = wrapper.findAll('.nav-section')
+    await rows[0].find('.nav-hidden-toggle').trigger('click')
+    expect(wrapper.emitted('toggleHidden')).toEqual([['a', true]])
+    expect(wrapper.emitted('moveSection')).toBeUndefined()
+  })
+
+  it('dims a hidden row and accents its badge', async () => {
+    const wrapper = makeDrawer({
+      tocItems: [
+        { ...makeItem('a'), hidden: true },
+        makeItem('b'),
+      ],
+    })
+    const rows = wrapper.findAll('.nav-section')
+    expect(rows[0].classes()).toContain('section-hidden')
+    expect(rows[0].find('.nav-hidden-toggle').classes()).toContain('hidden')
+    expect(rows[1].classes()).not.toContain('section-hidden')
+  })
+
+  it('starts no drag from the hidden badge (it is a row button)', async () => {
+    const wrapper = makeDrawer()
+    const rows = wrapper.findAll('.nav-section')
+    rows[0].find('.nav-hidden-toggle').element.dispatchEvent(
+      new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 200, clientY: 5 })
+    )
+    await dispatchPointer(rows[0], 'pointermove', 200, 45)
+    expect(rows[0].classes()).not.toContain('dragging')
+    await dispatchPointer(rows[0], 'pointerup', 200, 45)
+    expect(wrapper.emitted('moveSection')).toBeUndefined()
+  })
+})

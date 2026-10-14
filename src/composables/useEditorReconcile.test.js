@@ -7,8 +7,8 @@ import { computeReconcileOps, blockKey, renderBlockHTML } from './useEditorRecon
 // fields change-detection should notice: sectionType, chapterIndex, title for
 // titles; paragraphId, text, firstLineIndent for paragraphs.
 
-function title(id, { sectionType = 'section', titleText = '', chapterIndex = null } = {}) {
-  return { kind: 'section-title', sectionId: id, sectionType, title: titleText, chapterIndex }
+function title(id, { sectionType = 'section', titleText = '', chapterIndex = null, hidden = false } = {}) {
+  return { kind: 'section-title', sectionId: id, sectionType, title: titleText, chapterIndex, hidden }
 }
 
 function para(id, { text = '', indent = 0.5, sectionId = 's1' } = {}) {
@@ -31,7 +31,9 @@ function para(id, { text = '', indent = 0.5, sectionId = 's1' } = {}) {
 /// appear here.
 function render(b) {
   if (b.kind === 'section-title') {
-    return `T[${b.sectionType}|${b.chapterIndex}|${b.title}]`
+    // Hidden appends a suffix only when TRUE, so the pre-5.10 expectations
+    // (all non-hidden) keep their exact strings.
+    return `T[${b.sectionType}|${b.chapterIndex}|${b.title}${b.hidden ? '|hidden' : ''}]`
   }
   const text = (b.paragraph.elements || []).map((e) => e.textRun.content).join('')
   return `P[${b.paragraphId}|${text}|${b.paragraph.firstLineIndent}]`
@@ -124,6 +126,32 @@ describe('computeReconcileOps', () => {
       ['replace', 'title:s1'],
       ['keep', 'para:p1'],
     ])
+    expect(removedKeys).toEqual([])
+  })
+
+  it('replaces exactly one title when a section toggles hidden (5.10)', () => {
+    // Toggling hidden changes ONE section's rendered marker; every other
+    // block — including other titles — must diff as `keep`.
+    const old = [
+      title('s1', { titleText: 'Epigraph' }),
+      para('p1', { text: 'a' }),
+      title('s2', { titleText: 'One' }),
+      para('p2', { text: 'b' }),
+    ]
+    const next = [
+      title('s1', { titleText: 'Epigraph', hidden: true }),
+      para('p1', { text: 'a' }),
+      title('s2', { titleText: 'One' }),
+      para('p2', { text: 'b' }),
+    ]
+    const { ops, removedKeys } = reconcile(old, next)
+    expect(opSummary(ops)).toEqual([
+      ['replace', 'title:s1'],
+      ['keep', 'para:p1'],
+      ['keep', 'title:s2'],
+      ['keep', 'para:p2'],
+    ])
+    expect(ops[0].html).toBe('T[section|null|Epigraph|hidden]')
     expect(removedKeys).toEqual([])
   })
 
@@ -233,6 +261,15 @@ describe('renderBlockHTML', () => {
     expect(html).toBe(
       '<div class="section-title" data-section-id="s2" data-section-type="section" contenteditable="false">'
       + '<span class="section-title-text">Opening</span></div>'
+    )
+  })
+
+  it('renders a hidden section title with the marker class + data attr (5.10)', () => {
+    const block = { kind: 'section-title', sectionId: 's3', sectionType: 'section', title: 'Epigram', chapterIndex: null, hidden: true }
+    const html = renderBlockHTML(block, { freshSectionId: null, formatChapter: fmt })
+    expect(html).toBe(
+      '<div class="section-title section-hidden" data-section-id="s3" data-section-type="section" data-section-hidden="true" contenteditable="false">'
+      + '<span class="section-title-text">Epigram</span></div>'
     )
   })
 

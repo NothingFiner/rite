@@ -36,8 +36,6 @@ function makeDocument(sections) {
     author: 'A',
     authorContact: '',
     hasTOC: false,
-    hasEpigram: false,
-    epigramText: '',
     sections,
   }
 }
@@ -181,6 +179,35 @@ describe('documentToText', () => {
   it('returns empty for a doc with no sections', () => {
     expect(documentToText({ sections: [] }, 'document')).toBe('')
     expect(documentToText(null, 'document')).toBe('')
+  })
+
+  it('supplies a hidden section to the model as body only — no header line (5.10)', () => {
+    const doc = makeDocument([
+      { ...makeSection('s1', 'Epigram', 'section', [makeParagraph('p1', 'Only connect.')]), hidden: true },
+      makeSection('s2', 'The Arrival', 'chapter', [makeParagraph('p2', 'The door opened.')]),
+    ])
+    const text = documentToText(doc, 'document')
+    // Body renders, header does not.
+    expect(text).toContain('Only connect.')
+    expect(text).not.toContain('Epigram')
+    expect(text).toContain('Chapter 1: The Arrival')
+  })
+
+  it('omits a hidden section with no body entirely (no blank separators)', () => {
+    const doc = makeDocument([
+      { ...makeSection('s1', 'Dedication', 'section', [makeParagraph('p1', '')]), hidden: true },
+      makeSection('s2', 'One', 'section', [makeParagraph('p2', 'Body.')]),
+    ])
+    const text = documentToText(doc, 'document')
+    expect(text).toBe('One\nBody.')
+  })
+
+  it('suppresses the header for a hidden section in the section scope too', () => {
+    const doc = makeDocument([
+      { ...makeSection('s1', 'Epigram', 'section', [makeParagraph('p1', 'Only connect.')]), hidden: true },
+    ])
+    const text = documentToText(doc, 'section', '', 's1')
+    expect(text).toBe('Only connect.')
   })
 })
 

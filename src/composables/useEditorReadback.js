@@ -16,13 +16,12 @@ import { groupBlocks, computeFirstLineIndent } from './useSectionBlocks.js'
 import { generateParagraphId, generateSectionId, createParagraph, defaultTextStyle } from '../constants/DocumentModel.js'
 
 /// True for the non-content decorations interleaved with the real blocks — the
-/// page-break <hr>, page-number labels, the epigram block, and the click
-/// sentinel. domToBlocks and the keydown walk skip these so they never become
-/// model blocks or nav targets.
+/// page-break <hr>, page-number labels, and the click sentinel. domToBlocks
+/// and the keydown walk skip these so they never become model blocks or nav
+/// targets.
 export function isNonContentBlock(el) {
   return el.classList?.contains('page-break-line') ||
     el.classList?.contains('page-number-label') ||
-    el.classList?.contains('epigram-block') ||
     el.classList?.contains('editor-sentinel')
 }
 
@@ -107,6 +106,7 @@ export function domToBlocks(root, zoom) {
         sectionId: child.dataset.sectionId || generateSectionId(),
         sectionType: child.dataset.sectionType || 'section',
         title: readSectionTitleText(child),
+        hidden: child.dataset.sectionHidden === 'true',
       })
     } else if (child.classList?.contains('paragraph')) {
       blocks.push({
@@ -279,6 +279,7 @@ export function useEditorReadback({ sheetRef, modelRef, zoomRef, lastRenderedBlo
       sectionId,
       sectionType: titleEl.dataset.sectionType || 'section',
       title: readSectionTitleText(titleEl),
+      hidden: titleEl.dataset.sectionHidden === 'true',
     }
     // Preserve the render-derived chapterIndex from the retained baseline — a
     // typing edit doesn't change the title or type, so the index is unchanged and
@@ -338,7 +339,7 @@ export function useEditorReadback({ sheetRef, modelRef, zoomRef, lastRenderedBlo
     lastRenderedBlocks.value = all.slice(0, startIdx).concat(blocks, all.slice(endIdx))
 
     skipNextWatcher.value = true
-    emit('syncSection', { id: s.id, title: s.title, paragraphs: s.paragraphs })
+    emit('syncSection', { id: s.id, title: s.title, sectionType: s.sectionType, hidden: s.hidden, paragraphs: s.paragraphs })
   }
 
   return { syncFromDOM, fullSyncFromDOM }

@@ -32,6 +32,7 @@ export function useNavigation(docRef, editorRef, pagination = { getPageForBlock:
         id: blocks[i].sectionId,
         title: blocks[i].title,
         sectionType: blocks[i].sectionType,
+        hidden: blocks[i].hidden,
         chapterIndex: blocks[i].chapterIndex,
         displayTitle: displayTitleFor(blocks[i]),
         page: getPageForBlock(i),
@@ -73,6 +74,10 @@ export function useNavigation(docRef, editorRef, pagination = { getPageForBlock:
     await store.changeSectionType(id, newType)
   }
 
+  async function setSectionHidden(id, hidden) {
+    await store.setSectionHidden(id, hidden)
+  }
+
   async function moveSection(id, toAfterId) {
     await store.moveSection(id, toAfterId)
     // Editor re-renders automatically via its watcher when store.doc changes.
@@ -85,6 +90,7 @@ export function useNavigation(docRef, editorRef, pagination = { getPageForBlock:
     renameSection,
     deleteSection,
     changeSectionType,
+    setSectionHidden,
     moveSection,
   }
 }

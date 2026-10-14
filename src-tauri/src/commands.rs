@@ -87,6 +87,30 @@ pub fn change_section_type(
     Ok(doc.clone())
 }
 
+/// Set a section's `hidden` flag: when hidden, the section renders NO heading
+/// (manuscript, exports, printed TOC) but its body text still renders and it
+/// still starts its own page. Round-trip + undoable via `ChangeSectionHidden`.
+#[tauri::command]
+pub fn set_section_hidden(
+    id: String,
+    hidden: bool,
+    state: State<AppState>,
+) -> Result<Document, String> {
+    let old_doc = state.document.lock().map_err(|e| e.to_string())?.clone();
+    let mut doc = state.document.lock().map_err(|e| e.to_string())?;
+    let mut modified = state.is_modified.lock().map_err(|e| e.to_string())?;
+
+    if let Some(section) = find_section_mut(&mut doc, &id) {
+        section.hidden = hidden;
+    }
+
+    *modified = true;
+    drop(doc);
+    state.push_history_delta(&old_doc);
+    let doc = state.document.lock().map_err(|e| e.to_string())?;
+    Ok(doc.clone())
+}
+
 /// Move a section — with all its paragraphs — to sit after `to_after_id`, or
 /// to the front of the document when `to_after_id` is `None`. The outline
 /// drag-reorder (roadmap 5.5) calls this; the resulting `push_history_delta`
@@ -921,12 +945,11 @@ mod tests {
             author: "A".to_string(),
             author_contact: "C".to_string(),
             has_toc: false,
-            has_epigram: false,
-            epigram_text: String::new(),
             sections: vec![Section {
                 id: "s1".to_string(),
                 title: String::new(),
                 section_type: SectionType::Section,
+                hidden: false,
                 paragraphs: content,
             }],
         }
@@ -939,6 +962,7 @@ mod tests {
             id: id.to_string(),
             title: String::new(),
             section_type: SectionType::Section,
+            hidden: false,
             paragraphs,
         }
     }
@@ -1307,6 +1331,37 @@ mod tests {
 
         assert!(state.undo().unwrap());
         assert_eq!(section_ids(&state), original_ids);
+    }
+
+    #[test]
+    fn set_section_hidden_sets_the_flag_and_is_undoable() {
+        let app = mock_app_with_state();
+        let state = app.state::<AppState>();
+        *state.document.lock().unwrap() = three_section_document();
+
+        // The command returns the updated document (the JS store assigns it
+        // back wholesale) — assert the flag round-trips through the wire doc.
+        let updated = set_section_hidden("s2".to_string(), true, state.clone()).unwrap();
+        assert!(updated.sections.iter().find(|s| s.id == "s2").unwrap().hidden);
+        assert!(!updated.sections.iter().find(|s| s.id == "s1").unwrap().hidden);
+
+        // The toggle is journaled as a ChangeSectionHidden delta, so undo
+        // must restore the visible state.
+        assert!(state.undo().unwrap());
+        let doc = state.document.lock().unwrap();
+        assert!(!doc.sections.iter().find(|s| s.id == "s2").unwrap().hidden);
+    }
+
+    #[test]
+    fn set_section_hidden_unknown_id_journals_nothing() {
+        let app = mock_app_with_state();
+        let state = app.state::<AppState>();
+        *state.document.lock().unwrap() = three_section_document();
+
+        // Matches change_section_type's semantics: an unknown id is a silent
+        // no-op, and the empty diff journals no delta — undo has nothing to do.
+        set_section_hidden("nope".to_string(), true, state.clone()).unwrap();
+        assert!(!state.undo().unwrap());
     }
 
     #[test]

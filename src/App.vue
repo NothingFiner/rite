@@ -33,6 +33,7 @@
       @insert-section="onInsertSection"
       @rename-section="nav.renameSection"
       @change-section-type="nav.changeSectionType"
+      @toggle-hidden="nav.setSectionHidden"
       @move-section="nav.moveSection"
       @delete-item="nav.deleteSection"
       @select="nav.selectedNavId = $event"
@@ -444,7 +445,7 @@ function onScrollTo(id) {
 // Manuscript "Go to top" button (5.1b). The manuscript's first page is the
 // title page (front matter), which sits at the very top of the scroll-layer —
 // so going to the top is just scrolling the layer back to scrollTop 0, not
-// scrolling to "content page 1" (which would skip the title/TOC/epigram). The
+// scrolling to "content page 1" (which would skip the title/TOC). The
 // button only shows in manuscript mode (Toolbar.vue), but the handler is safe
 // in any mode.
 function onGoToTop() {
