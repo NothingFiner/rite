@@ -3,7 +3,7 @@ import { contentPageNumberFromKey, contentKeyForPage } from './manuscriptPageMap
 
 // The manuscript's front-matter ↔ content-page mapping (5.1b). Content pages
 // are keyed `content-${i}` (0-based i), header shows i+1 — the shared
-// pagination page number. Front matter (title/toc/epigram) has no page number.
+// pagination page number. Front matter (title/toc) has no page number.
 
 describe('contentPageNumberFromKey', () => {
   it('maps content-0 → page 1 (the first content page)', () => {
@@ -16,13 +16,13 @@ describe('contentPageNumberFromKey', () => {
     expect(contentPageNumberFromKey('content-99')).toBe(100)
   })
 
-  it('returns null for front-matter keys (title/toc/epigram)', () => {
+  it('returns null for front-matter keys (title/toc) and any other non-content string', () => {
     // null is the caller's signal to fall back to page 1 — front matter sits
     // above the first content page, so a switch from front matter lands on
     // page 1, not page 0.
     expect(contentPageNumberFromKey('title')).toBeNull()
     expect(contentPageNumberFromKey('toc')).toBeNull()
-    expect(contentPageNumberFromKey('epigram')).toBeNull()
+    expect(contentPageNumberFromKey('front-matter')).toBeNull()
   })
 
   it('returns null for non-content / malformed keys', () => {

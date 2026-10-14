@@ -56,8 +56,6 @@ export const useDocumentStore = defineStore('document', {
           author: 'Author Name',
           authorContact: '',
           hasTOC: false,
-          hasEpigram: false,
-          epigramText: '',
           sections: [createSection()],
         }
       }
@@ -310,8 +308,6 @@ export const useDocumentStore = defineStore('document', {
         author: '',
         authorContact: '',
         hasTOC: false,
-        hasEpigram: false,
-        epigramText: '',
         sections: [createSection()],
       }
       if (this.syncTimeout) clearTimeout(this.syncTimeout)

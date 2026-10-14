@@ -120,36 +120,6 @@ describe('buildEditorHTML', () => {
     expect(html).toContain('class="section-title chapter"')
   })
 
-  it('prepends an epigram block when hasEpigram and epigramText are both truthy', () => {
-    const sections = [section('s1', 'T', ['p1'])]
-    const { html } = buildEditorHTML(sections, {
-      formatChapter,
-      hasEpigram: true,
-      epigramText: 'A quote\non two lines',
-    })
-    expect(html.indexOf('<div class="epigram-block">')).toBe(0) // epigram is FIRST
-    expect(html).toContain('A quote<br>on two lines') // newlines → <br>
-  })
-
-  it('does not prepend an epigram block when hasEpigram is false or text is empty', () => {
-    const sections = [section('s1', 'T', ['p1'])]
-    const noFlag = buildEditorHTML(sections, { formatChapter, hasEpigram: false, epigramText: 'x' })
-    expect(noFlag.html).not.toContain('epigram-block')
-    const noText = buildEditorHTML(sections, { formatChapter, hasEpigram: true, epigramText: '' })
-    expect(noText.html).not.toContain('epigram-block')
-  })
-
-  it('escapes HTML in the epigram text', () => {
-    const sections = [section('s1', 'T', ['p1'])]
-    const { html } = buildEditorHTML(sections, {
-      formatChapter,
-      hasEpigram: true,
-      epigramText: '<script>',
-    })
-    expect(html).toContain('&lt;script&gt;')
-    expect(html).not.toContain('<script>')
-  })
-
   it('shallow-copies paragraph blocks so baking indents does not mutate the input paragraphs', () => {
     const sections = [section('s1', 'T', ['p1', 'p2'])]
     const originalIndent = sections[0].paragraphs[1].firstLineIndent

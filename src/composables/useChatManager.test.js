@@ -37,8 +37,6 @@ function sampleDocument() {
     author: 'A',
     authorContact: '',
     hasTOC: false,
-    hasEpigram: false,
-    epigramText: '',
     sections: [
       makeSection('s1', 'The Arrival', 'chapter', [makeParagraph('p1', 'Rain fell.')]),
       makeSection('s2', 'Notes', 'section', [makeParagraph('p2', 'A quiet scene.')]),

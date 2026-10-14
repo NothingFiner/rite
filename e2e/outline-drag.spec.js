@@ -36,8 +36,6 @@ const initialDoc = {
   author: 'A',
   authorContact: '',
   hasTOC: false,
-  hasEpigram: false,
-  epigramText: '',
   sections: [makeSection('s1', 'One'), makeSection('s2', 'Two'), makeSection('s3', 'Three')],
 }
 

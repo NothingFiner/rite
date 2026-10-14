@@ -18,11 +18,10 @@ import {
 
 describe('useEditorReadback — pure helpers', () => {
   describe('isNonContentBlock', () => {
-    it('flags the page-break line, page-number label, epigram, and sentinel', () => {
+    it('flags the page-break line, page-number label, and sentinel', () => {
       const make = (cls) => { const d = document.createElement('div'); d.className = cls; return d }
       expect(isNonContentBlock(make('page-break-line'))).toBe(true)
       expect(isNonContentBlock(make('page-number-label'))).toBe(true)
-      expect(isNonContentBlock(make('epigram-block'))).toBe(true)
       expect(isNonContentBlock(make('editor-sentinel'))).toBe(true)
     })
 

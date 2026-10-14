@@ -97,11 +97,6 @@ function buildTocPage() {
   return { key: 'toc', header: '', body, pageClass: 'toc-page' }
 }
 
-function buildEpigramPage() {
-  const body = `<div class="epigram-body">${escapeHtml(props.modelValue.epigramText || '')}</div>`
-  return { key: 'epigram', header: '', body, pageClass: 'epigram-page' }
-}
-
 // Content pages are sliced from the flattened block sequence (section-titles +
 // paragraphs) at the block-index page breaks from usePagination. Section-title
 // blocks render as styled ms-para headings; paragraph blocks render as body
@@ -166,22 +161,19 @@ const allPages = computed(() => {
   if (props.modelValue?.hasTOC && Array.isArray(props.tocItems) && props.tocItems.some(i => !i.hidden)) {
     pages.push(buildTocPage())
   }
-  if (props.modelValue.hasEpigram && props.modelValue.epigramText) {
-    pages.push(buildEpigramPage())
-  }
   pages.push(...buildContentPages())
   return pages
 })
 
 // --- View-aware scrolling (5.1 / 5.1b) ---------------------------------------
-// The manuscript renders front matter (title / TOC / epigram) BEFORE the
+// The manuscript renders front matter (title / TOC) BEFORE the
 // numbered content pages. Content page N (the pagination page number shared
 // with the editor) is the ManuscriptPage whose data-page-key is `content-N-1`
 // (buildContentPages keys them `content-${i}` with a 0-based i, header i+1).
 // Front matter has no content-page number; when the viewport is on front
 // matter, the current page is reported as 1 (the first content page), so a
 // switch to the editor lands on editor page 1. Symmetrically, editor page 1
-// lands on `content-0` (skipping the title/TOC/epigram), since the editor has
+// lands on `content-0` (skipping the title/TOC), since the editor has
 // no front matter.
 
 // The scroll container is App.vue's `.scroll-layer` (the viewport itself

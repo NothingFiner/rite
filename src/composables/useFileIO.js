@@ -131,8 +131,6 @@ export function useFileIO() {
         author: '',
         authorContact: '',
         hasTOC: false,
-        hasEpigram: false,
-        epigramText: '',
         sections,
       })
       store.lastPath = null

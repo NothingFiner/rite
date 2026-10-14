@@ -36,8 +36,6 @@ function makeDocument(sections) {
     author: 'A',
     authorContact: '',
     hasTOC: false,
-    hasEpigram: false,
-    epigramText: '',
     sections,
   }
 }

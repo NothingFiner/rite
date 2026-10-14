@@ -16,13 +16,12 @@ import { groupBlocks, computeFirstLineIndent } from './useSectionBlocks.js'
 import { generateParagraphId, generateSectionId, createParagraph, defaultTextStyle } from '../constants/DocumentModel.js'
 
 /// True for the non-content decorations interleaved with the real blocks — the
-/// page-break <hr>, page-number labels, the epigram block, and the click
-/// sentinel. domToBlocks and the keydown walk skip these so they never become
-/// model blocks or nav targets.
+/// page-break <hr>, page-number labels, and the click sentinel. domToBlocks
+/// and the keydown walk skip these so they never become model blocks or nav
+/// targets.
 export function isNonContentBlock(el) {
   return el.classList?.contains('page-break-line') ||
     el.classList?.contains('page-number-label') ||
-    el.classList?.contains('epigram-block') ||
     el.classList?.contains('editor-sentinel')
 }
 

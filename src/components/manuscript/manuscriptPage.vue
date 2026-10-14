@@ -218,22 +218,4 @@ const pageStyle = computed(() => {
 .page-body :deep(.toc-ms-page) {
   white-space: nowrap;
 }
-
-/* Epigram page */
-.manuscript-page.epigram-page {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.page-body :deep(.epigram-body) {
-  font-family: var(--ms-font-family);
-  font-size: var(--ms-font-size);
-  line-height: var(--ms-line-height);
-  text-align: center;
-  white-space: pre-line;
-  font-style: italic;
-  color: var(--ms-text-color);
-  max-width: 400px;
-}
 </style>
