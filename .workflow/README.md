@@ -17,6 +17,10 @@ goose recipe: spec-to-tests              run-headless.sh -> orchestrator.py
 3. Stage 2: `.workflow/run-headless.sh feature/<branch> <draft-pr-number>`
    Needs on the host: docker, git, gh (authenticated), python3 with pyyaml, and
    ANTHROPIC_API_KEY (or your provider's key) plus GOOSE_PROVIDER / GOOSE_MODEL exported.
+   The work tree is created under `~/.cache/goose-workflow` and must stay on a
+   host path your Docker VM shares (Colima shares `$HOME` only). Override with
+   `WORKFLOW_WORKDIR=<path>`. The launcher preflights the mount and exits 3 if
+   the container cannot see the repo.
 
 ## Before first use (things I could not verify)
 - `cmd` for the mempalace MCP server in spec-to-tests.yaml (placeholder).

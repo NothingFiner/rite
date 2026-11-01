@@ -11,17 +11,46 @@
 # The model ids come from .workflow/config.yaml (`models:`), so GOOSE_MODEL is optional.
 set -euo pipefail
 
-BRANCH="${1:?usage: run-headless.sh <branch> [pr-number]}"
+BRANCH="${1:?usage: run-headless.sh <branch> [pr-number] [orchestrator-args...]}"
 PR="${2:-}"
+# Anything past the first two args goes straight to the orchestrator, e.g.
+#   .workflow/run-headless.sh feature/x <pr> --baseline-only
+if [ "$#" -gt 2 ]; then shift 2; else shift "$#"; fi
+PUSH=1
+for a in "$@"; do [ "$a" = "--baseline-only" ] && PUSH=0; done
 IMAGE="${IMAGE:-goose-headless}"
 REPO_URL="$(git config --get remote.origin.url)"
-WORK="$(mktemp -d)"
 CACHE="$HOME/.cache/goose-workflow"
 mkdir -p "$CACHE"/{cargo,npm,playwright,target,home}
+
+# The work tree MUST live on a host path the Docker VM actually shares, or the
+# bind mount silently materialises as an empty directory (Docker creates the
+# missing path instead of erroring) and the container sees no repo at all.
+# Colima shares $HOME only by default; `mktemp -d` hands back /var/folders/...,
+# which is NOT shared. Keep the work dir under $CACHE, which is under $HOME.
+WORK_BASE="${WORKFLOW_WORKDIR:-$CACHE}"
+mkdir -p "$WORK_BASE"
+WORK="$(mktemp -d "$WORK_BASE/work.XXXXXXXX")"
 
 docker build -q -t "$IMAGE" -f .workflow/Dockerfile .workflow >/dev/null
 
 git clone --quiet --branch "$BRANCH" --single-branch "$REPO_URL" "$WORK/repo"
+
+# Preflight: prove the bind mount really crosses into the VM before spending
+# minutes on clone/setup/goose. Costs ~1s and turns a silent empty mount into a
+# one-line explanation.
+if ! docker run --rm -v "$WORK/repo:/preflight:ro" -w / "$IMAGE" \
+      test -f /preflight/.workflow/orchestrator.py >/dev/null 2>&1; then
+  echo "FATAL: $WORK/repo is not visible inside the container." >&2
+  echo "The Docker VM is not sharing that host path, so /work would be empty." >&2
+  echo "Colima shares \$HOME by default; set WORKFLOW_WORKDIR to a shared dir" >&2
+  echo "(e.g. WORKFLOW_WORKDIR=\$HOME/tmp) or add a mount to ~/.colima/default/colima.yaml:" >&2
+  echo "  mounts:" >&2
+  echo "    - location: /private/var/folders" >&2
+  echo "      writable: true" >&2
+  echo "  then: colima restart" >&2
+  exit 3
+fi
 
 # Read-only mounts from config (needs python3 + pyyaml on the host).
 # No `mapfile` here: macOS ships bash 3.2, which does not have it.
@@ -52,12 +81,17 @@ docker run --rm --user "$(id -u):$(id -g)" \
   -v "$WORK/repo:/work" \
   "${RO_ARGS[@]+"${RO_ARGS[@]}"}" \
   -w /work "$IMAGE" \
-  python3 /work/.workflow/orchestrator.py --config .workflow/config.yaml
+  python3 /work/.workflow/orchestrator.py --config .workflow/config.yaml "$@"
 RC=$?
 set -e
 
 echo "--- result ---"
 cat "$WORK/repo/.workflow-out/result.json" 2>/dev/null || echo "(no result.json)"
+
+if [ "$RC" -eq 0 ] && [ "$PUSH" -eq 0 ]; then
+  echo "Baseline-only run: nothing to push. Work tree: $WORK/repo"
+  exit 0
+fi
 
 if [ "$RC" -eq 0 ]; then
   git -C "$WORK/repo" push origin "$BRANCH"

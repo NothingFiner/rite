@@ -318,6 +318,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=".workflow/config.yaml")
     ap.add_argument("--recipe", default=".workflow/recipes/plan-and-code.yaml")
+    # Validate the harness (config, setup, test layers, protected paths, SPEC/test
+    # coverage, baseline is red-for-the-right-reason) without invoking goose at all.
+    # Costs no tokens, so a broken toolchain shows up as a harness error instead of
+    # an agent failure.
+    ap.add_argument("--baseline-only", action="store_true",
+                    help="run setup + baseline checks, then stop before any goose call")
     args = ap.parse_args()
 
     OUT.mkdir(exist_ok=True)
@@ -347,8 +353,12 @@ def main():
         locked = {f for f, m in pairs if region_digest(git("show", f"{start_sha}:{f}"), m) is not None}
         matched = {f for f, _ in pairs}
         log(f"test regions locked: {len(locked)}/{len(matched)} matching file(s)")
+        # A file with no test code at all has nothing to protect, so the marker
+        # being absent is not a problem there — only warn when test code exists
+        # without a marker, which is the case that is silently unprotected.
         for f in sorted(matched - locked):
-            log(f"  WARNING: {f} matches a test_regions glob but has no marker -> NOT protected")
+            if re.search(r"^\s*#\[test\]", git("show", f"{start_sha}:{f}"), re.M):
+                log(f"  WARNING: {f} has #[test] but no marker -> its tests are NOT protected")
 
     if cfg.get("setup"):
         log("running setup")
@@ -370,6 +380,11 @@ def main():
         finish("green", "all tests already pass at baseline, nothing to build", 0, iterations=0)
     base_ids = {t for t, _ in base["tests"]}
     log(f"baseline: {len(base_ids)} tests, {len(base['failing'])} failing")
+
+    if args.baseline_only:
+        finish("ok", f"baseline is usable: {len(base_ids)} tests, "
+                     f"{len(base['failing'])} failing for the right reason", 0,
+               baseline_tests=len(base_ids), baseline_failing=sorted(base["failing"]))
 
     failures_file = OUT / "last_failures.md"
     write_failures(failures_file, base, ["Initial state. Every failure below is expected: make them pass."])
