@@ -12,7 +12,7 @@ IMAGE="${IMAGE:-goose-headless}"
 REPO_URL="$(git config --get remote.origin.url)"
 WORK="$(mktemp -d)"
 CACHE="$HOME/.cache/goose-workflow"
-mkdir -p "$CACHE"/{cargo,pnpm,playwright,target,home}
+mkdir -p "$CACHE"/{cargo,npm,playwright,target,home}
 
 docker build -q -t "$IMAGE" -f .workflow/Dockerfile .workflow >/dev/null
 
@@ -37,7 +37,6 @@ docker run --rm --user "$(id -u):$(id -g)" \
   -e HOME=/cache/home \
   -e CARGO_HOME=/cache/cargo \
   -e CARGO_TARGET_DIR=/cache/target \
-  -e npm_config_store_dir=/cache/pnpm \
   -e PLAYWRIGHT_BROWSERS_PATH=/cache/playwright \
   -e ANTHROPIC_API_KEY -e GOOSE_PROVIDER -e GOOSE_MODEL \
   -v "$CACHE:/cache" \
@@ -53,12 +52,16 @@ cat "$WORK/repo/.workflow-out/result.json" 2>/dev/null || echo "(no result.json)
 
 if [ "$RC" -eq 0 ]; then
   git -C "$WORK/repo" push origin "$BRANCH"
-  if [ -n "$PR" ]; then
-    gh pr ready "$PR"
+  if command -v gh >/dev/null 2>&1; then
+    if [ -n "$PR" ]; then
+      gh pr ready "$PR"
+    else
+      gh pr create --base development --head "$BRANCH" --fill
+    fi
+    echo "Done: branch pushed and PR ready."
   else
-    gh pr create --head "$BRANCH" --fill
+    echo "Done: branch pushed. gh is not installed, so the PR was not updated."
   fi
-  echo "Done: branch pushed and PR ready."
 else
   echo "Not pushing (exit code $RC). Logs and the work so far are in: $WORK/repo"
   exit "$RC"

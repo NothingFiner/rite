@@ -40,6 +40,5 @@ extensions:
     timeout: 300
 settings:
   goose_provider: "ollama_cloud"
-  goose_model: "glm-5.3-flash"
   temperature: 0.3
   max_turns: 40

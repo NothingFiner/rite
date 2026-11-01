@@ -17,7 +17,7 @@ RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-too
     && chmod -R a+rX /usr/local/rustup /usr/local/cargo
 
 # JS tooling
-RUN npm install -g pnpm repomix
+RUN npm install -g repomix
 
 # Playwright's OS-level libraries (needs root, so do it here). The browser itself is
 # downloaded by the `setup` command in config.yaml, matching the project's Playwright version.

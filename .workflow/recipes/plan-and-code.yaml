@@ -69,7 +69,8 @@ extensions:
 
 # Sub-recipes cannot nest, so coders cannot spawn their own helpers. Escalation to a
 # stronger model is done by the orchestrator (GOOSE_MODEL), not by the coder.
-# Do not set goose_model in recipe `settings`: it may override the orchestrator's choice.
+# Do not set goose_model in recipe `settings` (coder.yaml does not): it would override the
+# orchestrator's escalation choice, which arrives as GOOSE_MODEL in the environment.
 sub_recipes:
   - name: "coder"
     path: "./coder.yaml"
