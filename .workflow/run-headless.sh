@@ -23,19 +23,22 @@ docker build -q -t "$IMAGE" -f .workflow/Dockerfile .workflow >/dev/null
 
 git clone --quiet --branch "$BRANCH" --single-branch "$REPO_URL" "$WORK/repo"
 
-# Read-only mounts from config (needs python3 + pyyaml on the host)
-mapfile -t RO < <(python3 -c '
+# Read-only mounts from config (needs python3 + pyyaml on the host).
+# No `mapfile` here: macOS ships bash 3.2, which does not have it.
+RO_LIST="$(python3 -c '
 import os, sys, yaml
 root = sys.argv[1]
 cfg = yaml.safe_load(open(os.path.join(root, ".workflow/config.yaml")))
 for p in cfg.get("readonly_mounts", []):
     if os.path.exists(os.path.join(root, p)):
         print(p)
-' "$WORK/repo")
+' "$WORK/repo")"
 RO_ARGS=()
-for p in "${RO[@]+"${RO[@]}"}"; do
-  RO_ARGS+=(-v "$WORK/repo/$p:/work/$p:ro")
-done
+while IFS= read -r p; do
+  if [ -n "$p" ]; then
+    RO_ARGS+=(-v "$WORK/repo/$p:/work/$p:ro")
+  fi
+done <<< "$RO_LIST"
 
 set +e
 docker run --rm --user "$(id -u):$(id -g)" \
