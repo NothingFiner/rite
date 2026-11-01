@@ -84,6 +84,7 @@ limits:
   strong_attempts: 2        # iterations allowed on the strong model before giving up
 
 # Set via GOOSE_MODEL for each goose invocation. Blank = whatever goose is already configured with.
+# The orchestrator escalates to `strong` after `escalate_after` iterations on the same failures.
 models:
-  default: ""
-  strong: ""                # e.g. a larger model id for your provider
+  default: "glm-5.3-flash"
+  strong: "glm-5.3"
