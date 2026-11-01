@@ -28,6 +28,10 @@ export function useKeyboardShortcuts({
   addExpanded,
   editorRef,
   onInsertSection,
+  // Focus / typewriter mode (roadmap 5.3). Stub: the parameter is threaded in
+  // but nothing routes through it yet — `Cmd/Ctrl+Shift+F`, the Escape chain and
+  // the drawer gate are the implementation's job. See SPEC.md.
+  focusMode,
 }) {
   function onKeydown(e) {
     const cmd = e.metaKey || e.ctrlKey
