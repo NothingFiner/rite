@@ -21,6 +21,25 @@ goose recipe: spec-to-tests              run-headless.sh -> orchestrator.py
    host path your Docker VM shares (Colima shares `$HOME` only). Override with
    `WORKFLOW_WORKDIR=<path>`. The launcher preflights the mount and exits 3 if
    the container cannot see the repo.
+   The newest 3 work dirs are kept as failure evidence; older ones are pruned
+   (`WORKFLOW_KEEP_WORK=0` disables, `N` keeps N).
+
+   **Check the harness before spending tokens:** appending `--baseline-only` runs
+   setup, every test layer, the SPEC/coverage check and the red-for-the-right-reason
+   check, then stops before the first goose call (~90s, no API cost):
+   `.workflow/run-headless.sh feature/<branch> <pr> --baseline-only`
+
+## Host preconditions that will bite you
+- **npm 11 or newer.** The lockfile here is only installable by npm >= 11: npm 10
+  reports `EUSAGE` / "Missing: esbuild@0.28.2 from lock file" and, when it tries to
+  re-resolve, crashes in arborist. The image pins npm@11 for this reason; keep the
+  host in step or `npm ci` will disagree between the two.
+- **The container clones from `origin`.** Edits to `.workflow/` (orchestrator,
+  config, recipes) do not take effect until they are committed *and pushed* — the
+  run uses the branch as it exists on the remote, not your working tree. The image
+  is the only thing built from local files (`docker build ... .workflow`).
+- Work dirs are pruned by mtime, so a run keeps its own logs; the path is printed on
+  both success and failure.
 
 ## Before first use (things I could not verify)
 - `cmd` for the mempalace MCP server in spec-to-tests.yaml (placeholder).

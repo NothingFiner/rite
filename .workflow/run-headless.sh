@@ -32,6 +32,23 @@ WORK_BASE="${WORKFLOW_WORKDIR:-$CACHE}"
 mkdir -p "$WORK_BASE"
 WORK="$(mktemp -d "$WORK_BASE/work.XXXXXXXX")"
 
+# Keep the logs of the last few runs and drop the rest; each one is a full clone
+# plus node_modules, so they add up fast. This run's dir is the newest, so it is
+# never the one pruned, and a failed run's evidence survives until it ages out.
+# WORKFLOW_KEEP_WORK=0 disables pruning.
+KEEP_WORK="${WORKFLOW_KEEP_WORK:-3}"
+if [ "$KEEP_WORK" -gt 0 ] 2>/dev/null; then
+  OLD_WORK="$(ls -1dt "$WORK_BASE"/work.* 2>/dev/null | tail -n +$((KEEP_WORK + 1)))"
+  if [ -n "$OLD_WORK" ]; then
+    echo "pruning old work dirs (keeping the newest $KEEP_WORK):"
+    while IFS= read -r d; do
+      case "$d" in
+        "$WORK_BASE"/work.*) echo "  $d"; rm -rf "$d" ;;
+      esac
+    done <<< "$OLD_WORK"
+  fi
+fi
+
 docker build -q -t "$IMAGE" -f .workflow/Dockerfile .workflow >/dev/null
 
 git clone --quiet --branch "$BRANCH" --single-branch "$REPO_URL" "$WORK/repo"
