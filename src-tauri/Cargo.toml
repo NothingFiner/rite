@@ -8,6 +8,16 @@ repository = ""
 edition = "2021"
 rust-version = "1.70"
 
+# Library target, so integration tests under `src-tauri/tests/` have something
+# to import: a test crate can only reach `pub` items of a *library* target, not
+# of a binary. The explicit `name` is what TESTING.md's `use <crate>_lib::...`
+# convention refers to (the package is `rite`, so the default lib name would be
+# plain `rite`; naming the target `rite_lib` keeps the documented import path
+# literal). See `src/lib.rs` for the full rationale.
+[lib]
+name = "rite_lib"
+path = "src/lib.rs"
+
 [build-dependencies]
 tauri-build = { version = "1.5.1", features = [] }
 
@@ -62,3 +72,8 @@ custom-protocol = ["tauri/custom-protocol"]
 # `State<AppState>` without spinning up the full Tauri runtime. Only active
 # during `cargo test`; never compiled into production builds.
 tauri = { version = "1.6.1", features = ["test"] }
+# Integration tests that touch disk (`save_document` / `open_document` /
+# `autosave_document` / the `.rite` round-trip) need a scratch directory that
+# cleans itself up. Hand-rolled `std::env::temp_dir()` helpers leak on panic,
+# which is exactly when a test fails and you least want debris.
+tempfile = "3"
