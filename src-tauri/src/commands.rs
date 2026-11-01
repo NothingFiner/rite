@@ -8,7 +8,7 @@ use crate::state::AppState;
 use regex::Regex;
 use std::fs;
 use std::path::Path;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Runtime, State};
 
 #[tauri::command]
 pub fn get_document(state: State<AppState>) -> Result<Document, String> {
@@ -336,7 +336,11 @@ pub fn replace_all(
 }
 
 #[tauri::command]
-pub fn save_document(path: String, app: AppHandle, state: State<AppState>) -> Result<(), String> {
+pub fn save_document<R: Runtime>(
+    path: String,
+    app: AppHandle<R>,
+    state: State<AppState>,
+) -> Result<(), String> {
     let doc = state.document.lock().map_err(|e| e.to_string())?.clone();
 
     // Record a full snapshot of the saved document in the embedded history (the
@@ -369,7 +373,11 @@ pub fn save_document(path: String, app: AppHandle, state: State<AppState>) -> Re
 }
 
 #[tauri::command]
-pub fn open_document(path: String, app: AppHandle, state: State<AppState>) -> Result<Document, String> {
+pub fn open_document<R: Runtime>(
+    path: String,
+    app: AppHandle<R>,
+    state: State<AppState>,
+) -> Result<Document, String> {
     let json = fs::read_to_string(&path).map_err(|e| e.to_string())?;
 
     // Parse the `.rite` as an embedded `RiteFile { document, history }`. A
@@ -449,7 +457,10 @@ pub fn sync_document(data: Document, state: State<AppState>) -> Result<(), Strin
 }
 
 #[tauri::command]
-pub fn autosave_document(app: AppHandle, state: State<AppState>) -> Result<(), String> {
+pub fn autosave_document<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<AppState>,
+) -> Result<(), String> {
     let modified = *state.is_modified.lock().map_err(|e| e.to_string())?;
     if !modified {
         return Ok(());

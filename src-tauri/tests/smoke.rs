@@ -42,3 +42,31 @@ fn mock_tauri_app_supplies_state_to_a_command() {
     assert_eq!(doc.title, "Untitled", "fresh state holds the starter document");
     assert_eq!(doc.sections.len(), 1, "the starter document has one section");
 }
+
+/// The commands that take an `AppHandle` are generic over the Tauri runtime, so
+/// a mock app can drive them. Without that, `save_document` / `open_document` /
+/// `autosave_document` — the whole persistence surface — would be untestable
+/// outside a real window.
+#[test]
+fn save_document_writes_a_rite_file_through_a_mock_app() {
+    let dir = tempfile::tempdir().expect("scratch dir");
+    let path = dir.path().join("novel.rite");
+    let app = tauri::test::mock_builder()
+        .manage(AppState::new())
+        .build(tauri::test::mock_context(tauri::test::noop_assets()))
+        .expect("mock app builds");
+    let state = app.state::<AppState>();
+
+    commands::save_document(
+        path.to_string_lossy().into_owned(),
+        app.handle().clone(),
+        state,
+    )
+    .expect("save_document writes the file");
+
+    let written = std::fs::read_to_string(&path).expect("the .rite file exists");
+    assert!(
+        written.contains("Untitled"),
+        "the written file carries the document title, got: {written}"
+    );
+}

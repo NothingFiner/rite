@@ -5,7 +5,7 @@ use crate::summary::SectionSummary;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::Mutex;
-use tauri::AppHandle;
+use tauri::{AppHandle, Runtime};
 
 pub struct AppState {
     pub document: Mutex<Document>,
@@ -142,7 +142,7 @@ impl AppState {
     /// keep their vectors, changed sections re-embed). Missing/corrupt sidecar
     /// → no-op after the clear → full rebuild. `AppHandle` is auto-injected by
     /// Tauri at the command boundary.
-    pub fn load_index_from_sidecar(&self, app: &AppHandle, manuscript_path: &str) {
+    pub fn load_index_from_sidecar<R: Runtime>(&self, app: &AppHandle<R>, manuscript_path: &str) {
         self.vectors.lock().unwrap().clear();
         self.section_hashes.lock().unwrap().clear();
         self.summaries.lock().unwrap().clear();
@@ -161,9 +161,9 @@ impl AppState {
     /// `Sidecar::new`. Vectors are derivable, so a checkpoint failure is
     /// non-fatal; callers invoke this best-effort (a failed write just means the
     /// next open rebuilds from scratch).
-    pub fn checkpoint_index_to_sidecar(
+    pub fn checkpoint_index_to_sidecar<R: Runtime>(
         &self,
-        app: &AppHandle,
+        app: &AppHandle<R>,
         manuscript_path: &str,
     ) -> Result<(), String> {
         let section_hashes = self

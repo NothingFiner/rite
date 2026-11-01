@@ -28,7 +28,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::hash::{DefaultHasher, Hasher};
 use std::path::{Path, PathBuf};
-use tauri::AppHandle;
+use tauri::{AppHandle, Runtime};
 
 /// The sidecar schema version this build writes and understands. Independent of
 /// `RiteFile`'s `.rite` schema — the sidecar is a separate file in
@@ -106,7 +106,7 @@ fn sidecar_file_path(indexes_dir: &Path, manuscript_path: &str) -> PathBuf {
 /// `path_resolver().app_data_dir()` usage (Tauri v1: `Option<PathBuf>`, NOT the
 /// v2-style `app.path()`; `use tauri::Manager` is NOT needed — `path_resolver`
 /// resolves without it).
-fn indexes_dir(app: &AppHandle) -> Result<PathBuf, String> {
+fn indexes_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     let base = app
         .path_resolver()
         .app_data_dir()
@@ -177,7 +177,7 @@ fn write_sidecar_at(path: &Path, sidecar: &Sidecar) -> Result<(), String> {
 /// `None` (full rebuild). Does NOT create the `indexes` dir — a read that finds
 /// nothing leaves the filesystem untouched. `AppHandle` is auto-injected by Tauri
 /// at the command boundary.
-pub fn load_sidecar(app: &AppHandle, manuscript_path: &str) -> Option<Sidecar> {
+pub fn load_sidecar<R: Runtime>(app: &AppHandle<R>, manuscript_path: &str) -> Option<Sidecar> {
     let dir = indexes_dir(app).ok()?;
     let path = sidecar_file_path(&dir, manuscript_path);
     load_sidecar_at(&path)
@@ -185,8 +185,8 @@ pub fn load_sidecar(app: &AppHandle, manuscript_path: &str) -> Option<Sidecar> {
 
 /// Checkpoint `sidecar` for `manuscript_path`, creating the `indexes` dir on
 /// first use. `AppHandle` is auto-injected by Tauri at the command boundary.
-pub fn write_sidecar(
-    app: &AppHandle,
+pub fn write_sidecar<R: Runtime>(
+    app: &AppHandle<R>,
     manuscript_path: &str,
     sidecar: &Sidecar,
 ) -> Result<(), String> {
