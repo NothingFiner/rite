@@ -19,7 +19,9 @@ if [ "$#" -gt 2 ]; then shift 2; else shift "$#"; fi
 PUSH=1
 for a in "$@"; do [ "$a" = "--baseline-only" ] && PUSH=0; done
 IMAGE="${IMAGE:-goose-headless}"
-REPO_URL="$(git config --get remote.origin.url)"
+# Overridable so a broken ssh-agent (or an ssh remote you can only reach over
+# https) does not block the run: REPO_URL=https://github.com/owner/repo.git
+REPO_URL="${REPO_URL:-$(git config --get remote.origin.url)}"
 CACHE="$HOME/.cache/goose-workflow"
 mkdir -p "$CACHE"/{cargo,npm,playwright,target,home}
 
