@@ -29,3 +29,12 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# MemPalace per-project files (issue #185)
+mempalace.yaml
+entities.json
+
+# spec-to-tests workflow scaffolding is tracked (it is project policy: the
+# protected paths, test lock and layer commands). Only its output is ignored.
+# Test reports the orchestrator writes (junit XML per layer).
+.workflow-out/

@@ -1,0 +1,45 @@
+# Sub-recipe called by plan-and-code.yaml. Parameters come from the planner's conversation context.
+version: "1.0.0"
+title: "Coder"
+description: "Implements one work unit so the named tests pass."
+
+parameters:
+  - key: task
+    input_type: string
+    requirement: required
+    description: "What to implement, including the S-IDs of the tests it must satisfy"
+  - key: owned_paths
+    input_type: string
+    requirement: required
+    description: "Files or directories this coder may edit"
+
+instructions: |
+  Implement exactly one work unit.
+
+  - Edit only the owned paths. If you need a change elsewhere, stop and say so in your summary.
+  - Never touch tests, test configs, SPEC.md, .github or .workflow. Never skip or weaken tests.
+  - Implement real behaviour. No hardcoded expected values, no special-casing test inputs.
+  - Read the relevant tests first so names, signatures and error messages match what they assert.
+  - You may run the relevant layer command (see .workflow/config.yaml) to check your work.
+  - Do not commit or push.
+  - Finish with a short summary: files changed and anything you could not do.
+
+prompt: |
+  Implement: {{ task }}
+  You may edit only: {{ owned_paths }}
+
+extensions:
+  - type: builtin
+    name: developer
+    timeout: 300
+    bundled: true
+  - type: stdio
+    name: repomix
+    cmd: npx
+    args: ["-y", "repomix", "--mcp"]
+    timeout: 300
+settings:
+  goose_provider: "ollama_cloud"
+  goose_model: "glm-5.3-flash"
+  temperature: 0.3
+  max_turns: 40

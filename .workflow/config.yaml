@@ -1,0 +1,89 @@
+# Per-project config. This is the ONLY file (plus TESTING.md and the Dockerfile)
+# that changes when you point the workflow at a different stack.
+# Assumes npm (this repo ships package-lock.json). Swap the commands if you use
+# pnpm/yarn.
+
+base_branch: development
+
+# Runs once at the start of a headless run (inside the container).
+setup: npm ci && npx playwright install chromium
+
+# Each layer: a command, plus how to read its results.
+#   parser: junit      -> reads `report` (path relative to repo root, so make the command write there)
+#   parser: cargo-text -> parses `test name ... ok|FAILED|ignored` lines from stdout (stable cargo test has no junit)
+test_layers:
+  - name: unit
+    cmd: npx vitest run --reporter=junit --outputFile=.workflow-out/unit.xml
+    parser: junit
+    report: .workflow-out/unit.xml
+
+  - name: rust
+    cwd: src-tauri
+    cmd: cargo test
+    parser: cargo-text
+
+  - name: e2e
+    cmd: PLAYWRIGHT_JUNIT_OUTPUT_FILE=.workflow-out/e2e.xml npx playwright test --reporter=junit
+    parser: junit
+    report: .workflow-out/e2e.xml
+
+# Globs the coding agent may never change (create, edit, delete). Checked by the
+# orchestrator after every iteration; violations are reverted and counted.
+# `**` crosses directories, `*` does not.
+protected_paths:
+  # Colocated tests. This repo keeps vitest tests next to the code they cover
+  # (`src/**/*.test.js`, `src/components/*.spec.js`), which is fine for the path
+  # lock: the test file and the implementation file are DIFFERENT files, so the
+  # lock separates them cleanly. (Rust is the exception — its inline test module
+  # shares the file, which is what `test_regions` below exists for.) The globs
+  # are extension-agnostic on purpose: adding a .ts test later is protected for
+  # free.
+  - "**/*.test.js"
+  - "**/*.test.ts"
+  - "**/*.spec.js"
+  - "**/*.spec.ts"
+  - "tests/**"
+  - "e2e/**"
+  - "src-tauri/tests/**"
+  - "vitest.config.js"
+  - "playwright.config.js"
+  - ".github/**"
+  - ".workflow/**"
+  - "SPEC.md"
+
+# Sub-file test locks, for files the coder MUST edit but which also hold
+# regression tests. Rust's idiom is a `#[cfg(test)] mod tests` block at the
+# bottom of the module under test, so `protected_paths` cannot cover it without
+# blocking the work entirely — and leaving it open lets an agent weaken an
+# assertion while keeping the test's name and its passing state, which neither
+# the path lock nor the baseline-name diff can see.
+#
+# Everything from `marker` to end of file is hashed at the start commit and must
+# not change. Edits above the marker (the implementation) are free. A change is
+# reverted and counts as a tampering offence, same as a protected path.
+test_regions:
+  - glob: "src-tauri/src/*.rs"
+    marker: "#[cfg(test)]"
+
+# Paths mounted read-only into the container (defense in depth on top of the check
+# above). Directories and single files only, no globs. Missing paths are skipped.
+readonly_mounts:
+  - ".workflow"
+  - "tests"
+  - "e2e"
+  - "src-tauri/tests"
+  - "vitest.config.js"
+  - "playwright.config.js"
+  - ".github"
+
+limits:
+  max_iterations: 8
+  goose_timeout_min: 45     # per goose invocation
+  test_timeout_min: 15      # per test layer
+  escalate_after: 2         # same failing set N iterations in a row -> use models.strong
+  strong_attempts: 2        # iterations allowed on the strong model before giving up
+
+# Set via GOOSE_MODEL for each goose invocation. Blank = whatever goose is already configured with.
+models:
+  default: ""
+  strong: ""                # e.g. a larger model id for your provider

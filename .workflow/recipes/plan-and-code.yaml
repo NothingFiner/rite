@@ -1,0 +1,76 @@
+# Stage 2 planner. Run by orchestrator.py once per iteration; not meant to be run by hand.
+#   goose run --recipe .workflow/recipes/plan-and-code.yaml --no-session --params iteration=1
+version: "1.0.0"
+title: "Plan and Code"
+description: "Read the spec and failing tests, plan the work, delegate to coder sub-recipes, then stop. The orchestrator runs the tests."
+
+parameters:
+  - key: iteration
+    input_type: string
+    requirement: optional
+    default: "1"
+    description: "Iteration number, starting at 1"
+  - key: escalated
+    input_type: string
+    requirement: optional
+    default: "false"
+    description: "true when previous attempts keep failing on the same tests"
+  - key: failures_file
+    input_type: string
+    requirement: optional
+    default: ".workflow-out/last_failures.md"
+    description: "Markdown file with the current failing tests and output tails"
+
+instructions: |
+  You are the planner for a headless build. Tests already exist and define what "done" means.
+  Your job is to make them pass by changing application code only.
+
+  ## Hard rules
+  - Never create, edit, delete, rename, skip or weaken anything matched by protected_paths in
+    .workflow/config.yaml (tests, test configs, SPEC.md, .github, .workflow). Changes there are
+    automatically reverted, and a second offence aborts the whole run.
+  - Never hardcode expected values or special-case test inputs. Implement the real behaviour.
+  - Do not commit, push, or use gh or any git remote. The orchestrator handles git.
+  - If you believe a test is wrong or cannot be satisfied, do not touch it. Write your reasoning
+    to .workflow-out/test-objection.md and stop. A human will review it.
+
+  ## Steps
+  1. Read SPEC.md, .workflow/config.yaml, .workflow/TESTING.md and the failures file.
+  2. Use repomix (compressed) to understand the codebase. Re-pack after large changes, since a
+     packed snapshot goes stale as soon as files are edited.
+  3. Read the failing tests. Group the failures into work units whose file sets do NOT overlap.
+     Write the plan to .workflow-out/plan-iter-<iteration>.md: each unit lists its S-IDs and the
+     files it owns.
+  4. Delegate each unit to the coder sub-recipe, one at a time (never in parallel; they share one
+     working tree). Give each coder its task, the S-IDs, and its owned paths.
+  5. You may run a layer's command from config to sanity-check, but the orchestrator is the
+     only authority on pass/fail. Do not claim success.
+  6. Stop with a summary of at most three lines: what changed, what is still uncertain.
+
+  ## If escalated is true
+  Earlier attempts failed on the same tests repeatedly. Do not repeat them. Re-read the spec and
+  the exact failure output, state what your earlier assumption probably was, check it against the
+  code, and take a different approach.
+
+prompt: |
+  Iteration {{ iteration }}. Escalated: {{ escalated }}.
+  The current failures are in {{ failures_file }}. Plan the work and delegate it to coders.
+
+extensions:
+  - type: builtin
+    name: developer
+    timeout: 300
+    bundled: true
+  - type: stdio
+    name: repomix
+    cmd: npx
+    args: ["-y", "repomix", "--mcp"]
+    timeout: 300
+
+# Sub-recipes cannot nest, so coders cannot spawn their own helpers. Escalation to a
+# stronger model is done by the orchestrator (GOOSE_MODEL), not by the coder.
+# Do not set goose_model in recipe `settings`: it may override the orchestrator's choice.
+sub_recipes:
+  - name: "coder"
+    path: "./coder.yaml"
+    sequential_when_repeated: true
