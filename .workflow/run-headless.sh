@@ -4,6 +4,11 @@
 #
 # The container never sees GitHub credentials. This script clones the branch on the host,
 # runs the orchestrator in Docker, and only if it exits 0 pushes and marks the PR ready.
+#
+# Provider credentials must be exported in the calling shell: the container has an empty
+# HOME, so it cannot read ~/.config/goose (provider/model) or the macOS keychain (API keys).
+#   GOOSE_PROVIDER=ollama_cloud  OLLAMA_CLOUD_API_KEY=...  (or OLLAMA_API_KEY)
+# The model ids come from .workflow/config.yaml (`models:`), so GOOSE_MODEL is optional.
 set -euo pipefail
 
 BRANCH="${1:?usage: run-headless.sh <branch> [pr-number]}"
@@ -39,6 +44,7 @@ docker run --rm --user "$(id -u):$(id -g)" \
   -e CARGO_TARGET_DIR=/cache/target \
   -e PLAYWRIGHT_BROWSERS_PATH=/cache/playwright \
   -e ANTHROPIC_API_KEY -e GOOSE_PROVIDER -e GOOSE_MODEL \
+  -e OLLAMA_API_KEY -e OLLAMA_CLOUD_API_KEY -e OLLAMA_HOST \
   -v "$CACHE:/cache" \
   -v "$WORK/repo:/work" \
   "${RO_ARGS[@]+"${RO_ARGS[@]}"}" \
