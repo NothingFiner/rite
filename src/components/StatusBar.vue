@@ -1,7 +1,8 @@
 <template>
   <div class="statusbar glass">
     <div class="status-left">
-      <span class="status-title">{{ title }}</span>
+      <span class="status-title">{{ title || 'Untitled' }}</span>
+      <span v-if="fileName" class="status-file">{{ fileName }}</span>
       <span
         v-if="saveStatus"
         class="save-status"
@@ -52,8 +53,8 @@ const props = defineProps({
   wordCount: { type: Number, default: 0 },
   selectedWordCount: { type: Number, default: 0 },
   // Basename of the current file, including its extension (`novel.rite`), or
-  // '' when the document has never been saved. STUB: declared so the status-bar
-  // tests fail on an assertion instead of a missing prop; not rendered yet.
+  // '' when the document has never been saved. Rendered in the status-left
+  // group after the title; blank (nothing shown) while the file is unsaved.
   fileName: { type: String, default: '' },
 })
 
@@ -110,6 +111,13 @@ defineEmits(['openFile', 'saveFile', 'saveFileAs', 'newFile', 'importFile', 'exp
 .status-title {
   color: var(--text-primary);
   font-weight: 500;
+}
+
+/* Current file's basename (`novel.rite`), same muted treatment as the
+   save-status label — a secondary fact sitting next to the title. */
+.status-file {
+  color: var(--text-secondary);
+  font-size: 12px;
 }
 
 /* Save indicator: the title's right-hand label replacing the old binary `*`.
