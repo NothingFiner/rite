@@ -243,6 +243,11 @@ while IFS= read -r p; do
   fi
 done <<< "$RO_LIST"
 
+# The bind mount's root reaches the container as root-owned (a virtiofs/sshfs
+# uid remap under Colima) while every file inside keeps the host uid, so git
+# rejects the worktree as "dubious ownership" even though the container runs as
+# that same host uid. Trust it: this is a throwaway clone the script made
+# itself, not somebody else's repository.
 set +e
 docker run --rm --user "$(id -u):$(id -g)" \
   -e HOME=/cache/home \
@@ -251,6 +256,7 @@ docker run --rm --user "$(id -u):$(id -g)" \
   -e PLAYWRIGHT_BROWSERS_PATH=/cache/playwright \
   -e ANTHROPIC_API_KEY -e OPENAI_API_KEY -e GOOSE_PROVIDER -e GOOSE_MODEL \
   -e OLLAMA_API_KEY -e OLLAMA_CLOUD_API_KEY -e OLLAMA_HOST \
+  -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
   -v "$CACHE:/cache" \
   -v "$WORK/repo:/work" \
   "${RO_ARGS[@]+"${RO_ARGS[@]}"}" \
@@ -260,7 +266,12 @@ RC=$?
 set -e
 
 echo "--- result ---"
-cat "$WORK/repo/.workflow-out/result.json" 2>/dev/null || echo "(no result.json)"
+if [ -f "$WORK/repo/.workflow-out/result.json" ]; then
+  cat "$WORK/repo/.workflow-out/result.json"
+else
+  echo "(no result.json: the orchestrator exited $RC without reaching a verdict)"
+  echo "(read the error above — a traceback is the cause, not the test suite)"
+fi
 
 if [ "$RC" -eq 0 ] && [ "$PUSH" -eq 0 ]; then
   echo "Baseline-only run: nothing to push. Work tree: $WORK/repo"
