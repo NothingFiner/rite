@@ -826,6 +826,16 @@ def main():
     args = ap.parse_args()
 
     OUT.mkdir(exist_ok=True)
+    # A previous run's verdict must not outlive it. If this process dies before
+    # writing one (a traceback, an OOM, a killed container), the launcher prints
+    # result.json — and a stale file makes it announce the PREVIOUS run's reason.
+    # "goose failed 3 iterations in a row" for a run that never reached goose is
+    # exactly that mistake, so clear it up front and let the absence speak.
+    for stale in ("result.json",):
+        try:
+            (OUT / stale).unlink()
+        except OSError:
+            pass
     cfg = yaml.safe_load(Path(args.config).read_text())
     lim = {"max_iterations": 8, "goose_timeout_min": 45, "test_timeout_min": 15,
            "escalate_after": 2, "strong_attempts": 2, **(cfg.get("limits") or {})}
