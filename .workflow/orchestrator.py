@@ -501,6 +501,22 @@ def run_describe(cfg, models, res, timeout_s):
         return None
     recipe = block.get("recipe", ".workflow/recipes/describe-changes.yaml")
     out_file, title_file = OUT / "pr-description.md", OUT / "pr-title.txt"
+
+    def is_output(path):
+        """True for this step's own artifacts, which are never the agent's edits."""
+        norm = path.rstrip("/")
+        return norm == str(OUT).rstrip("/") or norm.startswith(str(OUT).rstrip("/") + "/")
+
+    def touched_paths():
+        # porcelain v1 is exactly "XY PATH": two status columns and a space.
+        return [p for p in (ln[3:] for ln in git("status", "--porcelain", "--", ".",
+                                                 check=False).splitlines())
+                if not is_output(p)]
+
+    # Measured before the stale outputs are removed: whether the tree was dirty for
+    # reasons that have nothing to do with this step. If it was, the revert below must
+    # not run, because it could not tell the agent's edits from pre-existing ones.
+    clean_before = not touched_paths()
     for f in (out_file, title_file):
         if f.exists():
             f.unlink()
@@ -532,10 +548,6 @@ def run_describe(cfg, models, res, timeout_s):
     # "this was already here". Reverting everything untracked would delete files that
     # have nothing to do with the agent.
     before_untracked = untracked_snapshot()
-    # And snapshot the tracked state: if the tree was already dirty, changes cannot be
-    # attributed to the agent, so the revert must not run at all. Reverting in that case
-    # destroys work the step never touched.
-    clean_before = not git("status", "--porcelain", "--", ".", check=False).strip()
     started = time.time()
     log("pr description: reviewer agent is describing the change")
     try:
@@ -550,16 +562,9 @@ def run_describe(cfg, models, res, timeout_s):
         rc = 127
 
     # The description step must not change the code. Only enforceable when the tree was
-    # clean before it ran — otherwise there is no way to tell its edits from pre-existing
+    # clean before it ran — otherwise its edits cannot be told apart from pre-existing
     # ones, and the honest move is to leave everything alone.
-    def is_output(path):
-        norm = path.rstrip("/")
-        return norm == str(OUT).rstrip("/") or norm.startswith(str(OUT).rstrip("/") + "/")
-
-    # porcelain v1 is exactly "XY PATH": two status columns and a space.
-    touched = [ln[3:] for ln in git("status", "--porcelain", "--", ".",
-                                    check=False).splitlines()]
-    touched = [p for p in touched if not is_output(p)]
+    touched = touched_paths()
     if not clean_before:
         if touched:
             log(f"pr description: tree was already dirty before the agent ran, so these are "
