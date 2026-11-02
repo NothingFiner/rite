@@ -107,6 +107,51 @@ fi
 
 docker build -q -t "$IMAGE" -f .workflow/Dockerfile .workflow >/dev/null
 
+# Preflight: goose is useless without a provider, and the container starts with
+# an empty HOME by design — it can NOT read ~/.config/goose (provider settings)
+# or the macOS keychain (API keys). The provider therefore has to be exported in
+# the calling shell. Catching that here costs about a second; catching it three
+# goose iterations later costs the whole run (clone, npm ci, every test layer)
+# and reports it as an agent failure.
+#
+# The provider NAME is not a secret and the host already knows it (goose's own
+# config), so default it from there. The API KEY is a secret and lives in the
+# macOS keychain, which the container cannot read — that one is still manual.
+if [ -z "${GOOSE_PROVIDER:-}" ] && [ -f "$HOME/.config/goose/config.yaml" ]; then
+  HOST_PROVIDER="$(python3 -c '
+import sys, yaml
+cfg = yaml.safe_load(open(sys.argv[1])) or {}
+print(cfg.get("active_provider") or "")
+' "$HOME/.config/goose/config.yaml" 2>/dev/null || true)"
+  if [ -n "$HOST_PROVIDER" ]; then
+    export GOOSE_PROVIDER="$HOST_PROVIDER"
+    echo "provider: '$GOOSE_PROVIDER' (from ~/.config/goose/config.yaml)"
+  fi
+fi
+
+PREFLIGHT_OUT="$(docker run --rm -e HOME=/cache/home \
+      -e GOOSE_PROVIDER -e ANTHROPIC_API_KEY -e OPENAI_API_KEY \
+      -e OLLAMA_API_KEY -e OLLAMA_CLOUD_API_KEY \
+      -v "$CACHE:/cache" "$IMAGE" sh -c '
+        prov="${GOOSE_PROVIDER:-$(grep -m1 "^active_provider:" "$HOME/.config/goose/config.yaml" 2>/dev/null | cut -d" " -f2)}"
+        if [ -z "$prov" ]; then echo "no provider is configured (GOOSE_PROVIDER is empty)"; exit 1; fi
+        case "$prov" in
+          ollama_cloud) [ -n "${OLLAMA_CLOUD_API_KEY:-}${OLLAMA_API_KEY:-}" ] || { echo "provider $prov is set but neither OLLAMA_CLOUD_API_KEY nor OLLAMA_API_KEY is exported"; exit 1; } ;;
+          anthropic)    [ -n "${ANTHROPIC_API_KEY:-}" ] || { echo "provider anthropic is set but ANTHROPIC_API_KEY is not exported"; exit 1; } ;;
+          openai)       [ -n "${OPENAI_API_KEY:-}" ]    || { echo "provider openai is set but OPENAI_API_KEY is not exported"; exit 1; } ;;
+        esac
+        echo "ok: provider $prov"' 2>&1 </dev/null)" || {
+  echo "FATAL: goose would not be able to reach a model." >&2
+  echo "  $PREFLIGHT_OUT" >&2
+  echo "The container gets an empty HOME, so it cannot read ~/.config/goose or the" >&2
+  echo "macOS keychain. Export the provider's API key in THIS shell, then re-run:" >&2
+  echo "  export OLLAMA_CLOUD_API_KEY=...     # for provider ollama_cloud" >&2
+  echo "  export GOOSE_PROVIDER=ollama_cloud  # only if it is not the host default" >&2
+  echo "(.workflow/config.yaml sets the MODEL ids, not the provider or the key.)" >&2
+  exit 5
+}
+echo "provider preflight: $PREFLIGHT_OUT"
+
 if [ "$RESUME" -eq 0 ]; then
   git clone --quiet --branch "$BRANCH" --single-branch "$REPO_URL" "$WORK/repo"
 fi
@@ -170,7 +215,7 @@ docker run --rm --user "$(id -u):$(id -g)" \
   -e CARGO_HOME=/cache/cargo \
   -e CARGO_TARGET_DIR=/cache/target \
   -e PLAYWRIGHT_BROWSERS_PATH=/cache/playwright \
-  -e ANTHROPIC_API_KEY -e GOOSE_PROVIDER -e GOOSE_MODEL \
+  -e ANTHROPIC_API_KEY -e OPENAI_API_KEY -e GOOSE_PROVIDER -e GOOSE_MODEL \
   -e OLLAMA_API_KEY -e OLLAMA_CLOUD_API_KEY -e OLLAMA_HOST \
   -v "$CACHE:/cache" \
   -v "$WORK/repo:/work" \
