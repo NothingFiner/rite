@@ -72,7 +72,39 @@ pr_description:
   recipe: .workflow/recipes/describe-changes.yaml
   model: ""          # blank = models.default; this job does not need the strong model
   max_patch_kb: 120  # the diffstat is always complete, only the patch is capped
+  style:
+    standard: asd-ste100
+    target_compliance: 0.8
+    max_words_per_sentence: 25
+    retry_below_target: true
 ```
+
+### Style: ASD-STE100
+The description and title follow ASD-STE100 Simplified Technical English: one fact per
+sentence, active voice, simple present tense, at most 25 words per sentence, one word for
+one thing, no contractions, no nominalisations, no filler. Technical names are exempt and
+stay as the code writes them.
+
+The target is about 80%, not 100%. STE is a controlled language with a restricted
+dictionary, and prose bent all the way into it stops explaining the code, which is the
+only reason the section exists.
+
+The orchestrator measures the agent's prose and logs the score:
+
+```
+style: 82% STE of 31 sentences (meets the 80% target); 6 flagged
+style: - 34 words: On green, the orchestrator runs `...` once: a fresh agent reads ...
+style: - passive: Patch delivery is capped (`max_patch_kb`, default 120) ...
+```
+
+The checks are the mechanical part of STE — sentence length, a passive-voice pattern,
+contractions, nominalisations and a banned-word list. They are a proxy, not a
+certification: there is no dictionary check and no part-of-speech tagging.
+
+A draft below the target gets **one** rewrite pass, with the flagged sentences passed back
+as `style_notes`. The rewrite is accepted only when it scores better, so a rewrite cannot
+silently lose detail. `retry_below_target: false` turns the pass off and keeps the
+measurement.
 
 ## Progress and cost, per iteration
 Every iteration logs one line and appends a JSON line to

@@ -31,6 +31,11 @@ parameters:
     input_type: string
     requirement: required
     description: "Per-layer pass counts, e.g. unit 585 passed; rust 259 passed; e2e 27 passed"
+  - key: style_notes
+    input_type: string
+    requirement: optional
+    default: ""
+    description: "Empty on the first pass. On a rewrite pass, the sentences that missed the style checks, separated by ' | '"
 
 instructions: |
   You are reviewing a finished change and writing its pull-request description. You did not
@@ -60,9 +65,40 @@ instructions: |
 
   ## Title
   Write one line to {{ title_file }}: what the change does, in the imperative mood, at most 72
-  characters, no trailing period, no S-IDs, no "wip". It should read like a commit subject that a
-  reviewer scanning a list of pull requests can act on. Examples of the shape (not of this change):
+  characters, no trailing period, no S-IDs, no "wip". Use the active voice and the simple present
+  tense, as the style section above requires. It should read like a commit subject that a reviewer
+  scanning a list of pull requests can act on. Examples of the shape (not of this change):
   "Add EPUB export from the live document" or "Centre the caret paragraph in focus mode".
+
+  ## Style: ASD-STE100 Simplified Technical English
+  Write to ASD-STE100 (Simplified Technical English). Target about 80% compliance, not
+  100%. STE is a controlled language with a restricted dictionary; obey the rules below,
+  and do not contort a sentence to satisfy a rule you cannot satisfy naturally.
+
+  - One instruction or one fact per sentence. Do not chain clauses with "and" or "which".
+  - Use the active voice. Write "The command writes the file", not "The file is written".
+  - Use the simple present tense. Write "The parser reads the header", not "The parser
+    will have read" or "The parser is reading".
+  - Keep sentences short. Maximum 20 words for a step, 25 words for a description. Split
+    a longer sentence instead of shortening it with abbreviations.
+  - Use one word for one thing throughout. Do not use synonyms for variety: if the code
+    says "section", do not also write "chapter" or "part" for the same thing.
+  - Use a, an and the.
+  - Do not use contractions. Write "does not", not "doesn't".
+  - Use the verb, not a noun built from it. Write "validate the input", not "perform
+    validation of the input".
+  - Do not use an "-ing" form as the main verb.
+  - Do not use these words: comprehensive, robust, seamless, powerful, elegant,
+    effortless, utilize, leverage, ensure, facilitate, numerous, various. Write "make
+    sure" for "ensure", "use" for "utilize" and "leverage".
+  - Do not use filler: basically, simply, just, really, quite, clearly, obviously,
+    actually, note that, it is worth noting.
+  - Use "must" for a requirement and "can" for a capability. Avoid "should", "may" and
+    "might" when you can be definite.
+  - Write a technical name exactly as the code writes it, in backticks. Technical names
+    are exempt from the rules above.
+  - Spell out an abbreviation the first time you use it.
+  - Prefer a short list to a long paragraph of steps.
 
   ## Output: write exactly these sections to {{ output_file }}, in this order
 
@@ -95,6 +131,11 @@ instructions: |
 
 prompt: |
   The change is finished and green. Describe it for review.
+
+  If style_notes is not empty, this is a rewrite. The previous draft broke the style
+  rules in these sentences. Rewrite those sentences. Keep every fact, identifier and
+  technical detail. Do not drop content to make the style easier.
+  style_notes: {{ style_notes }}
   Diff: {{ diff_file }}
   Spec: {{ spec_file }}
   Target branch: {{ base_branch }}
