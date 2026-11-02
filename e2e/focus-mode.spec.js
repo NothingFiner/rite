@@ -74,13 +74,20 @@ async function enterFocusMode(page) {
 }
 
 /// Vertical distance between an element's centre and the viewport's centre.
-function centreOffset(page, selector) {
-  return page.evaluate((sel) => {
-    const el = document.querySelector(sel)
-    if (!el) return Number.POSITIVE_INFINITY
+///
+/// Takes a Locator, never a CSS selector, so the element measured is provably
+/// the same node the test acted on. The editor renders `.paragraph` and
+/// `.section-title` as sibling <div>s (useParagraphHTML.js), so any positional
+/// selector — `:nth-of-type`, `:nth-child` — counts both kinds and silently
+/// drifts onto a different paragraph at every section boundary. Binding to
+/// `data-para-id` (stamped by the renderer) removes that failure mode: a
+/// mistyped id throws "element not found" instead of returning a distance to
+/// some other paragraph.
+function centreOffset(locator) {
+  return locator.evaluate((el) => {
     const r = el.getBoundingClientRect()
     return Math.abs(r.top + r.height / 2 - window.innerHeight / 2)
-  }, selector)
+  })
 }
 
 test.describe('focus mode', () => {
@@ -155,12 +162,12 @@ test.describe('focus mode', () => {
 
   test('S-016: centres the caret paragraph when entering focus mode', async ({ page }) => {
     await open(page)
-    const target = page.locator('.editor-sheet .paragraph').nth(20)
+    const target = page.locator('.editor-sheet .paragraph[data-para-id="p-20"]')
     await target.click()
 
     await enterFocusMode(page)
 
-    await expect.poll(() => centreOffset(page, '.editor-sheet .paragraph:nth-of-type(21)'), {
+    await expect.poll(() => centreOffset(target), {
       timeout: 3000,
     }).toBeLessThan(60)
   })
@@ -168,11 +175,10 @@ test.describe('focus mode', () => {
   test('S-017: re-centres when the caret moves to another paragraph', async ({ page }) => {
     await open(page)
     await enterFocusMode(page)
-    const other = page.locator('.editor-sheet .paragraph').nth(32)
-
+    const other = page.locator('.editor-sheet .paragraph[data-para-id="p-32"]')
     await other.click()
 
-    await expect.poll(() => centreOffset(page, '.editor-sheet .paragraph:nth-of-type(33)'), {
+    await expect.poll(() => centreOffset(other), {
       timeout: 3000,
     }).toBeLessThan(60)
   })
