@@ -193,7 +193,7 @@ describe('useExport', () => {
     expect(message).not.toHaveBeenCalled()
   })
 
-  it('S-021: exportEpub invokes nothing when the save dialog is cancelled', async () => {
+  it('S-021: exportEpub opens the dialog and invokes nothing when it is cancelled', async () => {
     save.mockResolvedValue(null)
 
     const store = useDocumentStore()
@@ -202,6 +202,12 @@ describe('useExport', () => {
     const { exportEpub } = useExport()
     await exportEpub()
 
+    // The dialog must actually be opened: "invoke nothing" alone would pass
+    // against a function that does nothing at all.
+    expect(save).toHaveBeenCalledWith({
+      filters: [{ name: 'EPUB', extensions: ['epub'] }],
+      defaultPath: 'Novel.epub',
+    })
     expect(invoke).not.toHaveBeenCalled()
     expect(message).not.toHaveBeenCalled()
   })

@@ -248,6 +248,10 @@ fn opf(bytes: &[u8]) -> String {
 #[test]
 fn s_001_first_entry_is_a_stored_mimetype() {
     let bytes = document_to_epub(&sample_document());
+    assert!(
+        !bytes.is_empty(),
+        "document_to_epub must produce a package — it returned no bytes"
+    );
 
     let (name, compression) = {
         let mut archive = ZipArchive::new(Cursor::new(&bytes[..])).expect("readable zip");
@@ -267,6 +271,10 @@ fn s_001_first_entry_is_a_stored_mimetype() {
 #[test]
 fn s_002_container_points_at_the_opf() {
     let bytes = document_to_epub(&sample_document());
+    assert!(
+        !bytes.is_empty(),
+        "document_to_epub must produce a package — it returned no bytes"
+    );
     let container = entry_text(&bytes, "META-INF/container.xml");
 
     let paths = attrs(&container, "rootfile", "full-path");
@@ -283,6 +291,10 @@ fn s_002_container_points_at_the_opf() {
 #[test]
 fn s_003_opf_declares_epub_3_and_manifests_every_xhtml() {
     let bytes = document_to_epub(&sample_document());
+    assert!(
+        !bytes.is_empty(),
+        "document_to_epub must produce a package — it returned no bytes"
+    );
     let opf = opf(&bytes);
 
     assert!(
@@ -306,6 +318,10 @@ fn s_003_opf_declares_epub_3_and_manifests_every_xhtml() {
 #[test]
 fn s_004_manifest_and_spine_agree_with_the_archive() {
     let bytes = document_to_epub(&sample_document());
+    assert!(
+        !bytes.is_empty(),
+        "document_to_epub must produce a package — it returned no bytes"
+    );
     let opf = opf(&bytes);
     let archive_names = entry_names(&bytes);
 
@@ -336,6 +352,10 @@ fn s_004_manifest_and_spine_agree_with_the_archive() {
 #[test]
 fn s_005_one_xhtml_per_visible_section_in_document_order() {
     let bytes = document_to_epub(&sample_document());
+    assert!(
+        !bytes.is_empty(),
+        "document_to_epub must produce a package — it returned no bytes"
+    );
     let opf = opf(&bytes);
 
     // The sample has two VISIBLE sections; the hidden chapter and hidden
@@ -371,6 +391,10 @@ fn s_005_one_xhtml_per_visible_section_in_document_order() {
 #[test]
 fn s_006_each_paragraph_renders_as_a_p_with_its_text() {
     let bytes = document_to_epub(&sample_document());
+    assert!(
+        !bytes.is_empty(),
+        "document_to_epub must produce a package — it returned no bytes"
+    );
     let (_, body) = entry_containing(&bytes, "BODY-ONE").expect("the first chapter has a document");
 
     assert!(
@@ -390,6 +414,10 @@ fn s_006_each_paragraph_renders_as_a_p_with_its_text() {
 #[test]
 fn s_007_chapter_heading_carries_the_derived_number() {
     let bytes = document_to_epub(&sample_document());
+    assert!(
+        !bytes.is_empty(),
+        "document_to_epub must produce a package — it returned no bytes"
+    );
     let (_, body) = entry_containing(&bytes, "BODY-ONE").expect("the first chapter has a document");
 
     assert!(
@@ -401,6 +429,10 @@ fn s_007_chapter_heading_carries_the_derived_number() {
 #[test]
 fn s_008_subtitleless_chapter_has_no_trailing_colon() {
     let bytes = document_to_epub(&sample_document());
+    assert!(
+        !bytes.is_empty(),
+        "document_to_epub must produce a package — it returned no bytes"
+    );
     let (_, body) = entry_containing(&bytes, "BODY-TWO").expect("the second chapter has a document");
 
     assert!(
@@ -416,6 +448,10 @@ fn s_008_subtitleless_chapter_has_no_trailing_colon() {
 #[test]
 fn s_009_inline_formatting_maps_to_strong_em_and_u() {
     let bytes = document_to_epub(&sample_document());
+    assert!(
+        !bytes.is_empty(),
+        "document_to_epub must produce a package — it returned no bytes"
+    );
     let (_, body) = entry_containing(&bytes, "BODY-ONE").expect("the first chapter has a document");
 
     assert!(body.contains("<strong>"), "bold runs must become <strong>, got:\n{body}");
@@ -429,6 +465,10 @@ fn s_010_markup_characters_are_escaped() {
     doc.sections[0].paragraphs = vec![para("p1", "Fish & chips <tag> \"quoted\"")];
 
     let bytes = document_to_epub(&doc);
+    assert!(
+        !bytes.is_empty(),
+        "document_to_epub must produce a package — it returned no bytes"
+    );
     let (_, body) = entry_containing(&bytes, "Fish").expect("the chapter has a document");
 
     assert!(body.contains("Fish &amp; chips"), "& must be escaped, got:\n{body}");
@@ -440,6 +480,10 @@ fn s_010_markup_characters_are_escaped() {
 #[test]
 fn s_011_hidden_sections_are_skipped_entirely() {
     let bytes = document_to_epub(&sample_document());
+    assert!(
+        !bytes.is_empty(),
+        "document_to_epub must produce a package — it returned no bytes"
+    );
     let everything = all_text(&bytes);
 
     assert!(
@@ -465,6 +509,10 @@ fn s_011_hidden_sections_are_skipped_entirely() {
 #[test]
 fn s_012_hidden_chapter_does_not_consume_a_number() {
     let bytes = document_to_epub(&sample_document());
+    assert!(
+        !bytes.is_empty(),
+        "document_to_epub must produce a package — it returned no bytes"
+    );
     let everything = all_text(&bytes);
 
     assert!(
@@ -480,6 +528,10 @@ fn s_012_hidden_chapter_does_not_consume_a_number() {
 #[test]
 fn s_013_nav_lists_every_visible_section_in_order() {
     let bytes = document_to_epub(&sample_document());
+    assert!(
+        !bytes.is_empty(),
+        "document_to_epub must produce a package — it returned no bytes"
+    );
     let opf = opf(&bytes);
     let nav = entry_text(&bytes, "OEBPS/nav.xhtml");
 
@@ -514,6 +566,10 @@ fn s_013_nav_lists_every_visible_section_in_order() {
 #[test]
 fn s_014_title_page_carries_title_and_author_but_never_the_contact_block() {
     let bytes = document_to_epub(&sample_document());
+    assert!(
+        !bytes.is_empty(),
+        "document_to_epub must produce a package — it returned no bytes"
+    );
     let everything = all_text(&bytes);
 
     assert!(everything.contains("A Novel"), "the title page must carry the document title");
@@ -535,6 +591,10 @@ fn s_015_package_metadata_falls_back_when_title_and_author_are_blank() {
     doc.author = String::new();
 
     let bytes = document_to_epub(&doc);
+    assert!(
+        !bytes.is_empty(),
+        "document_to_epub must produce a package — it returned no bytes"
+    );
     let opf = opf(&bytes);
 
     assert!(opf.contains("Untitled"), "a blank title must fall back to 'Untitled', got:\n{opf}");
@@ -552,6 +612,10 @@ fn s_016_a_document_with_no_visible_sections_is_still_a_valid_package() {
     }
 
     let bytes = document_to_epub(&doc);
+    assert!(
+        !bytes.is_empty(),
+        "document_to_epub must produce a package — it returned no bytes"
+    );
 
     assert_eq!(entry_text(&bytes, "mimetype"), "application/epub+zip");
     assert!(!entry_text(&bytes, "META-INF/container.xml").is_empty());
@@ -595,6 +659,10 @@ fn s_017_export_writes_the_whole_package_and_leaves_no_scratch_files() {
     export_epub(path.to_string_lossy().into_owned(), app.state::<AppState>())
         .expect("export_epub writes the package");
 
+    assert!(
+        path.exists(),
+        "export_epub must write the package to the path it was given"
+    );
     let written = std::fs::read(&path).expect("the .epub exists");
     assert_eq!(written, expected, "the file must be exactly the rendered package");
 
@@ -619,7 +687,10 @@ fn s_017b_a_failed_export_leaves_no_partial_file() {
     let app = mock_app_with(sample_document());
     let result = export_epub(path.to_string_lossy().into_owned(), app.state::<AppState>());
 
-    assert!(result.is_err(), "exporting into a missing directory must fail");
+    assert!(
+        result.is_err(),
+        "exporting into a missing directory must fail, got {result:?}"
+    );
     assert!(!path.exists(), "a failed export must not leave a file at the target path");
 }
 

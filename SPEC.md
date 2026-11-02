@@ -74,7 +74,8 @@ existing `.txt` / `.md` / `.docx` exports.
 
 **S-020** (unit) — It should invoke `export_epub` with the chosen path and nothing else.
 
-**S-021** (unit) — It should invoke nothing when the save dialog is cancelled.
+**S-021** (unit) — It should open the save dialog and then invoke nothing when that
+  dialog is cancelled.
 
 **S-022** (unit) — It should show an error dialog when the invoke rejects.
 
