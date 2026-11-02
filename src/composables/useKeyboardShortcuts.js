@@ -28,9 +28,10 @@ export function useKeyboardShortcuts({
   addExpanded,
   editorRef,
   onInsertSection,
-  // Focus / typewriter mode (roadmap 5.3). Stub: the parameter is threaded in
-  // but nothing routes through it yet — `Cmd/Ctrl+Shift+F`, the Escape chain and
-  // the drawer gate are the implementation's job. See SPEC.md.
+  // Focus / typewriter mode (roadmap 5.3). Every access is optional-chained
+  // (`focusMode?.`) because App.vue doesn't wire it yet and the unit-test
+  // mocks may omit pieces (e.g. no `recentre` key): an absent focusMode must
+  // simply mean none of the focus-mode behaviour applies.
   focusMode,
 }) {
   function onKeydown(e) {
@@ -107,6 +108,22 @@ export function useKeyboardShortcuts({
       }
     }
 
+    // Cmd/Ctrl+Shift+F → toggle focus / typewriter mode (roadmap 5.3). Must be
+    // checked BEFORE the plain `cmd && e.key === 'f'` search branch below:
+    // with Shift held `e.key` may arrive as 'F' (which the search branch would
+    // miss), and on layouts that report lowercase 'f' it would otherwise fall
+    // through INTO the search branch. Lower-casing covers both, so a cmd/ctrl
+    // +shift+F is always focus mode, never search. Editor-view only: in the
+    // manuscript/history views the combination is left alone entirely (no
+    // preventDefault, no toggle) so those views' own key handling is untouched
+    // (S-004).
+    if (cmd && e.shiftKey && e.key.toLowerCase() === 'f') {
+      if (viewMode.value !== 'editor') return
+      e.preventDefault()
+      focusMode.toggle()
+      return
+    }
+
     if (cmd && e.key === 'f') {
       e.preventDefault()
       if (search.searchVisible) {
@@ -127,13 +144,27 @@ export function useKeyboardShortcuts({
         leftDrawerOpen.value = false
         return
       }
+      // Focus mode is the LAST fall-through of the chain (S-007 order):
+      // a search panel Escape closes only the search, an open drawer Escape
+      // closes only the drawer, and focus mode exits only once nothing else
+      // wants the key — closing chrome first, the mode last.
+      if (focusMode?.active?.value) {
+        e.preventDefault()
+        focusMode.exit()
+      }
     }
     if (cmd && e.key === 'Enter') {
       e.preventDefault()
       if (viewMode.value === 'editor') {
-        leftDrawerMode.value = 'chapters'
-        leftDrawerOpen.value = true
-        addExpanded.value = true
+        // The drawer open is additionally gated on focus mode: while the mode
+        // is active its chrome may not open (S-009), so canOpenDrawer() ===
+        // false defers the drawer (`!== false` keeps the branch open when
+        // focusMode isn't wired, i.e. the pre-focus-mode behaviour).
+        if (focusMode?.canOpenDrawer?.() !== false) {
+          leftDrawerMode.value = 'chapters'
+          leftDrawerOpen.value = true
+          addExpanded.value = true
+        }
       }
       return
     }
@@ -148,6 +179,11 @@ export function useKeyboardShortcuts({
   function onSelectionChange() {
     format.syncFormatState()
     format.updateSelectedWordCount()
+    // While focus mode is active, every caret move re-centres the caret's
+    // paragraph (e2e-covered; jsdom has no layout). Optional call because the
+    // unit-test focus-mode mocks have no `recentre` key; the call is inert
+    // when the mode is inactive — recentre self-guards.
+    focusMode?.recentre?.()
   }
 
   onMounted(() => {

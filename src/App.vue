@@ -1,5 +1,6 @@
 <template>
   <div class="app-container"
+    :class="{ 'focus-mode': focusActive }"
     :style="{
       '--text-primary': theme.uiTextPrimary,
       '--text-secondary': theme.uiTextSecondary,
@@ -106,7 +107,7 @@
     <Toolbar
       :mode="viewMode"
       :right-open="rightDrawerOpen"
-      @toggle-right="rightDrawerOpen = !rightDrawerOpen"
+      @toggle-right="toggleRightDrawer"
       @set-mode="onSetMode($event)"
       @go-to-top="onGoToTop"
     />
@@ -175,6 +176,7 @@ import { useFileIO } from './composables/useFileIO.js'
 import { useExport } from './composables/useExport.js'
 import { useFormat } from './composables/useFormat.js'
 import { useSectionFormat } from './composables/useSectionFormat.js'
+import { useFocusMode } from './composables/useFocusMode.js'
 import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts.js'
 import { useVersionHistory } from './composables/useVersionHistory.js'
 import { useLlmSettings } from './composables/useLlmSettings.js'
@@ -338,12 +340,27 @@ const saveStatus = computed(() => {
 })
 
 
+// Chrome gate (S-009 / SPEC drawer rule): while focus / typewriter mode is
+// active no drawer may open — a drawer coming up would defeat the whole mode.
+// Every drawer-OPEN path routes through one of these two helpers; CLOSING
+// stays unconditional everywhere (only opening is refused while active).
+function openLeftDrawer(mode) {
+  if (!focusMode.canOpenDrawer()) return
+  leftDrawerMode.value = mode
+  leftDrawerOpen.value = true
+}
+
+function toggleRightDrawer() {
+  if (rightDrawerOpen.value) { rightDrawerOpen.value = false; return }
+  if (!focusMode.canOpenDrawer()) return
+  rightDrawerOpen.value = true
+}
+
 function onActivitySelect(mode) {
   if (leftDrawerOpen.value && leftDrawerMode.value === mode) {
     leftDrawerOpen.value = false
   } else {
-    leftDrawerMode.value = mode
-    leftDrawerOpen.value = true
+    openLeftDrawer(mode)
   }
 }
 
@@ -375,8 +392,10 @@ function onSetMode(mode) {
       return
     }
     viewMode.value = 'history'
-    leftDrawerMode.value = 'history'
-    leftDrawerOpen.value = true
+    // The gate is consulted AFTER the viewMode assignment: useFocusMode's
+    // sync-flush watcher exits the mode as this assignment lands, so the
+    // history versions drawer still opens on the way into the History view.
+    openLeftDrawer('history')
     history.loadHistory()
     return
   }
@@ -423,12 +442,14 @@ function onSetMode(mode) {
 // another drawer displaced it (e.g. General Options opened from History),
 // switch back to the version list + open it.
 function onToggleVersions() {
-  if (leftDrawerMode.value === 'history') {
-    leftDrawerOpen.value = !leftDrawerOpen.value
-  } else {
-    leftDrawerMode.value = 'history'
-    leftDrawerOpen.value = true
+  if (leftDrawerMode.value === 'history' && leftDrawerOpen.value) {
+    // The list is up: unconditional close (the gate never blocks a close).
+    leftDrawerOpen.value = false
+    return
   }
+  // Opening the list — the drawer is shut, or another drawer displaced it —
+  // goes through the focus-mode gate (S-009).
+  openLeftDrawer('history')
 }
 
 // Nav-link scroll. View-aware (5.1): stay in the CURRENT view when a chapter is
@@ -476,8 +497,7 @@ function onSearchReplaceAll() {
 // Open the General Options drawer to the AI Assistant section (called by the
 // LlmPanel empty state when no model is configured).
 function openGeneralOptions() {
-  leftDrawerMode.value = 'general-options'
-  leftDrawerOpen.value = true
+  openLeftDrawer('general-options')
 }
 
 // Start a new document (1.8). First the save-before guard (useFileIO.newFile
@@ -495,6 +515,15 @@ async function onConfirmNewDocument(name) {
   await store.newDocument(name)
 }
 
+// Focus / typewriter mode (5.3). One shared shell instance: the keyboard
+// shortcuts toggle/exit/recentre through it, the root element's focus-mode
+// class reads `active` (destructured as focusActive so the template
+// auto-unwraps the ref), and every drawer-open path consults canOpenDrawer()
+// (S-009). State contract: { viewMode, editorRef, leftDrawerOpen,
+// rightDrawerOpen } in; { active, toggle, exit, canOpenDrawer, recentre } out.
+const focusMode = useFocusMode({ viewMode, editorRef, leftDrawerOpen, rightDrawerOpen })
+const { active: focusActive } = focusMode
+
 useKeyboardShortcuts({
   store,
   fileIO,
@@ -506,6 +535,7 @@ useKeyboardShortcuts({
   addExpanded,
   editorRef,
   onInsertSection,
+  focusMode,
 })
 
 onMounted(async () => {
@@ -642,6 +672,22 @@ onUnmounted(() => {
 .editor-wrapper.mode-manuscript {
   align-items: center;
   padding: 20px 0 40px;
+}
+
+/* Focus / typewriter mode (5.3) — hide the chrome and let the sheet span
+   the full width. The bars vanish entirely (display none, not opacity, so
+   the e2e layer sees them hidden); the scroll layer loses its left-rail
+   offset, which is what left the text indented with the activity bar gone. */
+.app-container.focus-mode :deep(.toolbar),
+.app-container.focus-mode :deep(.statusbar),
+.app-container.focus-mode :deep(.activity-bar) {
+  display: none;
+}
+.app-container.focus-mode .scroll-layer {
+  padding-left: 0;
+}
+.app-container.focus-mode .scroll-layer.right-pad {
+  padding-right: 0;
 }
 
 </style>
