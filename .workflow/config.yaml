@@ -76,6 +76,20 @@ readonly_mounts:
   - "playwright.config.js"
   - ".github"
 
+# Coding standards the coder reads before it writes code.
+# The rules tree lives outside this repo (Eliot's standards-mcp) and is COPIED
+# into .workflow-out/standards/ at the start of every run, so the coder always
+# sees the current rules and nothing is vendored here to drift. `.workflow-out`
+# is gitignored and excluded from the review diff.
+# Files compose in order: later files win conflicts (that repo's own rule).
+standards:
+  enabled: true
+  dir: ~/Projects/standards-mcp/rules     # override with STANDARDS_DIR in the environment
+  files:
+    - universal.md
+    - css.md
+    - projects/rite.md
+
 limits:
   max_iterations: 8
   goose_timeout_min: 45     # per goose invocation
