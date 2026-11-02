@@ -38,6 +38,10 @@ def log(msg):
     print(f"[orchestrator {time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
+def plural(n, word):
+    return word if n == 1 else word + "s"
+
+
 def finish(status, reason, code, **extra):
     OUT.mkdir(exist_ok=True)
     (OUT / "result.json").write_text(json.dumps({"status": status, "reason": reason, **extra}, indent=2))
@@ -378,6 +382,378 @@ def run_goose(recipe, i, escalated, failures_file, models, timeout_s):
         return 124
 
 
+# ---------- style: ASD-STE100 (Simplified Technical English) ----------
+#
+# The PR description targets ~80% STE compliance, not 100%. STE is a controlled
+# language with a 900-word dictionary; a description written by a coding agent will
+# not satisfy the dictionary, and forcing it would produce stilted prose that hides
+# the code change. The mechanical rules below are the ones that carry the style and
+# that a script can count: sentence length, active voice, no contractions, no
+# nominalisations, no filler.
+#
+# This measures the agent's prose only. The footer the orchestrator appends is facts
+# and identifiers, which STE does not govern.
+
+STE_FENCE = re.compile(r"```.*?```", re.S)
+STE_HEADING = re.compile(r"^#{1,6}\s.*$", re.M)
+STE_HTML = re.compile(r"<[^>]+>")
+STE_WORD = re.compile(r"[A-Za-z][A-Za-z'\-]*")
+STE_CONTRACTION = re.compile(
+    r"\b(?:\w+n't|\w+'re|\w+'ve|\w+'ll|\w+'d|it's|that's|there's|let's)\b", re.I)
+# "is/are/was/were/be/been + past participle". A proxy: the common participles this
+# codebase actually writes, because a general detector needs a POS tagger.
+STE_PASSIVE = re.compile(
+    r"\b(?:is|are|was|were|be|been|being)\s+(?:\w+ly\s+)?"
+    r"(?:done|made|used|added|called|set|written|read|given|taken|kept|left|shown|"
+    r"changed|built|created|stored|removed|run|sent|held|found|seen|known|put|"
+    r"brought|chosen|drawn|lost|meant|paid|spent|told|thought|won|produced|exported|"
+    r"imported|generated|required|allowed|expected|checked|validated|opened|closed|"
+    r"loaded|saved|mounted|skipped|counted|parsed|emitted|appended|written|rejected|"
+    r"accepted|reverted|committed|pushed|applied|wired|registered|rendered|tested)\b", re.I)
+# "perform validation", "make a decision": STE prefers the verb itself.
+STE_NOMINAL = re.compile(
+    r"\b(?:perform|performs|performed|performing|make|makes|made|make|do|does|did|"
+    r"doing|carry out|carries out|carried out|provide|provides|provided)\s+"
+    r"(?:a|an|the)?\s*\w+(?:tion|sion|ment|ance|ence|ure)\b", re.I)
+STE_BANNED = re.compile(
+    r"\b(?:comprehensive|robust|seamless|seamlessly|powerful|elegant|delightful|"
+    r"effortless|effortlessly|cutting-edge|state-of-the-art|world-class|"
+    r"basically|simply|just|really|quite|obviously|clearly|actually|essentially|"
+    r"utilize|utilizes|utilized|utilizing|leverage|leverages|leveraged|utilise|"
+    r"ensure|ensures|ensured|ensuring|numerous|various|facilitate|facilitates)\b", re.I)
+
+
+def ste_sentences(text):
+    """Prose sentences only: no code, headings or HTML."""
+    body = STE_FENCE.sub(" ", text)
+    body = STE_HEADING.sub(" ", body)
+    body = STE_HTML.sub(" ", body)
+    # Technical names are exempt from STE: count an inline identifier as one word
+    # rather than as the several English words its path happens to contain.
+    body = re.sub(r"`[^`]*`", "CODE", body)
+    body = body.replace("**", "").replace("__", "")
+    out = []
+    for raw in re.split(r"(?<=[.!?])\s+", body):
+        s = raw.strip().lstrip("-*0123456789. ").strip()
+        if len(STE_WORD.findall(s)) >= 4:  # too short to judge
+            out.append(s)
+    return out
+
+
+def ste_report(text, target=0.8, max_words=25):
+    """(compliance, sentences_checked, [flagged examples])."""
+    sentences = ste_sentences(text)
+    if not sentences:
+        return 1.0, 0, []
+    flagged = []
+    for s in sentences:
+        problems = []
+        n = len(STE_WORD.findall(s))
+        if n > max_words:
+            problems.append(f"{n} words")
+        if STE_CONTRACTION.search(s):
+            problems.append("contraction")
+        if STE_PASSIVE.search(s):
+            problems.append("passive")
+        if STE_NOMINAL.search(s):
+            problems.append("nominalisation")
+        hit = STE_BANNED.search(s)
+        if hit:
+            problems.append(f"'{hit.group(0)}'")
+        if problems:
+            flagged.append({"sentence": s[:110], "problems": problems})
+    return (len(sentences) - len(flagged)) / len(sentences), len(sentences), flagged
+
+
+def log_style(score, total, flagged, target):
+    verdict = "meets" if score >= target else "below"
+    log(f"style: {score * 100:.0f}% STE of {total} {plural(total, 'sentence')} "
+        f"({verdict} the {target * 100:.0f}% target); {len(flagged)} flagged")
+    for f in flagged[:3]:
+        log(f"style: - {'; '.join(f['problems'])}: {f['sentence']}")
+
+
+# ---------- pull-request description ----------
+
+# Files that are noise in a review diff: regenerated, or huge, or not the change.
+DESCRIBE_SKIP = [":(exclude)package-lock.json", ":(exclude)Cargo.lock", ":(exclude).workflow-out"]
+# A description shorter than this is a failed description, not a terse one.
+DESCRIBE_MIN_CHARS = 200
+
+
+def layer_counts(res):
+    """{layer: (total, not_green)} from the parsed test ids."""
+    total, bad = {}, {}
+    for tid, st in res["tests"]:
+        layer = tid.split("::", 1)[0]
+        total[layer] = total.get(layer, 0) + 1
+        if st != "passed":
+            bad[layer] = bad.get(layer, 0) + 1
+    return {k: (total[k], bad.get(k, 0)) for k in total}
+
+
+def test_summary_line(res):
+    counts = layer_counts(res)
+    if not counts:
+        return "no tests were reported"
+    bits = []
+    for layer, (total, bad) in counts.items():
+        bits.append(f"{layer} {total - bad}/{total} passed" if bad else f"{layer} {total} passed")
+    worst = sum(b for _, b in counts.values())
+    return "; ".join(bits) + (f" ({worst} not passing)" if worst else "")
+
+
+def spec_sentences():
+    """The S-ID lines from SPEC.md, for the collapsible appendix."""
+    try:
+        text = Path("SPEC.md").read_text()
+    except OSError:
+        return ""
+    return "\n".join(ln.strip() for ln in text.splitlines() if SPEC_ID.match(ln.lstrip("* -")))
+
+
+def diff_for_review(base_branch, cap_kb):
+    """Write .workflow-out/diff-for-review.md. Returns the diffstat text.
+
+    The diffstat is always complete; only the patch is capped. An agent that needs a
+    hunk the cap dropped is told to read the file, which is why the diffstat has to
+    survive truncation.
+    """
+    # The run clones a single branch, so origin/<base> is often absent inside the
+    # container; the host fetches the base in as a local ref for that reason. Try
+    # both and say so loudly if neither resolves, rather than diffing against nothing.
+    mb = ""
+    for ref in (f"origin/{base_branch}", base_branch):
+        mb = git("merge-base", ref, "HEAD", check=False).strip()
+        if mb:
+            break
+    if not mb:
+        raise RuntimeError(f"no merge base with {base_branch} (tried origin/{base_branch} and "
+                           f"{base_branch}); was the base branch fetched into this clone?")
+    stat = git("diff", "--stat", mb, "HEAD", "--", ".", *DESCRIBE_SKIP).strip()
+    patch = git("diff", "--unified=3", mb, "HEAD", "--", ".", *DESCRIBE_SKIP)
+    cap = max(1, int(cap_kb)) * 1024
+    cut = len(patch) > cap
+    parts = ["# Diff for review", "", "## Diffstat", "", "```", stat, "```", "", "## Patch", ""]
+    if cut:
+        parts += [
+            f"Patch truncated: showing {cap_kb} KB of {len(patch) / 1024:.0f} KB. Every changed file is "
+            "listed in the diffstat above; read the repository for hunks you cannot see here.", "",
+        ]
+    parts += ["```diff", patch[:cap] + ("\n... [truncated]" if cut else ""), "```", ""]
+    (OUT / "diff-for-review.md").write_text("\n".join(parts))
+    return stat
+
+
+def description_footer(res, stat):
+    """Facts the orchestrator owns, appended after the agent's prose.
+
+    Kept separate on purpose: the agent writes the explanation, but the test counts
+    and the diffstat are measured, not narrated, so they cannot be embellished.
+    """
+    out = ["", "---", "", f"**Tests:** {test_summary_line(res)}", ""]
+    if stat:
+        out += ["<details><summary>Changed files</summary>", "", "```", stat, "```", "", "</details>", ""]
+    spec = spec_sentences()
+    if spec:
+        out += ["<details><summary>Approved spec (S-IDs)</summary>", "", spec, "", "</details>", ""]
+    return "\n".join(out)
+
+
+def fallback_description(reason, res, stat):
+    """A body that is never wrong, used when the reviewer agent cannot write one."""
+    lines = [
+        "## Summary", "",
+        "This branch makes the test suite pass. An automated description was not produced "
+        f"({reason}), so this is the measured summary instead.",
+        "", "## What changed", "",
+    ]
+    if stat:
+        lines += ["```", stat, "```", ""]
+    lines += ["## Tests", ""]
+    lines += [f"- {layer}: {total - bad}/{total} passed"
+              for layer, (total, bad) in layer_counts(res).items()]
+    lines += ["", "Review the diff directly; the sections above are absent because the "
+                  "reviewer agent did not run."]
+    return "\n".join(lines)
+
+
+def untracked_snapshot():
+    out = git("ls-files", "--others", "--exclude-standard", check=False)
+    return {ln for ln in out.splitlines() if ln}
+
+
+def _invoke_describe(recipe, params, env, timeout_s, log_name):
+    """One goose call. Never raises for a missing binary; returns an exit code."""
+    cmd = ["goose", "run", "--recipe", recipe, "--no-session", *params]
+    try:
+        with open(OUT / log_name, "w") as fh:
+            return subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT,
+                                  env=env, timeout=timeout_s).returncode
+    except subprocess.TimeoutExpired:
+        return 124
+    except OSError as e:
+        # goose missing or not executable. Degrade: a description is a nicety, not a gate.
+        log(f"pr description: cannot run goose ({e})")
+        return 127
+
+
+def usable_body(path):
+    body = path.read_text() if path.exists() else ""
+    if len(body.strip()) < DESCRIBE_MIN_CHARS or "## " not in body:
+        return None
+    return body
+
+
+def run_describe(cfg, models, res, timeout_s):
+    """Ask a fresh agent to explain the finished diff. Returns the body path or None.
+
+    Runs once, after the final green commit, in its own process: the builder never sees
+    the finished state (it works per iteration, mid-flight), so asking it to describe
+    the result would produce a description of its intent rather than of the code.
+    """
+    block = cfg.get("pr_description") or {}
+    if not block.get("enabled", True):
+        log("pr description: disabled by config")
+        return None
+    style = block.get("style") or {}
+    target = float(style.get("target_compliance", 0.8))
+    max_words = int(style.get("max_words_per_sentence", 25))
+    retry = bool(style.get("retry_below_target", True))
+
+    recipe = block.get("recipe", ".workflow/recipes/describe-changes.yaml")
+    out_file, title_file = OUT / "pr-description.md", OUT / "pr-title.txt"
+
+    def is_output(path):
+        """True for this step's own artifacts, which are never the agent's edits."""
+        norm = path.rstrip("/")
+        return norm == str(OUT).rstrip("/") or norm.startswith(str(OUT).rstrip("/") + "/")
+
+    def touched_paths():
+        # porcelain v1 is exactly "XY PATH": two status columns and a space.
+        return [p for p in (ln[3:] for ln in git("status", "--porcelain", "--", ".",
+                                                 check=False).splitlines())
+                if not is_output(p)]
+
+    # Measured before the stale outputs are removed: whether the tree was dirty for
+    # reasons that have nothing to do with this step. If it was, the revert below must
+    # not run, because it could not tell the agent's edits from pre-existing ones.
+    clean_before = not touched_paths()
+    for f in (out_file, title_file):
+        if f.exists():
+            f.unlink()
+
+    try:
+        stat = diff_for_review(cfg.get("base_branch", "development"),
+                               block.get("max_patch_kb", 120))
+    except (RuntimeError, OSError) as e:
+        stat = ""
+        log(f"pr description: no diff available ({e})")
+
+    if not Path(recipe).exists():
+        log(f"pr description: {recipe} missing, using the fallback body")
+        out_file.write_text(fallback_description(f"{recipe} not found", res, stat))
+        return out_file
+
+    env = dict(os.environ)
+    model = block.get("model") or models.get("default")
+    if model:
+        env["GOOSE_MODEL"] = model
+
+    common = [
+        f"diff_file={OUT / 'diff-for-review.md'}",
+        "spec_file=SPEC.md",
+        f"output_file={out_file}",
+        f"title_file={title_file}",
+        f"base_branch={cfg.get('base_branch', 'development')}",
+        f"test_summary={test_summary_line(res)}",
+    ]
+
+    def params(style_notes=""):
+        out = []
+        for kv in common:
+            out += ["--params", kv]
+        if style_notes:
+            # One argument per line would need quoting; the recipe treats " | " as a
+            # separator, which keeps the notes on a single --params value.
+            out += ["--params", "style_notes=" + style_notes.replace("\n", " | ")]
+        return out
+
+    # Snapshot before the agent runs so the revert below can tell "it made this" from
+    # "this was already here". Reverting everything untracked would delete files that
+    # have nothing to do with the agent.
+    before_untracked = untracked_snapshot()
+    started = time.time()
+    log("pr description: reviewer agent is describing the change")
+    rc = _invoke_describe(recipe, params(), env, timeout_s, "goose-describe.log")
+    body = usable_body(out_file)
+
+    score = total = 0
+    flagged = []
+    if body is not None:
+        score, total, flagged = ste_report(body, target, max_words)
+        log_style(score, total, flagged, target)
+
+    # One rewrite only, and only when the draft missed the target. Bounded on purpose:
+    # style is a polish pass, and a second description costs a full call.
+    if body is not None and retry and score < target and flagged:
+        notes = "; ".join(f"{'/'.join(f['problems'])}: {f['sentence']}" for f in flagged[:8])
+        log(f"style: below target, asking for one rewrite "
+            f"({len(flagged)} {plural(len(flagged), 'sentence')} flagged)")
+        rc2 = _invoke_describe(recipe, params(notes), env, timeout_s, "goose-describe-2.log")
+        rewritten = usable_body(out_file)
+        if rc2 == 0 and rewritten is not None:
+            s2, t2, f2 = ste_report(rewritten, target, max_words)
+            log_style(s2, t2, f2, target)
+            # Only take the rewrite if it is actually better; a rewrite can lose detail.
+            if s2 > score:
+                body, score, total, flagged = rewritten, s2, t2, f2
+                log(f"style: rewrite accepted ({score * 100:.0f}%)")
+            else:
+                log(f"style: kept the first draft ({score * 100:.0f}% beats "
+                    f"{s2 * 100:.0f}%)")
+
+    # The description step must not change the code. Only enforceable when the tree was
+    # clean before it ran — otherwise its edits cannot be told apart from pre-existing
+    # ones, and the honest move is to leave everything alone.
+    touched = touched_paths()
+    if not clean_before:
+        if touched:
+            log(f"pr description: tree was already dirty before the agent ran, so these are "
+                f"not attributed to it and were left alone: {touched[:5]}")
+    elif touched:
+        log(f"pr description: reviewer agent modified the tree, reverting: {touched[:5]}")
+        git("checkout", "--", ".", check=False)
+        for path in untracked_snapshot() - before_untracked:
+            if is_output(path):
+                continue
+            try:
+                Path(path).unlink()
+            except OSError:
+                pass
+
+    if body is None:
+        why = f"goose exited {rc}, produced {len(out_file.read_text().strip()) if out_file.exists() else 0} characters"
+        log(f"pr description: unusable ({why}), using the fallback body")
+        out_file.write_text(fallback_description(why, res, stat))
+        return out_file
+
+    out_file.write_text(body.rstrip() + "\n" + description_footer(res, stat))
+    log(f"pr description: {len(body)} characters in {time.time() - started:.0f}s -> {out_file}")
+
+    # Title: one line, sane length, and not the placeholder the git log would give.
+    raw = title_file.read_text().strip() if title_file.exists() else ""
+    title = raw.splitlines()[0].strip().strip('"').rstrip(".") if raw else ""
+    if 10 <= len(title) <= 90 and "wip" not in title.lower():
+        title_file.write_text(title + "\n")
+        log(f"pr description: title -> {title}")
+    else:
+        if title_file.exists():
+            title_file.unlink()
+        log(f"pr description: no usable title ({title!r}), leaving the PR title unchanged")
+    return out_file
+
+
 # ---------- main ----------
 
 def main():
@@ -394,6 +770,8 @@ def main():
                     help="continue in a work tree that already holds implementation work: "
                          "previously-passing tests may not regress, but the suite is no longer "
                          "required to be red")
+    ap.add_argument("--no-describe", action="store_true",
+                    help="skip the pull-request description step (saves one goose call on success)")
     args = ap.parse_args()
 
     OUT.mkdir(exist_ok=True)
@@ -557,7 +935,19 @@ def main():
         prev_failing = len(res["failing"])
 
         if not res["failing"]:
-            finish("green", "all tests pass", 0, iterations=i)
+            # Last step, once: describe the finished change for the reviewer. It is not
+            # part of the loop, and a failure here must not fail the run — the branch is
+            # already green and the host can still open the PR without a description.
+            body = None
+            if not args.no_describe:
+                try:
+                    body = run_describe(cfg, models, res, goose_to)
+                except Exception as e:  # noqa: BLE001 - a description bug must not fail a green run
+                    log(f"pr description: unexpected {type(e).__name__}: {e}")
+            if body is None and not args.no_describe:
+                log("pr description: unavailable; the host will leave the PR body alone")
+            finish("green", "all tests pass", 0, iterations=i,
+                   pr_description=str(body) if body else None)
 
         sig = hashlib.sha1("\n".join(sorted(res["failing"])).encode()).hexdigest()
         same = same + 1 if sig == prev_sig else 1
