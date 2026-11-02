@@ -51,6 +51,10 @@ const props = defineProps({
   showThemePicker: { type: Boolean, default: false },
   wordCount: { type: Number, default: 0 },
   selectedWordCount: { type: Number, default: 0 },
+  // Basename of the current file, including its extension (`novel.rite`), or
+  // '' when the document has never been saved. STUB: declared so the status-bar
+  // tests fail on an assertion instead of a missing prop; not rendered yet.
+  fileName: { type: String, default: '' },
 })
 
 const currentTheme = computed(() => props.themes[props.theme] || props.themes[0] || { bg: '#333333' })

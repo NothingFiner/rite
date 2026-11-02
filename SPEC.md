@@ -1,147 +1,118 @@
-# SPEC — EPUB export
-
-**Status:** approved. Implement exactly these behaviours; do not weaken or edit the tests.
-
-Export the live document as an EPUB 3 package, from the status bar, alongside the
-existing `.txt` / `.md` / `.docx` exports.
-
-## Sentences
-
-### Package structure — rust
-
-**S-001** (rust) — It should produce a ZIP archive whose first entry is `mimetype`,
-  stored uncompressed, whose contents are exactly `application/epub+zip`.
-
-**S-002** (rust) — It should include `META-INF/container.xml` naming `OEBPS/content.opf`
-  as the rootfile.
-
-**S-003** (rust) — It should include `OEBPS/content.opf` declaring `version="3.0"`, with
-  a manifest entry for every XHTML file it emits.
-
-**S-004** (rust) — Every manifest item should exist in the archive, and every spine
-  item should reference an id declared in the manifest — no dangling references in
-  either direction.
-
-### Content — rust
-
-**S-005** (rust) — It should emit one XHTML document per visible section, in document
-  order, and the spine order should match that order.
-
-**S-006** (rust) — It should render each paragraph of a section as a `<p>` element,
-  preserving the paragraph's run text exactly.
-
-**S-007** (rust) — It should render a Chapter heading as the derived `Chapter N: title`,
-  numbering only Chapter-type sections.
-
-**S-008** (rust) — It should render a subtitle-less chapter as `Chapter N` with no
-  trailing colon.
-
-**S-009** (rust) — It should map bold, italic and underline runs to `<strong>`, `<em>`
-  and `<u>`.
-
-**S-010** (rust) — It should XML-escape `&`, `<`, `>` and `"` in text content.
-
-**S-011** (rust) — It should skip hidden sections entirely: no XHTML file, no manifest
-  entry, no spine entry and no nav entry.
-
-**S-012** (rust) — It should number visible chapters contiguously, so a hidden chapter
-  between two visible ones leaves no gap in the numbering.
-
-**S-013** (rust) — It should emit `OEBPS/nav.xhtml` listing every visible section in
-  document order, marked as the navigation document in the manifest.
-
-**S-014** (rust) — It should emit a title page carrying the document title and author,
-  and should not include `authorContact` anywhere in the package.
-
-**S-015** (rust) — It should set the package title and author metadata from the document,
-  falling back to `Untitled` and `Author Name` when they are blank.
-
-**S-016** (rust) — It should still produce a valid package with an empty spine when
-  the document has no visible sections.
-
-### Command — rust
-
-**S-017** (rust) — `export_epub(path)` should write the package atomically, leaving no
-  partial file at `path` when the export fails.
-
-**S-018** (rust) — `export_epub(path)` should return `Err` when the target directory does
-  not exist.
-
-### Frontend wiring — unit
-
-**S-019** (unit) — `exportEpub()` should open a save dialog filtered to `epub`,
-  defaulting to `<title>.epub`.
-
-**S-020** (unit) — It should invoke `export_epub` with the chosen path and nothing else.
-
-**S-021** (unit) — It should open the save dialog and then invoke nothing when that
-  dialog is cancelled.
-
-**S-022** (unit) — It should show an error dialog when the invoke rejects.
-
-**S-023** (unit) — It should default the proposed filename to `Untitled.epub` when the
-  document title is blank.
-
-### Reachability — e2e
-
-**S-024** (e2e) — The status bar should show an `Export .epub` button that invokes
-  `export_epub` with the path the save dialog returns.
+# Save As and document title independence
 
 ## Context
 
-### What already exists (do not rebuild it)
+**The bug.** `saveDocument()` in `src/stores/document.js` derives the document title
+from the file path on every save:
 
-- **`src-tauri/src/export_docx.rs` is the template.** It emits OPC parts by hand and
-  hands the bytes to the `zip` crate (`zip = "2"`, default-features off, `deflate`).
-  EPUB is the same shape: a ZIP of XML parts. Use `zip::write::SimpleFileOptions`
-  the way `export_docx` does; no new dependency is needed.
-- **`history::atomic_write`** is the atomic write path used by every export
-  (`export_text`, `export_docx`). Use it for S-017; do not hand-roll temp-file logic.
-- **The command pattern** is `export_docx(path: String, state: State<AppState>) -> Result<(), String>`:
-  clone the document out of `AppState`, render, write. `export_epub` mirrors it.
-  Register the command in `lib.rs`'s `tauri::generate_handler!` list — the tests cannot
-  observe registration, so this is on you.
-- **`src-tauri/src/lib.rs`** is the library target; integration tests import
-  `rite_lib::export_epub::document_to_epub`. The module is already declared and stubbed.
-- **Frontend:** `src/composables/useExport.js` holds `exportPlainText` / `exportMarkdown` /
-  `exportDocx`. `exportEpub` is stubbed there. UI buttons live in
-  `src/components/StatusBar.vue` (flat row of `btn-ghost` buttons), emitted up to
-  `App.vue` (`@export-docx="exportComposable.exportDocx"`). Mirror that wiring exactly.
+```js
+this.doc.title = path.split(/[\\/]/).pop().replace(/\.(fwd|rite)$/, '')
+```
 
-### Decisions that are intentional (do not "fix" them)
+That runs for quick Save as well as Save As. Consequences today:
 
-1. **Hidden sections are skipped in EPUB only.** `export_text.rs:85` deliberately keeps a
-   hidden section's *body* and drops only its header. EPUB is a reader-facing artifact, so
-   here a hidden section disappears completely (S-011). The two exports disagree on
-   purpose; do not change `export_text`.
-2. **Chapter numbering is derived positionally** among *visible* chapters (S-012). A hidden
-   chapter must not consume a number, unlike `export_text`, which advances the counter for
-   hidden chapters to keep manuscript numbering stable.
-3. **`nav.xhtml` is always emitted**, regardless of `Document.has_toc`. That flag gates the
-   *printed* manuscript TOC (`manuscriptDisplay.vue:161`), not the ebook navigation.
-4. **`authorContact` is never exported** (S-014). It is manuscript-submission data
-   (address, phone, email), not reader-facing metadata.
-5. **`mimetype` must be the first entry and stored** (S-001). Readers use it to sniff the
-   format; a deflated or misplaced `mimetype` makes an EPUB unopenable even though the
-   archive is otherwise valid. `zip` needs `CompressionMethod::Stored` for that one entry.
-6. **Escaping is manual.** The existing exporters escape by hand
-   (`escape_html` in `useParagraphHTML.js` is the frontend counterpart). There is no XML
-   library in the crate; do not add one.
-7. **The title page is a manifest item but not a spine item.** S-016 requires an *empty
-   spine* when nothing is visible; putting the title page in the reading order would make
-   that impossible (and a reader would open an empty book at a title page with no content
-   behind it). `nav.xhtml` is likewise a manifest item only.
+- The title stored inside a `.rite` file is discarded on the first save. Open a file
+  whose stored title is "Chapter One", press Cmd+S, and the title becomes the filename.
+- The Title field in **General Options → Document Info** (`GeneralOptionsDrawer.vue`,
+  bound to `store.doc.title` with `store.markModified()`) accepts edits that the next
+  save silently throws away.
+- So the document title is not a property of the document; it is a rendering of the
+  last filename used.
 
-### Explicitly out of scope
+**The change.** The title becomes independent of the filename. It is set by the New
+prompt, by opening a file, or by editing it in Document Info. Saving never rewrites it.
+The status bar shows the title *and* the current filename so both remain visible.
 
-- Cover images (no image field exists on `Document`).
-- `toc.ncx` (EPUB 2 fallback) — EPUB 3 `nav.xhtml` only.
-- `epubcheck` validation — not installable in CI. The tests assert the structural
-  invariants from S-001…S-016 instead.
-- Changing `.txt` / `.md` / `.docx` behaviour.
+### Decisions (already agreed; do not re-litigate in the implementation)
 
-### Test locations
+1. Title is independent of filename. Save and Save As never change it.
+2. On the first save of a document with no path, the save dialog proposes the title as
+   the filename. This is a convenience default only — it does not couple the two.
+3. Save As proposes the **current filename** when the document has a path, and the
+   title only when it does not. (After the split, seeding from the title would propose
+   a misleading name.)
+4. Save As **always writes** to the chosen path: modified or not, and whether or not the
+   target exists. There is no app-level "file already exists" confirmation — the native
+   save dialog already confirms replacement, and asking twice is worse than not asking.
+5. Save As to the path the document already has is a plain rewrite. No special case.
+6. The status bar shows the basename **including the extension** (`novel.rite`), which
+   is what Word and Pages show. The full path is not shown.
+7. The status bar shows no filename at all for a document that has never been saved.
 
-- Rust: `src-tauri/tests/epub_export.rs` (integration, imports `rite_lib`).
-- Unit: `src/composables/useExport.test.js`.
-- E2E: `e2e/epub-export.spec.js` (mocked IPC; the dialog command is `saveDialog`).
+### Constraints
+
+- **No Rust change is needed.** `Document.title` is a serialised field of the `.rite`
+  file (`src-tauri/src/document.rs`) and `open_document` returns it verbatim. Making the
+  title independent makes it round-trip correctly; the Rust side already behaves.
+- **Existing test inverted, not weakened.** `src/composables/useFileIO.test.js` currently
+  asserts that the title becomes `novel-copy` after Save As, with a comment explaining
+  that this is deliberate. Under this spec the opposite is true, so that assertion is
+  replaced by its inverse and the comment is rewritten. This is an intentional reversal
+  of a previously-locked decision, not a loosened test.
+- The status bar receives the filename as a new `fileName` prop. `App.vue` wiring is
+  implementation, not fixture.
+- Do not touch the native menu: that is the next feature, and it depends on the rules
+  decided here.
+
+### Out of scope
+
+- Any native menu / bottom-bar restructuring.
+- Renaming a document from the status bar (Document Info already does it).
+- Changing how `open` seeds a document's title.
+
+## Sentences
+
+**Unit — save and title independence**
+
+**S-001** (unit) — Saving to the current path should write the document without changing
+its title.
+
+**S-002** (unit) — Save As should write the document to the chosen path and make
+subsequent quick saves use that path.
+
+**S-003** (unit) — Save As should not change the document title.
+
+**S-004** (unit) — Save As should write over a path that already exists without an
+additional confirmation.
+
+**S-005** (unit) — Save As on an unmodified document should still write to the chosen
+path.
+
+**S-006** (unit) — Save As to the path the document already has should still write the
+document.
+
+**S-007** (unit) — The Save As dialog should propose the current filename when the
+document has a path, and the document title when it does not.
+
+**S-008** (unit) — Opening a document should adopt the title stored in the file.
+
+**S-009** (unit) — Cancelling the Save As dialog should leave the path and the title
+unchanged.
+
+**Rust**
+
+**S-010** (rust) — Saving a document and reopening it should return the same title.
+
+**Unit — Document Info**
+
+**S-011** (unit) — Editing the title in Document Info should mark the document as
+modified and keep the new title after a save.
+
+**Unit — status bar**
+
+**S-012** (unit) — The status bar should show the document title.
+
+**S-013** (unit) — The status bar should show the basename of the current file,
+including its extension, when the document has a path.
+
+**S-014** (unit) — The status bar should show no filename when the document has no path.
+
+**S-015** (unit) — The status bar should show `Untitled` when the document has no title.
+
+**e2e**
+
+**S-016** (e2e) — Saving a new document should show its title and the chosen filename in
+the status bar.
+
+**S-017** (e2e) — Save As to a new name should change the filename shown and leave the
+title unchanged.
