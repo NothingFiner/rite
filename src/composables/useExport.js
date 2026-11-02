@@ -81,5 +81,9 @@ export function useExport() {
     }
   }
 
-  return { exportFile, exportPlainText, exportMarkdown, exportDocx }
+  /// Export the live document as an EPUB. Stub: the save dialog + invoke +
+  /// error-dialog shape must mirror `exportDocx` (see SPEC.md, S-019…S-023).
+  async function exportEpub() {}
+
+  return { exportFile, exportPlainText, exportMarkdown, exportDocx, exportEpub }
 }
