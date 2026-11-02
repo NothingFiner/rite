@@ -11,7 +11,16 @@ import { test, expect } from '@playwright/test'
 // IPC mocking follows e2e/focus-mode.spec.js, with one wrinkle: the native save
 // dialog does NOT arrive as `cmd: 'saveDialog'` at the top level. dialog.save()
 // goes through `invokeTauriCommand`, so `__TAURI_IPC__` sees `cmd: 'tauri'` with
-// the dialog request nested under `payload.message`.
+// the dialog module and request spread as SIBLING keys of the request:
+//
+//   { cmd: 'tauri', callback, error, __tauriModule: 'Dialog',
+//     message: { cmd: 'saveDialog', options } }
+//
+// `invoke(cmd, args)` in @tauri-apps/api 1.6.0 does
+// `window.__TAURI_IPC__({ cmd, callback, error, ...args })` (tauri.js:45), so
+// command arguments are spread at the TOP LEVEL — there is no `payload` key.
+// Mirroring that here (destructure the envelope, keep the rest as the payload)
+// is what makes `export_epub`'s own args observable below.
 
 function installIpcMock(page, savedPath) {
   return page.addInitScript((path) => {
@@ -50,11 +59,13 @@ function installIpcMock(page, savedPath) {
     window.__INVOKED__ = []
     window.__TAURI_IPC__ = (req) => {
       const ok = (r) => setTimeout(() => window['_' + req.callback](r), 0)
-      window.__INVOKED__.push({ cmd: req.cmd, payload: req.payload ?? null })
+      // The envelope keys are protocol plumbing; everything else is the command's
+      // own args (Tauri v1 spreads them at the top level — see the header).
+      const { cmd, callback: _cb, error: _err, ...payload } = req
+      window.__INVOKED__.push({ cmd, payload })
       try {
-        // The native save dialog: `invoke('tauri', {...})` wrapping the module
-        // request (see node_modules/@tauri-apps/api/dialog.js).
-        if (req.cmd === 'tauri' && req.payload?.message?.cmd === 'saveDialog') {
+        // The native save dialog: `invoke('tauri', { __tauriModule: 'Dialog', message })`.
+        if (req.cmd === 'tauri' && req.__tauriModule === 'Dialog' && req.message?.cmd === 'saveDialog') {
           return ok(path)
         }
         if (req.cmd === 'get_document') return ok(doc)

@@ -74,6 +74,11 @@ fn section(id: &str, title: &str, section_type: SectionType, paragraphs: Vec<Par
 /// 3. Chapter ""                 visible   -> "Chapter 2"   (no colon)
 /// 4. Section "Notes"            hidden    -> skipped entirely
 /// ```
+///
+/// Each section's body opens with a locator marker (`BODY-ONE …`, `BODY-TWO …`)
+/// so a test can find that section's XHTML document without assuming a filename.
+/// Hidden bodies carry `HIDDEN-…` markers so a test can assert they never reach
+/// the package.
 fn sample_document() -> Document {
     let mut hidden_chapter = section(
         "s2",
@@ -105,7 +110,7 @@ fn sample_document() -> Document {
                     styled_para(
                         "p1",
                         vec![
-                            ("It was a dark", TextStyle::default()),
+                            ("BODY-ONE It was a dark", TextStyle::default()),
                             (" and stormy night.", TextStyle { bold: true, ..Default::default() }),
                         ],
                     ),
