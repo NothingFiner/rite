@@ -16,6 +16,24 @@ PR="${2:-}"
 # Anything past the first two args goes straight to the orchestrator, e.g.
 #   .workflow/run-headless.sh feature/x <pr> --baseline-only
 if [ "$#" -gt 2 ]; then shift 2; else shift "$#"; fi
+
+# --resume continues in the work tree from a previous (stopped or failed) run
+# instead of re-cloning and re-implementing from scratch. --resume-dir names that
+# work dir explicitly; bare --resume picks the newest one. Only --resume is passed
+# on to the orchestrator (it changes the baseline gate); --resume-dir is launcher
+# business and is consumed here.
+RESUME=0
+RESUME_DIR=""
+ORCH_ARGS=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --resume) RESUME=1; ORCH_ARGS+=("$1"); shift ;;
+    --resume-dir) RESUME=1; RESUME_DIR="${2:-}"; shift 2 ;;
+    *) ORCH_ARGS+=("$1"); shift ;;
+  esac
+done
+set -- ${ORCH_ARGS[@]+"${ORCH_ARGS[@]}"}
+GIT_ID_ARGS=(-c user.name=goose-bot -c user.email=goose-bot@localhost)
 PUSH=1
 for a in "$@"; do [ "$a" = "--baseline-only" ] && PUSH=0; done
 IMAGE="${IMAGE:-goose-headless}"
@@ -32,14 +50,46 @@ mkdir -p "$CACHE"/{cargo,npm,playwright,target,home}
 # which is NOT shared. Keep the work dir under $CACHE, which is under $HOME.
 WORK_BASE="${WORKFLOW_WORKDIR:-$CACHE}"
 mkdir -p "$WORK_BASE"
-WORK="$(mktemp -d "$WORK_BASE/work.XXXXXXXX")"
+
+if [ "$RESUME" -eq 1 ]; then
+  if [ -n "$RESUME_DIR" ]; then
+    CAND="$(cd "$RESUME_DIR" 2>/dev/null && pwd)" || { echo "resume: no such work dir: $RESUME_DIR" >&2; exit 4; }
+    # Accept either the work dir or the clone inside it — the failure message
+    # prints the work dir, but people paste whatever path they last saw.
+    if [ "$(basename "$CAND")" = "repo" ] && [ -d "$CAND/.git" ]; then
+      CAND="$(dirname "$CAND")"
+    fi
+    WORK="$CAND"
+  else
+    WORK="$(ls -1dt "$WORK_BASE"/work.* 2>/dev/null | head -1)"
+  fi
+  [ -n "${WORK:-}" ] && [ -d "$WORK/repo/.git" ] \
+    || { echo "resume: no work dir with a clone under $WORK_BASE" >&2; exit 4; }
+  # Resuming the wrong branch would push its work onto this one, so check rather
+  # than trust the path. Detached HEAD is refused too: it means a half-finished
+  # merge or rebase was left behind and nothing about it is resumable.
+  HAVE_BRANCH="$(git -C "$WORK/repo" rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  if [ "$HAVE_BRANCH" != "$BRANCH" ]; then
+    echo "resume: $WORK/repo is on '${HAVE_BRANCH:-detached HEAD}', not '$BRANCH'" >&2
+    echo "resume: check it out on the right branch, or start a fresh run" >&2
+    exit 4
+  fi
+  if [ -d "$WORK/repo/.git/rebase-merge" ] || [ -d "$WORK/repo/.git/rebase-apply" ] \
+     || [ -f "$WORK/repo/.git/MERGE_HEAD" ]; then
+    echo "resume: $WORK/repo is mid-merge/rebase — finish or abort it first" >&2
+    exit 4
+  fi
+  echo "resuming in $WORK ($BRANCH)"
+else
+  WORK="$(mktemp -d "$WORK_BASE/work.XXXXXXXX")"
+fi
 
 # Keep the logs of the last few runs and drop the rest; each one is a full clone
 # plus node_modules, so they add up fast. This run's dir is the newest, so it is
 # never the one pruned, and a failed run's evidence survives until it ages out.
 # WORKFLOW_KEEP_WORK=0 disables pruning.
 KEEP_WORK="${WORKFLOW_KEEP_WORK:-3}"
-if [ "$KEEP_WORK" -gt 0 ] 2>/dev/null; then
+if [ "$KEEP_WORK" -gt 0 ] 2>/dev/null && [ "$RESUME" -eq 0 ]; then
   OLD_WORK="$(ls -1dt "$WORK_BASE"/work.* 2>/dev/null | tail -n +$((KEEP_WORK + 1)))"
   if [ -n "$OLD_WORK" ]; then
     echo "pruning old work dirs (keeping the newest $KEEP_WORK):"
@@ -53,7 +103,23 @@ fi
 
 docker build -q -t "$IMAGE" -f .workflow/Dockerfile .workflow >/dev/null
 
-git clone --quiet --branch "$BRANCH" --single-branch "$REPO_URL" "$WORK/repo"
+if [ "$RESUME" -eq 0 ]; then
+  git clone --quiet --branch "$BRANCH" --single-branch "$REPO_URL" "$WORK/repo"
+fi
+
+if [ "$RESUME" -eq 1 ]; then
+  # Fold the stopped run's uncommitted work into a commit, then take the amended
+  # tests from origin. Implementation files and test files never overlap (tests
+  # are path-locked), so this merge is expected to be clean.
+  git -C "$WORK/repo" add -A
+  git -C "$WORK/repo" "${GIT_ID_ARGS[@]}" commit -q -m "wip: work preserved from the stopped run" 2>/dev/null || true
+  echo "resume: fetching origin/$BRANCH to pick up the amended tests"
+  git -C "$WORK/repo" fetch -q origin "$BRANCH"
+  if ! git -C "$WORK/repo" merge --no-edit -q FETCH_HEAD; then
+    echo "resume: merge conflict with origin/$BRANCH — resolve it in $WORK/repo and re-run" >&2
+    exit 4
+  fi
+fi
 
 # Preflight: prove the bind mount really crosses into the VM before spending
 # minutes on clone/setup/goose. Costs ~1s and turns a silent empty mount into a
@@ -126,5 +192,19 @@ if [ "$RC" -eq 0 ]; then
   fi
 else
   echo "Not pushing (exit code $RC). Logs and the work so far are in: $WORK/repo"
+  # Never throw the implementation away. A stopped run's work is worth more than
+  # the tokens it would take to reproduce it, so preserve it on a side ref; a
+  # later --resume-dir <this dir> continues from it.
+  if [ "$PUSH" -eq 1 ]; then
+    git -C "$WORK/repo" add -A
+    git -C "$WORK/repo" "${GIT_ID_ARGS[@]}" commit -q -m "wip: work preserved (run exited $RC)" 2>/dev/null || true
+    if git -C "$WORK/repo" push -q origin "HEAD:refs/heads/wip/$BRANCH" 2>/dev/null; then
+      echo "Work preserved on origin as wip/$BRANCH"
+    else
+      echo "Could not push wip/$BRANCH (the work tree still holds it)."
+    fi
+  fi
+  echo "Resume this run with:"
+  echo "  .workflow/run-headless.sh $BRANCH ${PR:-<pr>} --resume-dir $WORK"
   exit "$RC"
 fi

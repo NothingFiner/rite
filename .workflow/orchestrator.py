@@ -45,6 +45,72 @@ def finish(status, reason, code, **extra):
     sys.exit(code)
 
 
+# ---------- progress / token accounting ----------
+
+# goose records per-request usage in its session database. In the container HOME
+# is /cache/home and /cache is bind-mounted from the host, so the ledger
+# survives the run and can be read after it too.
+GOOSE_DB = Path(os.environ.get("HOME", "~")) / ".local/share/goose/sessions/sessions.db"
+
+
+def goose_tokens_used():
+    """Total tokens goose has recorded, or None when the ledger is unavailable.
+
+    Returns None (never raises) so a goose build without a usage table degrades
+    to "tokens: n/a" instead of breaking the run.
+    """
+    try:
+        import sqlite3
+
+        con = sqlite3.connect(f"file:{GOOSE_DB}?mode=ro", uri=True, timeout=2)
+        try:
+            row = con.execute("select coalesce(sum(total_tokens), 0) from usage_ledger").fetchone()
+            return int(row[0]) if row else 0
+        finally:
+            con.close()
+    except Exception:
+        return None
+
+
+def fmt_tokens(n):
+    if n is None:
+        return "n/a"
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.2f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.0f}k"
+    return str(n)
+
+
+def progress(i, res, prev_failing, started, tokens_before, tokens_total):
+    """One line per iteration: pass/fail counts, delta, wall clock, tokens."""
+    total = len(res["tests"])
+    failing = len(res["failing"])
+    passed = total - failing
+    delta = prev_failing - failing
+    duration = time.time() - started
+    now = goose_tokens_used()
+    spent = (now - tokens_before) if (now is not None and tokens_before is not None) else None
+    total_now = now if now is not None else tokens_total
+
+    log(
+        f"progress: {passed}/{total} passing, {failing} failing "
+        f"({delta:+d} vs previous) | {duration / 60:.1f} min | "
+        f"{fmt_tokens(spent)} tokens this iteration | {fmt_tokens(total_now)} total"
+    )
+    try:
+        OUT.mkdir(exist_ok=True)
+        with (OUT / "progress.jsonl").open("a") as fh:
+            fh.write(json.dumps({
+                "iteration": i, "total": total, "passing": passed, "failing": failing,
+                "delta": delta, "seconds": round(duration, 1),
+                "tokens_iteration": spent, "tokens_total": total_now,
+            }) + "\n")
+    except OSError:
+        pass
+    return total_now
+
+
 # ---------- git helpers ----------
 
 def git(*args, check=True):
@@ -324,6 +390,10 @@ def main():
     # an agent failure.
     ap.add_argument("--baseline-only", action="store_true",
                     help="run setup + baseline checks, then stop before any goose call")
+    ap.add_argument("--resume", action="store_true",
+                    help="continue in a work tree that already holds implementation work: "
+                         "previously-passing tests may not regress, but the suite is no longer "
+                         "required to be red")
     args = ap.parse_args()
 
     OUT.mkdir(exist_ok=True)
@@ -341,7 +411,14 @@ def main():
 
     start_sha = git("rev-parse", "HEAD").strip()
     if git("status", "--porcelain").strip():
-        finish("error", "working tree not clean at start", 1)
+        if args.resume:
+            # A resume exists precisely to keep uncommitted work from a failed
+            # run. Fold it into the start commit instead of refusing to run.
+            log("resume: committing the work tree as the starting point")
+            commit("wip: resume checkpoint")
+            start_sha = git("rev-parse", "HEAD").strip()
+        else:
+            finish("error", "working tree not clean at start", 1)
 
     # Announce what the sub-file lock actually covers. A file that matches a
     # `test_regions` glob but has no marker (e.g. `#[cfg(test)] mod tests` written
@@ -373,6 +450,29 @@ def main():
     broken = [f for f in base["failing"] if f.endswith(SYNTHETIC)]
     if broken:
         finish("error", f"baseline tests are broken (errors, not assertion failures): {broken}", 1)
+
+    # Resume: the point is to keep work from a failed run, where the implementation
+    # already exists and only the (human-fixed) tests changed. So instead of
+    # demanding a red suite, demand that nothing that used to pass has broken.
+    prev_baseline = None
+    baseline_file = OUT / "baseline.json"
+    if args.resume:
+        try:
+            prev_baseline = json.loads(baseline_file.read_text())
+        except (OSError, json.JSONDecodeError):
+            prev_baseline = None
+        if prev_baseline is None:
+            log("resume: no baseline.json from the previous run — falling back to the normal gate")
+    if prev_baseline:
+        before = prev_baseline.get("tests", {})
+        regressions = sorted(
+            t for t, st in base["tests"] if st != "passed" and before.get(t) == "passed"
+        )
+        if regressions:
+            finish("error", f"resume regressed tests that previously passed: {regressions[:5]}", 1)
+        log(f"resume: {len(prev_baseline.get('failing', []))} failed before, "
+            f"{len(base['failing'])} fail now")
+
     missing_spec = spec_ids(Path("SPEC.md")) - covered_ids(base["tests"])
     if missing_spec:
         finish("error", f"SPEC.md sentences with no test: {sorted(missing_spec)}", 1)
@@ -380,6 +480,15 @@ def main():
         finish("green", "all tests already pass at baseline, nothing to build", 0, iterations=0)
     base_ids = {t for t, _ in base["tests"]}
     log(f"baseline: {len(base_ids)} tests, {len(base['failing'])} failing")
+    # Saved so a later --resume can tell "was failing" from "regressed".
+    try:
+        baseline_file.write_text(json.dumps(
+            {"tests": base_status, "failing": sorted(base["failing"])}, indent=2))
+    except OSError:
+        pass
+    tokens_total = goose_tokens_used()
+    if tokens_total is not None:
+        log(f"tokens so far this session: {fmt_tokens(tokens_total)}")
 
     if args.baseline_only:
         finish("ok", f"baseline is usable: {len(base_ids)} tests, "
@@ -390,10 +499,13 @@ def main():
     write_failures(failures_file, base, ["Initial state. Every failure below is expected: make them pass."])
 
     prev_sig, same, violations, goose_fails = None, 0, 0, 0
+    prev_failing = len(base["failing"])
     for i in range(1, lim["max_iterations"] + 1):
         escalated = same >= lim["escalate_after"]
         log(f"iteration {i}/{lim['max_iterations']}" + (" [ESCALATED to strong model]" if escalated else ""))
         notes = []
+        iteration_started = time.time()
+        tokens_before = goose_tokens_used()
 
         rc = run_goose(args.recipe, i, escalated, failures_file, models, goose_to)
         if rc != 0:
@@ -440,6 +552,9 @@ def main():
             notes.append(f"{len(gone)} baseline tests no longer run (deleted or filtered). Example: {gone[0]}")
 
         commit(f"wip: iteration {i}, {len(res['failing'])} failing")
+
+        tokens_total = progress(i, res, prev_failing, iteration_started, tokens_before, tokens_total)
+        prev_failing = len(res["failing"])
 
         if not res["failing"]:
             finish("green", "all tests pass", 0, iterations=i)

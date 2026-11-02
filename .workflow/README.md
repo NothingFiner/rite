@@ -29,6 +29,37 @@ goose recipe: spec-to-tests              run-headless.sh -> orchestrator.py
    check, then stops before the first goose call (~90s, no API cost):
    `.workflow/run-headless.sh feature/<branch> <pr> --baseline-only`
 
+## When a run stops: resume it instead of rebuilding
+A run that ends in `needs_human` keeps its work tree, and the launcher now also
+preserves the work on `origin` as `wip/<branch>` and prints the exact command to
+continue. Resuming reuses the existing tree, folds its uncommitted work into a
+commit, and merges the amended tests from `origin/<branch>` — so a human-fixed
+test does not cost a whole implementation pass.
+
+```
+.workflow/run-headless.sh <branch> <pr> --resume-dir <work-dir>   # or a path inside it
+.workflow/run-headless.sh <branch> <pr> --resume                  # newest work dir
+```
+
+`--resume` changes the baseline gate: a resumed run does **not** have to start red,
+because the implementation already exists. It only refuses to start if a test that
+passed in the previous run now fails (`baseline.json` in `.workflow-out/` records
+that). It also refuses a work tree on the wrong branch, or one left mid-merge.
+
+## Progress and cost, per iteration
+Every iteration logs one line and appends a JSON line to
+`.workflow-out/progress.jsonl`:
+
+```
+[orchestrator 13:03:11] progress: 12/31 passing, 19 failing (+4 vs previous) | 6.4 min | 212k tokens this iteration | 4.81M total
+```
+
+Token counts come from goose's own `usage_ledger` table in
+`~/.local/share/goose/sessions/sessions.db`. In the container `HOME` is
+`/cache/home` and `/cache` is bind-mounted from the host, so the ledger survives
+the run and the totals stay cumulative across runs. If the ledger is missing or
+a goose build has no usage table, the line says `n/a` rather than failing.
+
 ## Host preconditions that will bite you
 - **npm 11 or newer.** The lockfile here is only installable by npm >= 11: npm 10
   reports `EUSAGE` / "Missing: esbuild@0.28.2 from lock file" and, when it tries to
