@@ -840,7 +840,9 @@ def main():
     # result.json — and a stale file makes it announce the PREVIOUS run's reason.
     # "goose failed 3 iterations in a row" for a run that never reached goose is
     # exactly that mistake, so clear it up front and let the absence speak.
-    for stale in ("result.json",):
+    # progress.jsonl goes too: it is a per-run record, and leftover iterations
+    # would be read as this run's history.
+    for stale in ("result.json", "progress.jsonl"):
         try:
             (OUT / stale).unlink()
         except OSError:
