@@ -142,6 +142,7 @@
       @export-plain-text="exportComposable.exportPlainText"
       @export-markdown="exportComposable.exportMarkdown"
       @export-docx="exportComposable.exportDocx"
+      @export-epub="exportComposable.exportEpub"
       @toggle-theme-picker="theme.showThemePicker = !theme.showThemePicker"
       @select-theme="theme.selectTheme"
     />

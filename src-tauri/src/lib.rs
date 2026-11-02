@@ -22,6 +22,7 @@ pub mod commands;
 pub mod diff;
 pub mod document;
 pub mod export_docx;
+pub mod export_epub;
 pub mod export_text;
 pub mod history;
 pub mod llm;
@@ -39,6 +40,7 @@ use commands::{
     split_paragraph, sync_document, undo,
 };
 use export_docx::export_docx;
+use export_epub::export_epub;
 use export_text::export_text;
 use llm::{
     delete_role, list_roles, llm_cancel, llm_chat, llm_chat_stream, llm_list_models, save_role,
@@ -159,6 +161,7 @@ pub fn run() {
             redo,
             export_text,
             export_docx,
+            export_epub,
             list_roles,
             llm_chat,
             llm_chat_stream,
