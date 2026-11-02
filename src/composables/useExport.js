@@ -81,9 +81,31 @@ export function useExport() {
     }
   }
 
-  /// Export the live document as an EPUB. Stub: the save dialog + invoke +
-  /// error-dialog shape must mirror `exportDocx` (see SPEC.md, S-019…S-023).
-  async function exportEpub() {}
+  /// Export the live document as an EPUB `.epub`. Like `exportDocx`, the Rust
+  /// `export_epub` command takes only a `path` (the EPUB is rendered from the
+  /// document in `AppState`), so that alone crosses the wire. The save dialog
+  /// is filtered to `epub` with a title-derived default filename (falling back
+  /// to `Untitled` via `defaultFileName`), a cancelled dialog returns early,
+  /// and invoke failures surface through the same Tauri `message()` error
+  /// dialog the other exporters use.
+  async function exportEpub() {
+    const extension = 'epub'
+    const path = await save({
+      filters: [{ name: 'EPUB', extensions: [extension] }],
+      defaultPath: defaultFileName(extension),
+    })
+    if (!path) return // cancelled
+
+    try {
+      await invoke('export_epub', { path })
+    } catch (e) {
+      console.error('Failed to export epub:', e)
+      await message('Failed to export document: ' + (e?.message || String(e)), {
+        title: 'Rite',
+        type: 'error',
+      })
+    }
+  }
 
   return { exportFile, exportPlainText, exportMarkdown, exportDocx, exportEpub }
 }

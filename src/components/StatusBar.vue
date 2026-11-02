@@ -15,6 +15,7 @@
       <button class="btn-ghost" @click="$emit('exportPlainText')">Export .txt</button>
       <button class="btn-ghost" @click="$emit('exportMarkdown')">Export .md</button>
       <button class="btn-ghost" @click="$emit('exportDocx')">Export .docx</button>
+      <button class="btn-ghost" @click="$emit('exportEpub')">Export .epub</button>
     </div>
     <div class="status-right">
       <div class="theme-picker">
@@ -67,7 +68,7 @@ function swatchBorder(bg) {
   return isLightColor(bg) ? 'rgba(0, 0, 0, 0.35)' : 'rgba(255, 255, 255, 0.35)'
 }
 
-defineEmits(['openFile', 'saveFile', 'saveFileAs', 'newFile', 'importFile', 'exportPlainText', 'exportMarkdown', 'exportDocx', 'toggleThemePicker', 'selectTheme'])
+defineEmits(['openFile', 'saveFile', 'saveFileAs', 'newFile', 'importFile', 'exportPlainText', 'exportMarkdown', 'exportDocx', 'exportEpub', 'toggleThemePicker', 'selectTheme'])
 </script>
 
 <style scoped>
