@@ -31,9 +31,19 @@ goose recipe: spec-to-tests              run-headless.sh -> orchestrator.py
 
 ## Provider preflight (why a run stops before it starts)
 The container starts with an empty `HOME`, so it cannot read `~/.config/goose`
-(provider settings) or the macOS keychain (API keys). The provider name is
-therefore defaulted from your host goose config and printed, but **the API key
-must be exported in the shell that runs the launcher**:
+(provider settings) or the login keychain (API keys). The launcher closes both
+gaps on the host, before the container starts:
+
+1. **Provider name** — defaulted from `~/.config/goose/config.yaml`
+   (`active_provider`). A provider name is not a secret.
+2. **API key** — read from goose's own keychain entry (`security
+   find-generic-password -s goose -a secrets`, a JSON map that `goose configure`
+   wrote) when the variable is not already exported. The key is passed to the
+   container as an environment variable and written nowhere: no `.zshrc` line,
+   no `.env` file. macOS may ask once for permission — choose "Always Allow".
+
+Explicit exports still win, so a CI box or a shell with the variable already set
+behaves as before:
 
 ```
 export OLLAMA_CLOUD_API_KEY=...      # for provider ollama_cloud
