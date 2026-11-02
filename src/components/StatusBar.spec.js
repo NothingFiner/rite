@@ -55,4 +55,44 @@ describe('StatusBar', () => {
     expect(wrapper.emitted('selectTheme')).toBeTruthy()
     expect(wrapper.emitted('selectTheme')[0]).toEqual([0])
   })
+  // SPEC.md S-012..S-015 - what the left-hand side of the status bar shows.
+  //
+  // The document title and the filename are two different facts now that the
+  // title is independent of the file it lives in, so both are shown. The
+  // component owns this rendering: it is handed a title and a basename and
+  // decides what to print, including the `Untitled` fallback for a document
+  // with no title yet.
+  describe('title and filename (SPEC S-012..S-015)', () => {
+    const left = (wrapper) => wrapper.find('.status-left').text()
+
+    it('S-012: shows the document title', () => {
+      const wrapper = mount(StatusBar, { props: { title: 'Chapter One' } })
+
+      expect(left(wrapper)).toContain('Chapter One')
+    })
+
+    it('S-013: shows the basename of the current file, with its extension', () => {
+      const wrapper = mount(StatusBar, {
+        props: { title: 'Chapter One', fileName: 'novel.rite' },
+      })
+
+      expect(left(wrapper)).toContain('novel.rite')
+    })
+
+    it('S-014: shows no filename when the document has no path', () => {
+      const wrapper = mount(StatusBar, { props: { title: 'Chapter One', fileName: '' } })
+
+      expect(left(wrapper)).toContain('Chapter One')
+      // No leftover placeholder: an unsaved document has no filename to show,
+      // and the full path is never shown either.
+      expect(left(wrapper)).not.toMatch(/\.rite\b/)
+      expect(left(wrapper)).not.toMatch(/\//)
+    })
+
+    it('S-015: shows Untitled when the document has no title', () => {
+      const wrapper = mount(StatusBar, { props: { title: '' } })
+
+      expect(left(wrapper)).toContain('Untitled')
+    })
+  })
 })

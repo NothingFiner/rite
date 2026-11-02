@@ -50,9 +50,20 @@ export function useFileIO() {
   /// dialog path always taken — split out so "Save" stays a one-click save to
   /// the current file and "Save As" is the explicit copy/rename-to-new-path.
   async function saveFileAs() {
+    // SPEC.md decision 3: the Save As dialog proposes the current filename when
+    // the document has a path (its basename, extension kept), and the title
+    // only when it does not — 'Untitled' when there is no title either (''
+    // title, no path). After the title became independent of the filename,
+    // seeding the dialog from the title would propose a misleading name for an
+    // existing document (a doc titled "Chapter One" living in draft-v2.rite
+    // should offer draft-v2.rite, not Chapter One.rite).
+    const defaultPath = store.lastPath
+      ? store.lastPath.split(/[\\/]/).pop()
+      : (store.doc?.title || 'Untitled') + '.rite'
+
     const filePath = await save({
       filters: [{ name: 'Rite Document', extensions: ['rite'] }],
-      defaultPath: (store.doc?.title || 'Untitled') + '.rite',
+      defaultPath,
     })
     if (!filePath) return
     try {

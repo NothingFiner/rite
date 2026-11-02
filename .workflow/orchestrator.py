@@ -366,7 +366,7 @@ def covered_ids(tests):
 
 # ---------- goose ----------
 
-def run_goose(recipe, i, escalated, failures_file, models, timeout_s):
+def run_goose(recipe, i, escalated, failures_file, models, timeout_s, attempt=""):
     env = dict(os.environ)
     model = models.get("strong") if escalated else models.get("default")
     if model:
@@ -376,10 +376,14 @@ def run_goose(recipe, i, escalated, failures_file, models, timeout_s):
            "--params", f"escalated={'true' if escalated else 'false'}",
            "--params", f"failures_file={failures_file}"]
     try:
-        with open(OUT / f"goose-iter{i}.log", "w") as fh:
+        with open(OUT / f"goose-iter{i}{attempt}.log", "w") as fh:
             return subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT, env=env, timeout=timeout_s).returncode
     except subprocess.TimeoutExpired:
         return 124
+
+
+def goose_log_path(i, attempt=""):
+    return OUT / f"goose-iter{i}{attempt}.log"
 
 
 # ---------- style: ASD-STE100 (Simplified Technical English) ----------
@@ -761,38 +765,43 @@ def run_describe(cfg, models, res, timeout_s):
 # These patterns are failures the agent cannot fix, so the first one stops the
 # run with a message that names the fix.
 GOOSE_FATAL = [
-    (r"No provider configured",
+    ("env", r"No provider configured",
      "no provider is configured inside the container. The container starts with "
      "an empty HOME, so it cannot read ~/.config/goose/ config. Export "
      "GOOSE_PROVIDER and the provider's API key in the shell that runs "
      ".workflow/run-headless.sh, then run it again"),
-    (r"(?i)invalid api key|incorrect api key|401 unauthorized|\bunauthorized\b",
+    ("env", r"(?i)invalid api key|incorrect api key|401 unauthorized|\bunauthorized\b",
      "the provider rejected the API key"),
-    (r"(?i)failed to load recipe|recipe .{0,80}not found|no recipe",
+    ("env", r"(?i)failed to load recipe|recipe .{0,80}not found|no recipe",
      "the recipe could not be loaded"),
-    (r"(?i)command not found|: goose: not found",
+    ("env", r"(?i)command not found|: goose: not found",
      "the goose binary is not on PATH inside the image"),
-    (r"(?i)model .{0,60}(not found|not available|does not exist)|unknown model",
+    ("model", r"(?i)model .{0,60}(not found|not available|does not exist)|unknown model",
      "the model id in .workflow/config.yaml is not available to the provider"),
 ]
 
 
 def goose_failure_reason(log_path, rc):
-    """A human reason when a goose run failed for a reason the agent cannot fix.
+    """Classify a failed goose run as ("env"|"model", reason), or (None, None).
 
-    Returns None for rc == 0 and for failures worth retrying (a timeout, a
-    crash mid-run), so the caller keeps its retry budget for those.
+    "env": the toolchain cannot run at all (no provider, bad key, missing recipe
+    or binary). "model": a model id the account cannot serve — which is worth
+    distinguishing, because the DEFAULT model being missing is fatal while the
+    STRONG one being missing only means escalation is unavailable.
+
+    Returns (None, None) for rc == 0 and for failures worth retrying (a timeout,
+    a crash mid-run), so the caller keeps its retry budget for those.
     """
     if rc == 0 or rc == 124:          # 124 is our own timeout marker
-        return None
+        return None, None
     try:
         text = Path(log_path).read_text()[-8000:]
     except OSError:
-        return None
-    for pattern, reason in GOOSE_FATAL:
+        return None, None
+    for kind, pattern, reason in GOOSE_FATAL:
         if re.search(pattern, text):
-            return reason
-    return None
+            return kind, reason
+    return None, None
 
 
 def goose_log_tail(log_path, n=3):
@@ -831,7 +840,9 @@ def main():
     # result.json — and a stale file makes it announce the PREVIOUS run's reason.
     # "goose failed 3 iterations in a row" for a run that never reached goose is
     # exactly that mistake, so clear it up front and let the absence speak.
-    for stale in ("result.json",):
+    # progress.jsonl goes too: it is a per-run record, and leftover iterations
+    # would be read as this run's history.
+    for stale in ("result.json", "progress.jsonl"):
         try:
             (OUT / stale).unlink()
         except OSError:
@@ -943,19 +954,38 @@ def main():
     # never started must not count towards escalation: an unchanged failing set
     # after a no-op is not evidence that the model needs a stronger one.
     goose_ok = True
+    # Escalation is a bonus, never a requirement. An empty `models.strong` turns it
+    # off, and a strong model the account cannot serve turns it off the first time
+    # it is tried (see the model-fallback branch below) instead of ending the run.
+    strong_ok = bool(models.get("strong"))
+    if not strong_ok:
+        log("no strong model configured: this run will not escalate")
     for i in range(1, lim["max_iterations"] + 1):
-        escalated = goose_ok and same >= lim["escalate_after"]
+        escalated = goose_ok and strong_ok and same >= lim["escalate_after"]
         log(f"iteration {i}/{lim['max_iterations']}" + (" [ESCALATED to strong model]" if escalated else ""))
         notes = []
         iteration_started = time.time()
         tokens_before = goose_tokens_used()
 
-        log_path = OUT / f"goose-iter{i}.log"
+        log_path = goose_log_path(i)
         rc = run_goose(args.recipe, i, escalated, failures_file, models, goose_to)
+        kind, fatal = goose_failure_reason(log_path, rc)
+        if kind == "model" and escalated:
+            # The strong model can be missing from the account (a plan change, a
+            # weekly limit). That is not a reason to stop: the default model still
+            # works, so repeat this iteration on it and never escalate again.
+            log(f"escalation unavailable: {fatal}")
+            log(f"staying on the default model ({models.get('default')}); "
+                f"set models.strong in .workflow/config.yaml to a model the account has")
+            strong_ok = False
+            escalated = False
+            log_path = goose_log_path(i, "-fallback")
+            rc = run_goose(args.recipe, i, escalated, failures_file, models, goose_to,
+                           attempt="-fallback")
         goose_ok = rc == 0
         if rc != 0:
             goose_fails += 1
-            fatal = goose_failure_reason(log_path, rc)
+            kind, fatal = goose_failure_reason(log_path, rc)
             tail = goose_log_tail(log_path)
             log(f"goose exited {rc}" + (f": {fatal}" if fatal else (f": {tail}" if tail else "")))
             if fatal:

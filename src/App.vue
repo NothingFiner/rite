@@ -128,6 +128,7 @@
 
     <StatusBar
       :title="store.doc?.title || 'Untitled'"
+      :file-name="fileName"
       :save-status="saveStatus"
       :theme="theme.editorTheme"
       :themes="theme.themes"
@@ -339,6 +340,11 @@ const saveStatus = computed(() => {
   if (store.lastPath) return 'Saved'
   return ''
 })
+
+// SPEC decision 7: the status bar shows the file's basename (extension
+// included, e.g. `novel.rite`), never the full path, and nothing while the
+// document has never been saved.
+const fileName = computed(() => store.lastPath ? store.lastPath.split(/[\\/]/).pop() : '')
 
 
 // Chrome gate (S-009 / SPEC drawer rule): while focus / typewriter mode is
