@@ -1,123 +1,117 @@
-# Save As and document title independence
+# SPEC — Native application menu
+
+**Status:** approved. Implement exactly these behaviours; do not weaken or edit the tests.
+
+Replace the status bar's file buttons with a native application menu built in Rust
+(File / Edit / Window), and route the menu's app-owned items back to the frontend as
+`menu` events. The native menu is the single menu on macOS, Windows and Linux.
 
 ## Context
 
-**The bug.** `saveDocument()` in `src/stores/document.js` derives the document title
-from the file path on every save:
+Decisions taken with the user before this branch existed. The implementer needs them;
+they are not visible anywhere else.
 
-```js
-this.doc.title = path.split(/[\\/]/).pop().replace(/\.(fwd|rite)$/, '')
-```
+- **One native menu, all platforms.** Tauri v1 renders a real menu on macOS (system
+  bar), Windows (Win32) and Linux (GTK). The separate in-app "File" popup was rejected,
+  and the status bar's individual file buttons are removed rather than kept alongside.
+- **Markdown stays; PDF never existed.** `Export .md` is implemented and gets a menu
+  item. There is no PDF exporter and none is added.
+- **`New…` already asks for a name.** `onNewFile` runs the save-before guard and then
+  shows `PromptModal`. This feature only moves the entry point; the flow is existing
+  behaviour and must keep working through the menu.
+- **Undo/Redo are app-owned; Cut/Copy/Paste/Select All are native.** `store.undo()`
+  flushes pending typing to Rust before undoing, so native WebKit undo would desync the
+  two. Paste must stay native because `editorDisplay.vue`'s `@paste` handler only runs
+  when the webview raises the event; JavaScript cannot synthesise a paste payload.
+- **The menu owns these accelerators.** `Cmd/Ctrl+N`, `O`, `S`, `Shift+S`, `Z`,
+  `Shift+Z`. The matching branches are removed from `useKeyboardShortcuts`. `Cmd+Y`
+  stays in JS: no menu item carries it, so no double-fire is possible.
+- **Section-title editing is out of scope.** A menu-driven cut/paste has no special
+  lock handling here.
+- **Save As / title independence already landed** (PR #8, in `development`). Saving no
+  longer rewrites `doc.title`. This spec must not re-test that, and must not assume the
+  old coupling.
+- **Transition tests are deliberately absent.** No sentence asserts "the old status-bar
+  buttons are gone"; that is a one-time diff review, not durable behaviour.
 
-That runs for quick Save as well as Save As. Consequences today:
+## Constraints
 
-- The title stored inside a `.rite` file is discarded on the first save. Open a file
-  whose stored title is "Chapter One", press Cmd+S, and the title becomes the filename.
-- The Title field in **General Options → Document Info** (`GeneralOptionsDrawer.vue`,
-  bound to `store.doc.title` with `store.markModified()`) accepts edits that the next
-  save silently throws away.
-- So the document title is not a property of the document; it is a rendering of the
-  last filename used.
-
-**The change.** The title becomes independent of the filename. It is set by the New
-prompt, by opening a file, or by editing it in Document Info. Saving never rewrites it.
-The status bar shows the title *and* the current filename so both remain visible.
-
-### Decisions (already agreed; do not re-litigate in the implementation)
-
-1. Title is independent of filename. Save and Save As never change it.
-2. On the first save of a document with no path, the save dialog proposes the title as
-   the filename. This is a convenience default only — it does not couple the two.
-3. Save As proposes the **current filename** when the document has a path, and the
-   title only when it does not. (After the split, seeding from the title would propose
-   a misleading name.)
-4. Save As **always writes** to the chosen path: modified or not, and whether or not the
-   target exists. There is no app-level "file already exists" confirmation — the native
-   save dialog already confirms replacement, and asking twice is worse than not asking.
-5. Save As to the path the document already has is a plain rewrite. No special case.
-6. The status bar shows the basename **including the extension** (`novel.rite`), which
-   is what Word and Pages show. The full path is not shown.
-7. The status bar shows no filename at all for a document that has never been saved.
-
-### Constraints
-
-- **No Rust change is needed.** `Document.title` is a serialised field of the `.rite`
-  file (`src-tauri/src/document.rs`) and `open_document` returns it verbatim. Making the
-  title independent makes it round-trip correctly; the Rust side already behaves.
-- **Existing tests inverted, not weakened.** `src/composables/useFileIO.test.js` holds
-  two assertions that encode the old coupling, and both are reversed on purpose:
-  - the title assertion expects `novel-copy` after Save As; under this spec it expects
-    the title to be unchanged.
-  - the Save As dialog assertion expects `defaultPath: 'Novel.rite'` for a document
-    titled "Novel" already saved as `novel.rite`; under decision 3 it expects
-    `'novel.rite'`, because the proposal is the current filename when a path exists.
-
-  Both reversals are intentional, dated decisions, not loosened tests. Anything else in
-  these files stays as it is.
-- The status bar receives the filename as a new `fileName` prop. `App.vue` wiring is
-  implementation, not fixture.
-- Do not touch the native menu: that is the next feature, and it depends on the rules
-  decided here.
-
-### Out of scope
-
-- Any native menu / bottom-bar restructuring.
-- Renaming a document from the status bar (Document Info already does it).
-- Changing how `open` seeds a document's title.
+- **The test seam is plain data.** Tauri v1's `Menu`, `Submenu`, `CustomMenuItem` and
+  `MenuItem` are plain structures with public fields, and `Menu` exposes no getters for
+  a built menu. So the menu is defined as data (`MenuNode` values) and a builder
+  consumes it. Rust tests assert the data and the built structure.
+- **S-007's observable proxy.** `tauri::Builder`'s menu field is private, so no test can
+  prove installation directly. `app_menu()` is the value `run()` passes to `.menu()`;
+  the test proves it carries the canonical definition. The one-line wiring in `run()` is
+  a review checkpoint.
+- **S-025's native items.** `MenuItem::Quit` and `MenuItem::Hide` are native: the OS
+  supplies their accelerators, and a native item cannot take a custom one. The sentence
+  records the expected binding (⌘Q / ⌘H); the data carries the native kind, not a
+  settable accelerator.
+- **Playwright cannot click a native menu.** E2E proves the event→action wiring by
+  dispatching the same `menu` event the Rust side emits, and that the action runs with
+  no button clicked. The menu itself is verified at the Rust layer and by hand.
+- **`e2e/epub-export.spec.js` is migrated, not deleted.** It clicked the status-bar
+  Export button that this feature removes. Its S-ID becomes this spec's S-023 and its
+  assertions stay identical; the trigger becomes the `menu` event. This is an
+  intentional migration of coverage, not a weakened test.
 
 ## Sentences
 
-**Unit — save and title independence**
+### Rust — menu data and construction
 
-**S-001** (unit) — Saving to the current path should write the document without changing
-its title.
+**S-001** (rust) — It should expose the File menu as ordered plain data where each node is either a separator or an item with a stable id and a label.
 
-**S-002** (unit) — Save As should write the document to the chosen path and make
-subsequent quick saves use that path.
+**S-002** (rust) — The File menu should contain, in order: `New…`, `Open…`, separator, `Save`, `Save As…`, separator, `Import…`, `Export .txt`, `Export .md`, `Export .docx`, `Export .epub`.
 
-**S-003** (unit) — Save As should not change the document title.
+**S-003** (rust) — Every non-separator id should be unique within the File menu.
 
-**S-004** (unit) — Save As should write over a path that already exists without an
-additional confirmation.
+**S-004** (rust) — The ids should be `new`, `open`, `save`, `save_as`, `import`, `export_plain_text`, `export_markdown`, `export_docx`, `export_epub`.
 
-**S-005** (unit) — Save As on an unmodified document should still write to the chosen
-path.
+**S-005** (rust) — It should attach `CmdOrCtrl+N`, `CmdOrCtrl+O`, `CmdOrCtrl+S` and `CmdOrCtrl+Shift+S` to New, Open, Save and Save As, and no accelerator to the remaining File items.
 
-**S-006** (unit) — Save As to the path the document already has should still write the
-document.
+**S-006** (rust) — It should build a native menu with File, Edit and Window submenus, where the File submenu holds one entry per data node in the same order and a native separator wherever the data has one.
 
-**S-007** (unit) — The Save As dialog should propose the current filename when the
-document has a path, and the document title when it does not.
+**S-007** (rust) — It should install that menu on the app builder, replacing the default menu.
 
-**S-008** (unit) — Opening a document should adopt the title stored in the file.
+**S-008** (rust) — It should emit one window event named `menu` carrying the item id when an app-owned item is activated.
 
-**S-009** (unit) — Cancelling the Save As dialog should leave the path and the title
-unchanged.
+**S-009** (rust) — It should emit no event when a separator is activated.
 
-**Rust**
+**S-010** (rust) — It should emit nothing and not panic when an event arrives for an id it does not own.
 
-**S-010** (rust) — Saving a document and reopening it should return the same title.
+### Rust — Edit, Window and the application menu
 
-**Unit — Document Info**
+**S-011** (rust) — The Edit submenu should contain `Undo`, `Redo`, separator, `Cut`, `Copy`, `Paste`, `Select All`, in that order.
 
-**S-011** (unit) — Editing the title in Document Info should mark the document as
-modified and keep the new title after a save.
+**S-012** (rust) — Undo and Redo should be app-owned items with ids `undo` and `redo` and accelerators `CmdOrCtrl+Z` and `CmdOrCtrl+Shift+Z`.
 
-**Unit — status bar**
+**S-013** (rust) — Cut, Copy, Paste and Select All should be native predefined items that emit nothing, so the webview handles them.
 
-**S-012** (unit) — The status bar should show the document title.
+**S-014** (rust) — The Window submenu should contain `Minimize`, `Fullscreen` and `Close Window`, in that order.
 
-**S-013** (unit) — The status bar should show the basename of the current file,
-including its extension, when the document has a path.
+**S-015** (rust) — Every Window item should be native and emit nothing.
 
-**S-014** (unit) — The status bar should show no filename when the document has no path.
+**S-025** (rust) — It should put an application submenu first, containing native `Quit rite` and `Hide rite` items that emit nothing; macOS supplies their `Cmd+Q` and `Cmd+H` accelerators.
 
-**S-015** (unit) — The status bar should show `Untitled` when the document has no title.
+### Frontend — unit
 
-**e2e**
+**S-016** (unit) — It should run the matching action when a `menu` event arrives with a known id.
 
-**S-016** (e2e) — Saving a new document should show its title and the chosen filename in
-the status bar.
+**S-017** (unit) — It should ignore a `menu` event with an unknown id without throwing.
 
-**S-017** (e2e) — Save As to a new name should change the filename shown and leave the
-title unchanged.
+**S-018** (unit) — A `menu` event with id `undo` should call the document store's undo, and `redo` its redo.
+
+**S-019** (unit) — A `menu` event with id `new` should show the name prompt only after the unsaved-changes guard.
+
+**S-020** (unit) — Cancelling the name prompt should leave the document unchanged.
+
+**S-021** (unit) — The keyboard shortcuts should no longer handle Cmd/Ctrl+S, Cmd/Ctrl+Shift+S, Cmd/Ctrl+Z or Cmd/Ctrl+Shift+Z, because the menu owns them.
+
+### e2e
+
+**S-022** (e2e) — A `menu` event with id `save` should save the document with no button clicked.
+
+**S-023** (e2e) — A `menu` event with id `export_epub` should open the save dialog and invoke `export_epub` with the chosen path. *(migrated from `e2e/epub-export.spec.js`; assertions unchanged)*
+
+**S-024** (e2e) — A `menu` event with id `save_as` should open the save dialog and write the document to the chosen path, and leave the document title unchanged.

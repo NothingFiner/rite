@@ -26,6 +26,7 @@ pub mod export_epub;
 pub mod export_text;
 pub mod history;
 pub mod llm;
+pub mod menu;
 pub mod retrieval;
 pub mod sidecar;
 pub mod state;

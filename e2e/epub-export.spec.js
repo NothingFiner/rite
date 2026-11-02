@@ -5,8 +5,13 @@ import { test, expect } from '@playwright/test'
 //
 // The Rust exporter itself is covered by src-tauri/tests/epub_export.rs — jsdom
 // and a mocked IPC layer cannot see the bytes. What only a real browser can show
-// is that the control exists in the status bar and that clicking it walks the
-// whole chain: save dialog -> invoke('export_epub') with the chosen path.
+// is that the menu event walks the whole chain: save dialog -> invoke('export_epub')
+// with the chosen path.
+//
+// MIGRATED (SPEC.md S-023): this test used to click the status bar's Export
+// button, which the native-menu feature removes. Playwright cannot click a native
+// menu, so it dispatches the same `menu` window event Rust emits. The assertions
+// are unchanged.
 //
 // IPC mocking follows e2e/focus-mode.spec.js, with one wrinkle: the native save
 // dialog does NOT arrive as `cmd: 'saveDialog'` at the top level. dialog.save()
@@ -68,6 +73,14 @@ function installIpcMock(page, savedPath) {
         if (req.cmd === 'tauri' && req.__tauriModule === 'Dialog' && req.message?.cmd === 'saveDialog') {
           return ok(path)
         }
+        // The app listens for the menu event through the Event module.
+        if (req.cmd === 'tauri' && req.__tauriModule === 'Event' && req.message?.cmd === 'listen') {
+          if (req.message.event === 'menu') {
+            window.__emitMenu = (itemId) =>
+              window['_' + req.message.handler]({ event: 'menu', id: 1, payload: itemId })
+          }
+          return ok(1)
+        }
         if (req.cmd === 'get_document') return ok(doc)
         if (req.cmd === 'list_roles') return ok([])
         return ok(null)
@@ -79,15 +92,16 @@ function installIpcMock(page, savedPath) {
 }
 
 test.describe('epub export', () => {
-  test('S-024: the status bar exports the document as .epub', async ({ page }) => {
+  test('S-023: a menu event exports the document as .epub', async ({ page }) => {
     await installIpcMock(page, '/tmp/novel.epub')
     await page.goto('/')
     await page.waitForSelector('.editor-sheet .paragraph', { timeout: 5000 })
 
-    const button = page.locator('.statusbar button:has-text("Export .epub")')
-    await expect(button).toBeVisible()
+    await expect
+      .poll(() => page.evaluate(() => typeof window.__emitMenu), { timeout: 3000 })
+      .toBe('function')
 
-    await button.click()
+    await page.evaluate(() => window.__emitMenu('export_epub'))
 
     await expect
       .poll(

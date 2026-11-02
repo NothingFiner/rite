@@ -148,3 +148,55 @@ describe('useKeyboardShortcuts — focus mode', () => {
     expect(deps.focusMode.active.value).toBe(true)
   })
 })
+
+// The native menu owns these accelerators (SPEC.md S-021). If both the menu and
+// this handler act on the same key, a single Cmd+Z can undo twice — silent data
+// loss. So the four cases below must do nothing at all.
+describe('useKeyboardShortcuts — the menu owns the file shortcuts', () => {
+  let wrapper
+
+  afterEach(() => {
+    wrapper?.unmount()
+    wrapper = null
+    document.body.innerHTML = ''
+  })
+
+  it('S-021: should leave Cmd/Ctrl+S to the menu', () => {
+    const deps = createDeps()
+    wrapper = mountWith(deps)
+
+    press({ key: 's', metaKey: true })
+
+    expect(deps.fileIO.saveFile).not.toHaveBeenCalled()
+  })
+
+  it('S-021: should leave Cmd/Ctrl+Shift+S to the menu', () => {
+    const deps = createDeps()
+    wrapper = mountWith(deps)
+
+    press({ key: 'S', metaKey: true, shiftKey: true })
+
+    expect(deps.fileIO.saveFileAs).not.toHaveBeenCalled()
+  })
+
+  it('S-021: should leave Cmd/Ctrl+Z to the menu', () => {
+    const deps = createDeps()
+    wrapper = mountWith(deps)
+
+    press({ key: 'z', metaKey: true })
+
+    expect(deps.store.undo).not.toHaveBeenCalled()
+  })
+
+  it('S-021: should leave Cmd/Ctrl+Shift+Z to the menu', () => {
+    const deps = createDeps()
+    wrapper = mountWith(deps)
+
+    // Both spellings: the old handler matched lowercase `z` with Shift, while
+    // most layouts report `Z`. Neither may reach the store once the menu owns it.
+    press({ key: 'z', metaKey: true, shiftKey: true })
+    press({ key: 'Z', metaKey: true, shiftKey: true })
+
+    expect(deps.store.redo).not.toHaveBeenCalled()
+  })
+})

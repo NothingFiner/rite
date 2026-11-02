@@ -1,15 +1,14 @@
 import { test, expect } from '@playwright/test'
 
-// Save / Save As end to end (roadmap: document title independence; SPEC.md
-// S-016, S-017), in real Chromium.
+// Save / Save As end to end (SPEC.md S-022, S-024), in real Chromium.
 //
-// The unit layer (src/composables/useFileIO.test.js, src/components/StatusBar.spec.js)
-// covers the composable and the component in isolation. What only a browser can
-// show is that the two are actually WIRED: that a real click on the status bar
-// runs the real save path and that the store's new filename reaches the bar the
-// writer is looking at.
+// MIGRATED: this file used to click the status bar's Save and Save As buttons.
+// The native-menu feature removes those buttons, and Playwright cannot click a
+// native menu, so each test dispatches the same `menu` window event Rust emits.
+// Every assertion is unchanged — the save path still runs for real and the
+// store's filename still has to reach the bar the writer is looking at.
 //
-// IPC mocking follows e2e/epub-export.spec.js. Two wrinkles here:
+// IPC mocking follows e2e/epub-export.spec.js. Three wrinkles here:
 //
 //   1. The native save dialog is not `cmd: 'saveDialog'` at the top level.
 //      `save()` goes through `invokeTauriCommand`, so `__TAURI_IPC__` sees
@@ -19,6 +18,9 @@ import { test, expect } from '@playwright/test'
 //   2. The dialog must answer DIFFERENT paths on the first and the second call
 //      (Save, then Save As), so the mock holds a queue and shifts one path per
 //      dialog. Each test gets a fresh page, so each test gets a fresh queue.
+//   3. `listen('menu', …)` arrives as `__tauriModule: 'Event'` with
+//      `message.cmd: 'listen'` and the transformed callback id. The mock stores
+//      it and exposes `window.__emitMenu(id)`.
 
 function installIpcMock(page, dialogPaths) {
   return page.addInitScript((paths) => {
@@ -70,6 +72,13 @@ function installIpcMock(page, dialogPaths) {
         ) {
           return ok(queue.length ? queue.shift() : null)
         }
+        if (req.cmd === 'tauri' && req.__tauriModule === 'Event' && req.message?.cmd === 'listen') {
+          if (req.message.event === 'menu') {
+            window.__emitMenu = (itemId) =>
+              window['_' + req.message.handler]({ event: 'menu', id: 1, payload: itemId })
+          }
+          return ok(1)
+        }
         if (req.cmd === 'get_document') return ok(doc)
         if (req.cmd === 'list_roles') return ok([])
         return ok(null)
@@ -84,10 +93,10 @@ async function open(page, dialogPaths) {
   await installIpcMock(page, dialogPaths)
   await page.goto('/')
   await page.waitForSelector('.editor-sheet .paragraph', { timeout: 5000 })
+  await expect
+    .poll(() => page.evaluate(() => typeof window.__emitMenu), { timeout: 3000 })
+    .toBe('function')
 }
-
-/// The status bar's exact-text button. `has-text` would match "Save As" too.
-const button = (page, label) => page.locator(`.statusbar button:text-is("${label}")`)
 
 async function savedTo(page, path) {
   await expect
@@ -99,10 +108,10 @@ async function savedTo(page, path) {
 }
 
 test.describe('save and save as', () => {
-  test('S-016: saving a new document shows its title and the chosen filename', async ({ page }) => {
+  test('S-022: a menu event with id save should save the document with no button clicked', async ({ page }) => {
     await open(page, ['/tmp/novel.rite'])
 
-    await button(page, 'Save').click()
+    await page.evaluate(() => window.__emitMenu('save'))
     await savedTo(page, '/tmp/novel.rite')
 
     const bar = page.locator('.statusbar')
@@ -112,15 +121,15 @@ test.describe('save and save as', () => {
     await expect(bar).toContainText('novel.rite')
   })
 
-  test('S-017: Save As to a new name changes the filename and leaves the title alone', async ({ page }) => {
+  test('S-024: a menu event with id save_as should write to the chosen path and keep the title', async ({ page }) => {
     // Save first, so the document has a path and Save As has a filename to
     // start from. Then Save As to a different name.
     await open(page, ['/tmp/novel.rite', '/tmp/renamed.rite'])
 
-    await button(page, 'Save').click()
+    await page.evaluate(() => window.__emitMenu('save'))
     await savedTo(page, '/tmp/novel.rite')
 
-    await button(page, 'Save As').click()
+    await page.evaluate(() => window.__emitMenu('save_as'))
     await savedTo(page, '/tmp/renamed.rite')
 
     const bar = page.locator('.statusbar')
