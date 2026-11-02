@@ -16,6 +16,14 @@ parameters:
 instructions: |
   Implement exactly one work unit.
 
+  ## Coding standards (read these first)
+  The project's coding standards are copied into `.workflow-out/standards/` before every
+  run. Read every `.md` file there before you edit anything, in filename order: the files
+  compose, and when two disagree the later one wins. They are part of the task, not advice —
+  naming, comment style, token use, error handling and test posture all follow them.
+  If the directory is missing or empty, continue without them and say so in your summary.
+
+  ## Rules of the work
   - Edit only the owned paths. If you need a change elsewhere, stop and say so in your summary.
   - Never touch tests, test configs, SPEC.md, .github or .workflow. Never skip or weaken tests.
   - Implement real behaviour. No hardcoded expected values, no special-casing test inputs.

@@ -210,6 +210,50 @@ fi
 git -C "$WORK/repo" fetch --quiet origin "+refs/heads/$BASE:refs/heads/$BASE" 2>/dev/null \
   || echo "warning: could not fetch $BASE into the clone; the PR description will lack the diff" >&2
 
+# Coding standards for the coder. The rules live in a separate repo (see
+# `standards:` in config.yaml); they are COPIED into the work tree on every run
+# rather than vendored into this one, so the coder always reads the current
+# rules and there is nothing here to drift out of date. STANDARDS_DIR overrides
+# the path. A missing tree is not fatal — it is reported and the run continues.
+python3 - "$WORK/repo" <<'STANDARDS_COPY'
+import os, shutil, sys
+from pathlib import Path
+import yaml
+
+repo = Path(sys.argv[1])
+# Clear unconditionally: a stale copy must not survive a run that ships no
+# standards, or the coder would read last run's rules.
+out = repo / ".workflow-out" / "standards"
+if out.exists():
+    shutil.rmtree(out)
+
+cfg = (yaml.safe_load((repo / ".workflow/config.yaml").read_text()) or {}).get("standards") or {}
+if not cfg.get("enabled", False):
+    print("standards: disabled by config")
+    raise SystemExit(0)
+
+source = Path(os.path.expanduser(os.environ.get("STANDARDS_DIR") or cfg.get("dir") or ""))
+if not source.is_dir():
+    print(f"standards: {source} is not a directory — the coder runs without them")
+    raise SystemExit(0)
+
+out.mkdir(parents=True)
+copied, missing = [], []
+for index, name in enumerate(cfg.get("files") or [], start=1):
+    candidate = source / name
+    if candidate.is_file():
+        # Numbered so that filename order IS composition order: the coder is told
+        # "later file wins", and alphabetical order would not deliver that
+        # (universal.md would sort last instead of first).
+        shutil.copy2(candidate, out / f"{index:02d}-{Path(name).name}")
+        copied.append(name)
+    else:
+        missing.append(name)
+print(f"standards: {len(copied)} file(s) into {out.relative_to(repo)}: {', '.join(copied) or 'none'}")
+if missing:
+    print(f"standards: NOT FOUND in {source}: {', '.join(missing)}")
+STANDARDS_COPY
+
 # Preflight: prove the bind mount really crosses into the VM before spending
 # minutes on clone/setup/goose. Costs ~1s and turns a silent empty mount into a
 # one-line explanation.

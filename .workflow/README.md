@@ -29,6 +29,29 @@ goose recipe: spec-to-tests              run-headless.sh -> orchestrator.py
    check, then stops before the first goose call (~90s, no API cost):
    `.workflow/run-headless.sh feature/<branch> <pr> --baseline-only`
 
+## Coding standards the coder reads
+The coder is handed the project's coding standards before it writes code. They are
+**copied in at launch**, never vendored here, so the copy cannot drift from the source:
+
+```yaml
+standards:
+  enabled: true
+  dir: ~/Projects/standards-mcp/rules     # override with STANDARDS_DIR
+  files: [universal.md, css.md, projects/rite.md]
+```
+
+The launcher copies those files into `.workflow-out/standards/` as `01-universal.md`,
+`02-css.md`, `03-rite.md` — numbered so that filename order is composition order, because
+the coder is told "later file wins". `.workflow-out` is gitignored and excluded from the
+review diff, so nothing enters the repository.
+
+A missing rules tree, a missing file or `enabled: false` is not fatal: the launcher says so
+and the coder runs without them. The directory is cleared at the start of every run, so a
+disabled run cannot inherit last run's rules.
+
+Only the coder sub-recipe reads them. The planner still plans from SPEC.md and the failing
+tests; the PR-description agent is governed by ASD-STE100 instead.
+
 ## Provider preflight (why a run stops before it starts)
 The container starts with an empty `HOME`, so it cannot read `~/.config/goose`
 (provider settings) or the login keychain (API keys). The launcher closes both
