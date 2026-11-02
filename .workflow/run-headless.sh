@@ -129,6 +129,40 @@ print(cfg.get("active_provider") or "")
   fi
 fi
 
+# goose stores its secrets in the login keychain (service "goose", account
+# "secrets") as a JSON map — that is where `goose configure` put them. Reuse that
+# entry instead of asking you to keep the key in ~/.zshrc: it is read for this one
+# run, passed to the container as an environment variable, and written nowhere.
+# macOS may ask once for permission; choose "Always Allow".
+#
+# Nothing is printed but the variable NAME. The key itself must not appear in a
+# terminal scrollback or in the workflow logs.
+KEY_VAR=""
+case "${GOOSE_PROVIDER:-}" in
+  ollama_cloud) KEY_VAR=OLLAMA_CLOUD_API_KEY ;;
+  ollama)       KEY_VAR=OLLAMA_API_KEY ;;
+  anthropic)    KEY_VAR=ANTHROPIC_API_KEY ;;
+  openai)       KEY_VAR=OPENAI_API_KEY ;;
+esac
+if [ -n "$KEY_VAR" ] && [ -z "${!KEY_VAR:-}" ]; then
+  KEYCHAIN_BLOB="$(security find-generic-password -s goose -a secrets -w 2>/dev/null || true)"
+  if [ -n "$KEYCHAIN_BLOB" ]; then
+    KEYCHAIN_VALUE="$(printf '%s' "$KEYCHAIN_BLOB" | python3 -c '
+import json, sys
+try:
+    secrets = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+if isinstance(secrets, dict) and isinstance(secrets.get(sys.argv[1]), str):
+    print(secrets[sys.argv[1]])
+' "$KEY_VAR" 2>/dev/null || true)"
+    if [ -n "$KEYCHAIN_VALUE" ]; then
+      export "$KEY_VAR=$KEYCHAIN_VALUE"
+      echo "provider key: $KEY_VAR read from the login keychain (goose's own entry)"
+    fi
+  fi
+fi
+
 PREFLIGHT_OUT="$(docker run --rm -e HOME=/cache/home \
       -e GOOSE_PROVIDER -e ANTHROPIC_API_KEY -e OPENAI_API_KEY \
       -e OLLAMA_API_KEY -e OLLAMA_CLOUD_API_KEY \
