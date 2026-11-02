@@ -753,6 +753,57 @@ def run_describe(cfg, models, res, timeout_s):
         log(f"pr description: no usable title ({title!r}), leaving the PR title unchanged")
     return out_file
 
+# ---------- goose failures ----------
+
+# A non-zero goose exit does not say WHY. Retrying a broken toolchain three
+# times, escalating to a stronger model that cannot help, and then reporting
+# "goose failed 3 iterations in a row" blames the agent for an operator error.
+# These patterns are failures the agent cannot fix, so the first one stops the
+# run with a message that names the fix.
+GOOSE_FATAL = [
+    (r"No provider configured",
+     "no provider is configured inside the container. The container starts with "
+     "an empty HOME, so it cannot read ~/.config/goose/ config. Export "
+     "GOOSE_PROVIDER and the provider's API key in the shell that runs "
+     ".workflow/run-headless.sh, then run it again"),
+    (r"(?i)invalid api key|incorrect api key|401 unauthorized|\bunauthorized\b",
+     "the provider rejected the API key"),
+    (r"(?i)failed to load recipe|recipe .{0,80}not found|no recipe",
+     "the recipe could not be loaded"),
+    (r"(?i)command not found|: goose: not found",
+     "the goose binary is not on PATH inside the image"),
+    (r"(?i)model .{0,60}(not found|not available|does not exist)|unknown model",
+     "the model id in .workflow/config.yaml is not available to the provider"),
+]
+
+
+def goose_failure_reason(log_path, rc):
+    """A human reason when a goose run failed for a reason the agent cannot fix.
+
+    Returns None for rc == 0 and for failures worth retrying (a timeout, a
+    crash mid-run), so the caller keeps its retry budget for those.
+    """
+    if rc == 0 or rc == 124:          # 124 is our own timeout marker
+        return None
+    try:
+        text = Path(log_path).read_text()[-8000:]
+    except OSError:
+        return None
+    for pattern, reason in GOOSE_FATAL:
+        if re.search(pattern, text):
+            return reason
+    return None
+
+
+def goose_log_tail(log_path, n=3):
+    """The last non-blank lines of a goose log, so the operator sees the error
+    on the console instead of having to open the file."""
+    try:
+        lines = [l.strip() for l in Path(log_path).read_text().splitlines() if l.strip()]
+    except OSError:
+        return ""
+    return " | ".join(lines[-n:])
+
 
 # ---------- main ----------
 
@@ -878,19 +929,34 @@ def main():
 
     prev_sig, same, violations, goose_fails = None, 0, 0, 0
     prev_failing = len(base["failing"])
+    # Whether the previous iteration's goose run actually completed. A run that
+    # never started must not count towards escalation: an unchanged failing set
+    # after a no-op is not evidence that the model needs a stronger one.
+    goose_ok = True
     for i in range(1, lim["max_iterations"] + 1):
-        escalated = same >= lim["escalate_after"]
+        escalated = goose_ok and same >= lim["escalate_after"]
         log(f"iteration {i}/{lim['max_iterations']}" + (" [ESCALATED to strong model]" if escalated else ""))
         notes = []
         iteration_started = time.time()
         tokens_before = goose_tokens_used()
 
+        log_path = OUT / f"goose-iter{i}.log"
         rc = run_goose(args.recipe, i, escalated, failures_file, models, goose_to)
+        goose_ok = rc == 0
         if rc != 0:
             goose_fails += 1
-            notes.append(f"goose exited with code {rc} on the previous iteration.")
+            fatal = goose_failure_reason(log_path, rc)
+            tail = goose_log_tail(log_path)
+            log(f"goose exited {rc}" + (f": {fatal}" if fatal else (f": {tail}" if tail else "")))
+            if fatal:
+                # Nothing is wrong with the tests or the work tree. Stop now:
+                # another iteration would repeat the same failure and cost the
+                # operator another model round trip to learn nothing.
+                finish("error", f"goose cannot run: {fatal}", 1, iterations=i, goose_exit=rc)
+            notes.append(f"goose exited with code {rc} on the previous iteration. {tail}".strip())
             if goose_fails >= 3:
-                finish("error", "goose failed 3 iterations in a row (see goose-iter*.log)", 1, iterations=i)
+                finish("error", f"goose failed 3 iterations in a row (exit {rc}): {tail or 'see goose-iter*.log'}",
+                       1, iterations=i, goose_exit=rc)
         else:
             goose_fails = 0
 
@@ -950,7 +1016,7 @@ def main():
                    pr_description=str(body) if body else None)
 
         sig = hashlib.sha1("\n".join(sorted(res["failing"])).encode()).hexdigest()
-        same = same + 1 if sig == prev_sig else 1
+        same = same + 1 if (sig == prev_sig and goose_ok) else 1
         prev_sig = sig
         log(f"{len(res['failing'])} failing, same failing set for {same} iteration(s)")
         if same >= lim["escalate_after"] + lim["strong_attempts"]:

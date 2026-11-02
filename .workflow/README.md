@@ -29,6 +29,23 @@ goose recipe: spec-to-tests              run-headless.sh -> orchestrator.py
    check, then stops before the first goose call (~90s, no API cost):
    `.workflow/run-headless.sh feature/<branch> <pr> --baseline-only`
 
+## Provider preflight (why a run stops before it starts)
+The container starts with an empty `HOME`, so it cannot read `~/.config/goose`
+(provider settings) or the macOS keychain (API keys). The provider name is
+therefore defaulted from your host goose config and printed, but **the API key
+must be exported in the shell that runs the launcher**:
+
+```
+export OLLAMA_CLOUD_API_KEY=...      # for provider ollama_cloud
+export GOOSE_PROVIDER=ollama_cloud   # only if it is not your host default
+```
+
+The launcher checks this in the image before cloning and exits 5 with the reason
+if it cannot reach a model. If one gets past it anyway, the orchestrator reads
+the goose log, recognises "No provider configured" (and a bad key, a bad model
+id, a missing recipe) and stops on the first iteration with that reason instead
+of retrying three times, escalating to the strong model, and blaming the agent.
+
 ## When a run stops: resume it instead of rebuilding
 A run that ends in `needs_human` keeps its work tree, and the launcher now also
 preserves the work on `origin` as `wip/<branch>` and prints the exact command to
