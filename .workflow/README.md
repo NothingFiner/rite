@@ -29,6 +29,23 @@ goose recipe: spec-to-tests              run-headless.sh -> orchestrator.py
    check, then stops before the first goose call (~90s, no API cost):
    `.workflow/run-headless.sh feature/<branch> <pr> --baseline-only`
 
+## Provider preflight (why a run stops before it starts)
+The container starts with an empty `HOME`, so it cannot read `~/.config/goose`
+(provider settings) or the macOS keychain (API keys). The provider name is
+therefore defaulted from your host goose config and printed, but **the API key
+must be exported in the shell that runs the launcher**:
+
+```
+export OLLAMA_CLOUD_API_KEY=...      # for provider ollama_cloud
+export GOOSE_PROVIDER=ollama_cloud   # only if it is not your host default
+```
+
+The launcher checks this in the image before cloning and exits 5 with the reason
+if it cannot reach a model. If one gets past it anyway, the orchestrator reads
+the goose log, recognises "No provider configured" (and a bad key, a bad model
+id, a missing recipe) and stops on the first iteration with that reason instead
+of retrying three times, escalating to the strong model, and blaming the agent.
+
 ## When a run stops: resume it instead of rebuilding
 A run that ends in `needs_human` keeps its work tree, and the launcher now also
 preserves the work on `origin` as `wip/<branch>` and prints the exact command to
@@ -45,6 +62,66 @@ test does not cost a whole implementation pass.
 because the implementation already exists. It only refuses to start if a test that
 passed in the previous run now fails (`baseline.json` in `.workflow-out/` records
 that). It also refuses a work tree on the wrong branch, or one left mid-merge.
+
+## The pull-request description
+When the suite goes green the orchestrator runs `.workflow/recipes/describe-changes.yaml`
+once: a fresh agent reads the diff against the base branch and writes a PR title and a
+body that explains the code change. It is a separate call, not the builder — the builder
+works per iteration and never sees the finished state, so it would describe its intent
+rather than the result.
+
+The agent writes the prose; the orchestrator appends the measured facts (per-layer test
+counts, the diffstat, and the approved spec in a collapsible block) so those cannot be
+narrated. The container has no GitHub token, so it writes
+`.workflow-out/pr-description.md` and `.workflow-out/pr-title.txt` and the host applies
+them with `gh pr edit`.
+
+It never fails a run. Disabled config, a missing recipe, missing goose, a timeout, or a
+body under 200 characters all fall back to a measured summary of the diff, and an
+exception in the step is caught. The agent is not allowed to change the code: its edits
+are reverted, but only when the tree was clean before it ran, so nothing pre-existing is
+ever destroyed. `--no-describe` skips the step to save one call on success. Tune it in
+`config.yaml`:
+
+```yaml
+pr_description:
+  enabled: true
+  recipe: .workflow/recipes/describe-changes.yaml
+  model: ""          # blank = models.default; this job does not need the strong model
+  max_patch_kb: 120  # the diffstat is always complete, only the patch is capped
+  style:
+    standard: asd-ste100
+    target_compliance: 0.8
+    max_words_per_sentence: 25
+    retry_below_target: true
+```
+
+### Style: ASD-STE100
+The description and title follow ASD-STE100 Simplified Technical English: one fact per
+sentence, active voice, simple present tense, at most 25 words per sentence, one word for
+one thing, no contractions, no nominalisations, no filler. Technical names are exempt and
+stay as the code writes them.
+
+The target is about 80%, not 100%. STE is a controlled language with a restricted
+dictionary, and prose bent all the way into it stops explaining the code, which is the
+only reason the section exists.
+
+The orchestrator measures the agent's prose and logs the score:
+
+```
+style: 82% STE of 31 sentences (meets the 80% target); 6 flagged
+style: - 34 words: On green, the orchestrator runs `...` once: a fresh agent reads ...
+style: - passive: Patch delivery is capped (`max_patch_kb`, default 120) ...
+```
+
+The checks are the mechanical part of STE — sentence length, a passive-voice pattern,
+contractions, nominalisations and a banned-word list. They are a proxy, not a
+certification: there is no dictionary check and no part-of-speech tagging.
+
+A draft below the target gets **one** rewrite pass, with the flagged sentences passed back
+as `style_notes`. The rewrite is accepted only when it scores better, so a rewrite cannot
+silently lose detail. `retry_below_target: false` turns the pass off and keeps the
+measurement.
 
 ## Progress and cost, per iteration
 Every iteration logs one line and appends a JSON line to
