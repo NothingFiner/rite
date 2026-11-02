@@ -532,6 +532,10 @@ def run_describe(cfg, models, res, timeout_s):
     # "this was already here". Reverting everything untracked would delete files that
     # have nothing to do with the agent.
     before_untracked = untracked_snapshot()
+    # And snapshot the tracked state: if the tree was already dirty, changes cannot be
+    # attributed to the agent, so the revert must not run at all. Reverting in that case
+    # destroys work the step never touched.
+    clean_before = not git("status", "--porcelain", "--", ".", check=False).strip()
     started = time.time()
     log("pr description: reviewer agent is describing the change")
     try:
@@ -545,14 +549,27 @@ def run_describe(cfg, models, res, timeout_s):
         log(f"pr description: cannot run goose ({e})")
         rc = 127
 
-    # The description step must not change the code. The tree is clean here (the final
-    # iteration was just committed), so anything git reports is its doing.
-    dirty = git("status", "--porcelain", "--", ".", check=False).strip()
-    if dirty:
-        touched = [ln[3:] for ln in dirty.splitlines()]
+    # The description step must not change the code. Only enforceable when the tree was
+    # clean before it ran — otherwise there is no way to tell its edits from pre-existing
+    # ones, and the honest move is to leave everything alone.
+    def is_output(path):
+        norm = path.rstrip("/")
+        return norm == str(OUT).rstrip("/") or norm.startswith(str(OUT).rstrip("/") + "/")
+
+    # porcelain v1 is exactly "XY PATH": two status columns and a space.
+    touched = [ln[3:] for ln in git("status", "--porcelain", "--", ".",
+                                    check=False).splitlines()]
+    touched = [p for p in touched if not is_output(p)]
+    if not clean_before:
+        if touched:
+            log(f"pr description: tree was already dirty before the agent ran, so these are "
+                f"not attributed to it and were left alone: {touched[:5]}")
+    elif touched:
         log(f"pr description: reviewer agent modified the tree, reverting: {touched[:5]}")
         git("checkout", "--", ".", check=False)
         for path in untracked_snapshot() - before_untracked:
+            if is_output(path):
+                continue
             try:
                 Path(path).unlink()
             except OSError:

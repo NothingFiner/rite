@@ -46,6 +46,34 @@ because the implementation already exists. It only refuses to start if a test th
 passed in the previous run now fails (`baseline.json` in `.workflow-out/` records
 that). It also refuses a work tree on the wrong branch, or one left mid-merge.
 
+## The pull-request description
+When the suite goes green the orchestrator runs `.workflow/recipes/describe-changes.yaml`
+once: a fresh agent reads the diff against the base branch and writes a PR title and a
+body that explains the code change. It is a separate call, not the builder — the builder
+works per iteration and never sees the finished state, so it would describe its intent
+rather than the result.
+
+The agent writes the prose; the orchestrator appends the measured facts (per-layer test
+counts, the diffstat, and the approved spec in a collapsible block) so those cannot be
+narrated. The container has no GitHub token, so it writes
+`.workflow-out/pr-description.md` and `.workflow-out/pr-title.txt` and the host applies
+them with `gh pr edit`.
+
+It never fails a run. Disabled config, a missing recipe, missing goose, a timeout, or a
+body under 200 characters all fall back to a measured summary of the diff, and an
+exception in the step is caught. The agent is not allowed to change the code: its edits
+are reverted, but only when the tree was clean before it ran, so nothing pre-existing is
+ever destroyed. `--no-describe` skips the step to save one call on success. Tune it in
+`config.yaml`:
+
+```yaml
+pr_description:
+  enabled: true
+  recipe: .workflow/recipes/describe-changes.yaml
+  model: ""          # blank = models.default; this job does not need the strong model
+  max_patch_kb: 120  # the diffstat is always complete, only the patch is capped
+```
+
 ## Progress and cost, per iteration
 Every iteration logs one line and appends a JSON line to
 `.workflow-out/progress.jsonl`:
