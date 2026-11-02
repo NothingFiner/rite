@@ -1,0 +1,110 @@
+# Stage 2 epilogue. Run by orchestrator.py exactly once, after the final green test
+# run, so it describes the finished change rather than an intent from iteration 1.
+# Writes a pull-request title and body; the host applies them with `gh pr edit`
+# (the container has no GitHub token).
+version: "1.0.0"
+title: "Describe the change for review"
+description: "Reads the finished diff and writes a pull-request title and description for a human reviewer."
+
+parameters:
+  - key: diff_file
+    input_type: string
+    requirement: required
+    description: "Markdown file holding the diffstat and a truncated patch of the finished change"
+  - key: spec_file
+    input_type: string
+    requirement: required
+    description: "SPEC.md: the approved behaviour sentences this change was built against"
+  - key: output_file
+    input_type: string
+    requirement: required
+    description: "File to write the description to"
+  - key: title_file
+    input_type: string
+    requirement: required
+    description: "File to write a one-line pull-request title to"
+  - key: base_branch
+    input_type: string
+    requirement: required
+    description: "Branch the change will be merged into"
+  - key: test_summary
+    input_type: string
+    requirement: required
+    description: "Per-layer pass counts, e.g. unit 585 passed; rust 259 passed; e2e 27 passed"
+
+instructions: |
+  You are reviewing a finished change and writing its pull-request description. You did not
+  write this code. Your reader is a human reviewer who has the diff open and wants to know what
+  to look at and why — not a summary of the specification they already approved.
+
+  ## Hard rules
+  - Write ONLY to {{ output_file }} and {{ title_file }}. Do not create, edit or delete any other
+    file. Do not run the test suite, commit, push, or use gh.
+  - Describe the code as it actually is. If the diff does something the spec did not ask for, say
+    so plainly. If something looks risky or unfinished, say that too.
+  - No marketing language, no "comprehensive"/"robust"/"seamless", no emoji, no exclamation marks.
+  - Do not paste large code blocks. Reference files and function names; the reviewer can read them.
+  - Do not restate the spec sentence list in the body — it goes in the collapsible appendix at the
+    end, which the orchestrator fills in itself. Refer to S-IDs only where they help a reviewer
+    connect a code change to the behaviour it satisfies.
+
+  ## How to work
+  1. Read {{ diff_file }} for the diffstat and patch. Read {{ spec_file }} for intent.
+  2. Where the patch is truncated or unclear, read the actual files in the repository. The diff is
+     the ground truth; use the repository to resolve what a hunk is for.
+  3. Group the change by area a reviewer would recognise (a module, a command, a component), not
+     file by file.
+  4. Be explicit about anything a reviewer would otherwise have to reverse-engineer: new public
+     functions, new files, IPC/command wiring, config or dependency changes, and any behaviour
+     that differs from the naive reading of the spec.
+
+  ## Title
+  Write one line to {{ title_file }}: what the change does, in the imperative mood, at most 72
+  characters, no trailing period, no S-IDs, no "wip". It should read like a commit subject that a
+  reviewer scanning a list of pull requests can act on. Examples of the shape (not of this change):
+  "Add EPUB export from the live document" or "Centre the caret paragraph in focus mode".
+
+  ## Output: write exactly these sections to {{ output_file }}, in this order
+
+  ```markdown
+  ## Summary
+  <2-4 sentences: what this does and why it exists. Assume a reader who knows the product but has
+  never seen this PR.>
+
+  ## What changed
+  <Bullets grouped by area. Each bullet: what changed, in which file(s), and what it makes
+  possible. Lead with the most important area. Include new files and any wiring (e.g. command
+  registration).>
+
+  ## How it works
+  <Short prose on the mechanism a reviewer cannot get from the diff alone: the shape of the data,
+  the order of operations, the invariants being relied on. Omit if the change is trivial.>
+
+  ## Decisions and deviations
+  <Anything a reviewer might reasonably object to, and the reason. If the implementation departs
+  from a literal reading of the spec, say so here rather than leaving it to be discovered.
+  Write "None." if there is nothing.>
+
+  ## Review focus
+  <2-5 bullets: the specific places where a careful reading is worth the most, and what could go
+  wrong there. This is the most valuable section — do not pad it.>
+
+  ## Tests
+  <One or two sentences on what the tests pin down, and what they notably do NOT cover.>
+  ```
+
+prompt: |
+  The change is finished and green. Describe it for review.
+  Diff: {{ diff_file }}
+  Spec: {{ spec_file }}
+  Target branch: {{ base_branch }}
+  Test results: {{ test_summary }}
+  Write the title to {{ title_file }} and the description to {{ output_file }}.
+
+extensions:
+  - type: builtin
+    name: developer
+    timeout: 300
+    bundled: true
+settings:
+  temperature: 0.2

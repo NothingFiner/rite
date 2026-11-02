@@ -378,6 +378,209 @@ def run_goose(recipe, i, escalated, failures_file, models, timeout_s):
         return 124
 
 
+# ---------- pull-request description ----------
+
+# Files that are noise in a review diff: regenerated, or huge, or not the change.
+DESCRIBE_SKIP = [":(exclude)package-lock.json", ":(exclude)Cargo.lock", ":(exclude).workflow-out"]
+# A description shorter than this is a failed description, not a terse one.
+DESCRIBE_MIN_CHARS = 200
+
+
+def layer_counts(res):
+    """{layer: (total, not_green)} from the parsed test ids."""
+    total, bad = {}, {}
+    for tid, st in res["tests"]:
+        layer = tid.split("::", 1)[0]
+        total[layer] = total.get(layer, 0) + 1
+        if st != "passed":
+            bad[layer] = bad.get(layer, 0) + 1
+    return {k: (total[k], bad.get(k, 0)) for k in total}
+
+
+def test_summary_line(res):
+    counts = layer_counts(res)
+    if not counts:
+        return "no tests were reported"
+    bits = []
+    for layer, (total, bad) in counts.items():
+        bits.append(f"{layer} {total - bad}/{total} passed" if bad else f"{layer} {total} passed")
+    worst = sum(b for _, b in counts.values())
+    return "; ".join(bits) + (f" ({worst} not passing)" if worst else "")
+
+
+def spec_sentences():
+    """The S-ID lines from SPEC.md, for the collapsible appendix."""
+    try:
+        text = Path("SPEC.md").read_text()
+    except OSError:
+        return ""
+    return "\n".join(ln.strip() for ln in text.splitlines() if SPEC_ID.match(ln.lstrip("* -")))
+
+
+def diff_for_review(base_branch, cap_kb):
+    """Write .workflow-out/diff-for-review.md. Returns the diffstat text.
+
+    The diffstat is always complete; only the patch is capped. An agent that needs a
+    hunk the cap dropped is told to read the file, which is why the diffstat has to
+    survive truncation.
+    """
+    # The run clones a single branch, so origin/<base> is often absent inside the
+    # container; the host fetches the base in as a local ref for that reason. Try
+    # both and say so loudly if neither resolves, rather than diffing against nothing.
+    mb = ""
+    for ref in (f"origin/{base_branch}", base_branch):
+        mb = git("merge-base", ref, "HEAD", check=False).strip()
+        if mb:
+            break
+    if not mb:
+        raise RuntimeError(f"no merge base with {base_branch} (tried origin/{base_branch} and "
+                           f"{base_branch}); was the base branch fetched into this clone?")
+    stat = git("diff", "--stat", mb, "HEAD", "--", ".", *DESCRIBE_SKIP).strip()
+    patch = git("diff", "--unified=3", mb, "HEAD", "--", ".", *DESCRIBE_SKIP)
+    cap = max(1, int(cap_kb)) * 1024
+    cut = len(patch) > cap
+    parts = ["# Diff for review", "", "## Diffstat", "", "```", stat, "```", "", "## Patch", ""]
+    if cut:
+        parts += [
+            f"Patch truncated: showing {cap_kb} KB of {len(patch) / 1024:.0f} KB. Every changed file is "
+            "listed in the diffstat above; read the repository for hunks you cannot see here.", "",
+        ]
+    parts += ["```diff", patch[:cap] + ("\n... [truncated]" if cut else ""), "```", ""]
+    (OUT / "diff-for-review.md").write_text("\n".join(parts))
+    return stat
+
+
+def description_footer(res, stat):
+    """Facts the orchestrator owns, appended after the agent's prose.
+
+    Kept separate on purpose: the agent writes the explanation, but the test counts
+    and the diffstat are measured, not narrated, so they cannot be embellished.
+    """
+    out = ["", "---", "", f"**Tests:** {test_summary_line(res)}", ""]
+    if stat:
+        out += ["<details><summary>Changed files</summary>", "", "```", stat, "```", "", "</details>", ""]
+    spec = spec_sentences()
+    if spec:
+        out += ["<details><summary>Approved spec (S-IDs)</summary>", "", spec, "", "</details>", ""]
+    return "\n".join(out)
+
+
+def fallback_description(reason, res, stat):
+    """A body that is never wrong, used when the reviewer agent cannot write one."""
+    lines = [
+        "## Summary", "",
+        "This branch makes the test suite pass. An automated description was not produced "
+        f"({reason}), so this is the measured summary instead.",
+        "", "## What changed", "",
+    ]
+    if stat:
+        lines += ["```", stat, "```", ""]
+    lines += ["## Tests", ""]
+    lines += [f"- {layer}: {total - bad}/{total} passed"
+              for layer, (total, bad) in layer_counts(res).items()]
+    lines += ["", "Review the diff directly; the sections above are absent because the "
+                  "reviewer agent did not run."]
+    return "\n".join(lines)
+
+
+def untracked_snapshot():
+    out = git("ls-files", "--others", "--exclude-standard", check=False)
+    return {ln for ln in out.splitlines() if ln}
+
+
+def run_describe(cfg, models, res, timeout_s):
+    """Ask a fresh agent to explain the finished diff. Returns the body path or None.
+
+    Runs once, after the final green commit, in its own process: the builder never sees
+    the finished state (it works per iteration, mid-flight), so asking it to describe
+    the result would produce a description of its intent rather than of the code.
+    """
+    block = cfg.get("pr_description") or {}
+    if not block.get("enabled", True):
+        log("pr description: disabled by config")
+        return None
+    recipe = block.get("recipe", ".workflow/recipes/describe-changes.yaml")
+    out_file, title_file = OUT / "pr-description.md", OUT / "pr-title.txt"
+    for f in (out_file, title_file):
+        if f.exists():
+            f.unlink()
+
+    try:
+        stat = diff_for_review(cfg.get("base_branch", "development"), block.get("max_patch_kb", 120))
+    except (RuntimeError, OSError) as e:
+        stat = ""
+        log(f"pr description: no diff available ({e})")
+
+    if not Path(recipe).exists():
+        log(f"pr description: {recipe} missing, using the fallback body")
+        out_file.write_text(fallback_description(f"{recipe} not found", res, stat))
+        return out_file
+
+    env = dict(os.environ)
+    model = block.get("model") or models.get("default")
+    if model:
+        env["GOOSE_MODEL"] = model
+    params = []
+    for k, v in (("diff_file", OUT / "diff-for-review.md"), ("spec_file", "SPEC.md"),
+                 ("output_file", out_file), ("title_file", title_file),
+                 ("base_branch", cfg.get("base_branch", "development")),
+                 ("test_summary", test_summary_line(res))):
+        params += ["--params", f"{k}={v}"]
+    cmd = ["goose", "run", "--recipe", recipe, "--no-session", *params]
+
+    # Snapshot before the agent runs so the revert below can tell "it made this" from
+    # "this was already here". Reverting everything untracked would delete files that
+    # have nothing to do with the agent.
+    before_untracked = untracked_snapshot()
+    started = time.time()
+    log("pr description: reviewer agent is describing the change")
+    try:
+        with open(OUT / "goose-describe.log", "w") as fh:
+            rc = subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT,
+                                env=env, timeout=timeout_s).returncode
+    except subprocess.TimeoutExpired:
+        rc = 124
+    except OSError as e:
+        # goose missing or not executable. Degrade: a description is a nicety, not a gate.
+        log(f"pr description: cannot run goose ({e})")
+        rc = 127
+
+    # The description step must not change the code. The tree is clean here (the final
+    # iteration was just committed), so anything git reports is its doing.
+    dirty = git("status", "--porcelain", "--", ".", check=False).strip()
+    if dirty:
+        touched = [ln[3:] for ln in dirty.splitlines()]
+        log(f"pr description: reviewer agent modified the tree, reverting: {touched[:5]}")
+        git("checkout", "--", ".", check=False)
+        for path in untracked_snapshot() - before_untracked:
+            try:
+                Path(path).unlink()
+            except OSError:
+                pass
+
+    body = out_file.read_text() if out_file.exists() else ""
+    if rc != 0 or len(body.strip()) < DESCRIBE_MIN_CHARS or "## " not in body:
+        why = f"goose exited {rc}, produced {len(body.strip())} characters"
+        log(f"pr description: unusable ({why}), using the fallback body")
+        out_file.write_text(fallback_description(why, res, stat))
+        return out_file
+
+    out_file.write_text(body.rstrip() + "\n" + description_footer(res, stat))
+    log(f"pr description: {len(body)} characters in {time.time() - started:.0f}s -> {out_file}")
+
+    # Title: one line, sane length, and not the placeholder the git log would give.
+    raw = title_file.read_text().strip() if title_file.exists() else ""
+    title = raw.splitlines()[0].strip().strip('"').rstrip(".") if raw else ""
+    if 10 <= len(title) <= 90 and "wip" not in title.lower():
+        title_file.write_text(title + "\n")
+        log(f"pr description: title -> {title}")
+    else:
+        if title_file.exists():
+            title_file.unlink()
+        log(f"pr description: no usable title ({title!r}), leaving the PR title unchanged")
+    return out_file
+
+
 # ---------- main ----------
 
 def main():
@@ -394,6 +597,8 @@ def main():
                     help="continue in a work tree that already holds implementation work: "
                          "previously-passing tests may not regress, but the suite is no longer "
                          "required to be red")
+    ap.add_argument("--no-describe", action="store_true",
+                    help="skip the pull-request description step (saves one goose call on success)")
     args = ap.parse_args()
 
     OUT.mkdir(exist_ok=True)
@@ -557,7 +762,19 @@ def main():
         prev_failing = len(res["failing"])
 
         if not res["failing"]:
-            finish("green", "all tests pass", 0, iterations=i)
+            # Last step, once: describe the finished change for the reviewer. It is not
+            # part of the loop, and a failure here must not fail the run — the branch is
+            # already green and the host can still open the PR without a description.
+            body = None
+            if not args.no_describe:
+                try:
+                    body = run_describe(cfg, models, res, goose_to)
+                except Exception as e:  # noqa: BLE001 - a description bug must not fail a green run
+                    log(f"pr description: unexpected {type(e).__name__}: {e}")
+            if body is None and not args.no_describe:
+                log("pr description: unavailable; the host will leave the PR body alone")
+            finish("green", "all tests pass", 0, iterations=i,
+                   pr_description=str(body) if body else None)
 
         sig = hashlib.sha1("\n".join(sorted(res["failing"])).encode()).hexdigest()
         same = same + 1 if sig == prev_sig else 1

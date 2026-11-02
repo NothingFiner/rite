@@ -88,3 +88,17 @@ limits:
 models:
   default: "glm-5.3-flash"
   strong: "glm-5.3"
+
+# Pull-request description. On success the orchestrator runs this recipe once, against
+# the finished diff, to write a body that explains the code change. The container has
+# no GitHub token, so it writes .workflow-out/pr-description.md (+ pr-title.txt) and the
+# host applies them with `gh pr edit`.
+pr_description:
+  enabled: true
+  recipe: .workflow/recipes/describe-changes.yaml
+  # Blank/absent falls back to models.default. This is a read-and-explain job, so it
+  # does not need the strong model.
+  model: ""
+  # How much patch to hand over. The diffstat is always complete; past this the agent
+  # is told to read the files instead. Raise it for changes with many small hunks.
+  max_patch_kb: 120

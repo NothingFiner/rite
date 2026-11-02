@@ -13,6 +13,10 @@ set -euo pipefail
 
 BRANCH="${1:?usage: run-headless.sh <branch> [pr-number] [orchestrator-args...]}"
 PR="${2:-}"
+# Must match base_branch in .workflow/config.yaml. The orchestrator needs the base
+# branch inside the container to diff the change for the PR description, and the
+# single-branch clone does not carry it, so it is fetched in below.
+BASE="${BASE_BRANCH:-development}"
 # Anything past the first two args goes straight to the orchestrator, e.g.
 #   .workflow/run-headless.sh feature/x <pr> --baseline-only
 if [ "$#" -gt 2 ]; then shift 2; else shift "$#"; fi
@@ -121,6 +125,12 @@ if [ "$RESUME" -eq 1 ]; then
   fi
 fi
 
+# The base branch must exist inside the container: the PR description is written by
+# diffing the finished change against it. Non-fatal — without it the description
+# falls back to a summary with no diff.
+git -C "$WORK/repo" fetch --quiet origin "+refs/heads/$BASE:refs/heads/$BASE" 2>/dev/null \
+  || echo "warning: could not fetch $BASE into the clone; the PR description will lack the diff" >&2
+
 # Preflight: prove the bind mount really crosses into the VM before spending
 # minutes on clone/setup/goose. Costs ~1s and turns a silent empty mount into a
 # one-line explanation.
@@ -180,11 +190,28 @@ fi
 
 if [ "$RC" -eq 0 ]; then
   git -C "$WORK/repo" push origin "$BRANCH"
+  # The reviewer agent's description of the code change, written inside the container
+  # (which has no GitHub token) and applied here.
+  BODY="$WORK/repo/.workflow-out/pr-description.md"
+  TITLE_FILE="$WORK/repo/.workflow-out/pr-title.txt"
+  TITLE=""
+  if [ -f "$TITLE_FILE" ]; then TITLE="$(head -1 "$TITLE_FILE")"; fi
   if command -v gh >/dev/null 2>&1; then
     if [ -n "$PR" ]; then
+      if [ -f "$BODY" ]; then
+        gh pr edit "$PR" --body-file "$BODY" ${TITLE:+--title "$TITLE"}
+        echo "PR updated from the reviewer agent's description of the change."
+      else
+        echo "No change description was written; the PR body was left as it was."
+      fi
       gh pr ready "$PR"
     else
-      gh pr create --base development --head "$BRANCH" --fill
+      if [ -f "$BODY" ]; then
+        gh pr create --base "$BASE" --head "$BRANCH" \
+          ${TITLE:+--title "$TITLE"} --body-file "$BODY"
+      else
+        gh pr create --base "$BASE" --head "$BRANCH" --fill
+      fi
     fi
     echo "Done: branch pushed and PR ready."
   else
