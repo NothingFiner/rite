@@ -67,6 +67,13 @@ jobs:
       - name: Run cargo test
         run: cargo test
 
+  # Node version is load-bearing: package-lock.json is npm-11-only (lockfile v3
+  # with @esbuild/* optional platform deps resolved). Node 20 ships npm 10,
+  # which rejects that lockfile with `EUSAGE` / "Missing: esbuild@0.28.2 from
+  # lock file" and fails BOTH npm jobs ~20s in, before a single test runs —
+  # while the rust job passes and makes it look like a test failure. Node 24
+  # ships npm 11, matching the .workflow Docker image, which pins npm@11 for
+  # the same reason. Do not lower this without regenerating the lockfile.
   frontend:
     name: Frontend tests and build
     runs-on: macos-latest
@@ -75,10 +82,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node 20
+      - name: Setup Node 24
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: npm
 
       - name: Install dependencies
@@ -98,10 +105,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node 20
+      - name: Setup Node 24
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: npm
 
       - name: Install dependencies
