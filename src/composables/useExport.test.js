@@ -159,4 +159,82 @@ describe('useExport', () => {
       { title: 'Rite', type: 'error' },
     )
   })
+
+  // --- EPUB export (SPEC.md S-019…S-023) -----------------------------------
+
+  it('S-019: exportEpub opens a .epub save dialog defaulting to <title>.epub', async () => {
+    save.mockResolvedValue('/tmp/novel.epub')
+    invoke.mockResolvedValue(undefined)
+
+    const store = useDocumentStore()
+    store.doc = { title: 'Novel', sections: [] }
+
+    const { exportEpub } = useExport()
+    await exportEpub()
+
+    expect(save).toHaveBeenCalledWith({
+      filters: [{ name: 'EPUB', extensions: ['epub'] }],
+      defaultPath: 'Novel.epub',
+    })
+  })
+
+  it('S-020: exportEpub invokes export_epub with the chosen path', async () => {
+    save.mockResolvedValue('/tmp/novel.epub')
+    invoke.mockResolvedValue(undefined)
+
+    const store = useDocumentStore()
+    store.doc = { title: 'Novel', sections: [] }
+
+    const { exportEpub } = useExport()
+    await exportEpub()
+
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(invoke).toHaveBeenCalledWith('export_epub', { path: '/tmp/novel.epub' })
+    expect(message).not.toHaveBeenCalled()
+  })
+
+  it('S-021: exportEpub invokes nothing when the save dialog is cancelled', async () => {
+    save.mockResolvedValue(null)
+
+    const store = useDocumentStore()
+    store.doc = { title: 'Novel', sections: [] }
+
+    const { exportEpub } = useExport()
+    await exportEpub()
+
+    expect(invoke).not.toHaveBeenCalled()
+    expect(message).not.toHaveBeenCalled()
+  })
+
+  it('S-022: exportEpub shows an error dialog when invoke rejects', async () => {
+    save.mockResolvedValue('/tmp/novel.epub')
+    invoke.mockRejectedValue(new Error('disk full'))
+
+    const store = useDocumentStore()
+    store.doc = { title: 'Novel', sections: [] }
+
+    const { exportEpub } = useExport()
+    await exportEpub()
+
+    expect(message).toHaveBeenCalledWith(
+      'Failed to export document: disk full',
+      { title: 'Rite', type: 'error' },
+    )
+  })
+
+  it('S-023: exportEpub defaults the filename to Untitled.epub when the title is blank', async () => {
+    save.mockResolvedValue('/tmp/untitled.epub')
+    invoke.mockResolvedValue(undefined)
+
+    const store = useDocumentStore()
+    store.doc = { title: '   ', sections: [] }
+
+    const { exportEpub } = useExport()
+    await exportEpub()
+
+    expect(save).toHaveBeenCalledWith({
+      filters: [{ name: 'EPUB', extensions: ['epub'] }],
+      defaultPath: 'Untitled.epub',
+    })
+  })
 })

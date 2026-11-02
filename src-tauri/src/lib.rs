@@ -22,6 +22,7 @@ pub mod commands;
 pub mod diff;
 pub mod document;
 pub mod export_docx;
+pub mod export_epub;
 pub mod export_text;
 pub mod history;
 pub mod llm;

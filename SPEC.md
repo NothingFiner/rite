@@ -1,186 +1,146 @@
-# SPEC — 5.3 Focus / typewriter mode
+# SPEC — EPUB export
 
 **Status:** approved. Implement exactly these behaviours; do not weaken or edit the tests.
 
-A single mode, toggled from the editor, that hides the app chrome and keeps the
-caret's paragraph vertically centred.
+Export the live document as an EPUB 3 package, from the status bar, alongside the
+existing `.txt` / `.md` / `.docx` exports.
 
 ## Sentences
 
-### State — unit
+### Package structure — rust
 
-**S-001** (unit) — It should start inactive every time the app starts; the mode
-is never restored from a previous session.
+**S-001** (rust) — It should produce a ZIP archive whose first entry is `mimetype`,
+  stored uncompressed, whose contents are exactly `application/epub+zip`.
 
-**S-002** (unit) — Toggling should activate focus mode, and toggling again
-should deactivate it.
+**S-002** (rust) — It should include `META-INF/container.xml` naming `OEBPS/content.opf`
+  as the rootfile.
 
-**S-003** (unit) — Changing the view from editor to manuscript or history
-should deactivate focus mode.
+**S-003** (rust) — It should include `OEBPS/content.opf` declaring `version="3.0"`, with
+  a manifest entry for every XHTML file it emits.
 
-**S-004** (unit) — Neither the toggle nor the shortcut should activate focus
-mode while the manuscript or history view is showing.
+**S-004** (rust) — Every manifest item should exist in the archive, and every spine
+  item should reference an id declared in the manifest — no dangling references in
+  either direction.
 
-### Keyboard — unit
+### Content — rust
 
-**S-005** (unit) — `Cmd/Ctrl+Shift+F` should toggle focus mode in the editor
-view, and should not insert any character into the document.
+**S-005** (rust) — It should emit one XHTML document per visible section, in document
+  order, and the spine order should match that order.
 
-**S-006** (unit) — `Escape` should exit focus mode when the search panel is
-closed and no drawer is open.
+**S-006** (rust) — It should render each paragraph of a section as a `<p>` element,
+  preserving the paragraph's run text exactly.
 
-**S-007** (unit) — `Escape` should close the search panel and leave focus mode
-active when both apply.
+**S-007** (rust) — It should render a Chapter heading as the derived `Chapter N: title`,
+  numbering only Chapter-type sections.
 
-### Chrome handling — unit + e2e
+**S-008** (rust) — It should render a subtitle-less chapter as `Chapter N` with no
+  trailing colon.
 
-**S-008** (unit) — Entering focus mode should close any drawer that is already
-open.
+**S-009** (rust) — It should map bold, italic and underline runs to `<strong>`, `<em>`
+  and `<u>`.
 
-**S-009** (unit + e2e) — While focus mode is active, an attempt to open a drawer
-should leave focus mode active and the drawer closed.
+**S-010** (rust) — It should XML-escape `&`, `<`, `>` and `"` in text content.
 
-**S-010** (unit) — Entering focus mode with no caret inside the editor should
-focus the editor sheet.
+**S-011** (rust) — It should skip hidden sections entirely: no XHTML file, no manifest
+  entry, no spine entry and no nav entry.
 
-**S-011** (e2e) — While focus mode is active, the toolbar, activity bar and
-status bar should not be visible.
+**S-012** (rust) — It should number visible chapters contiguously, so a hidden chapter
+  between two visible ones leaves no gap in the numbering.
 
-**S-012** (e2e) — While focus mode is active, the editor should span the full
-window width, with no left-rail offset.
+**S-013** (rust) — It should emit `OEBPS/nav.xhtml` listing every visible section in
+  document order, marked as the navigation document in the manifest.
 
-**S-013** (e2e) — Text should remain editable while focus mode is active.
+**S-014** (rust) — It should emit a title page carrying the document title and author,
+  and should not include `authorContact` anywhere in the package.
 
-**S-014** (e2e) — Leaving focus mode should restore the toolbar, activity bar
-and status bar, with the text unchanged.
+**S-015** (rust) — It should set the package title and author metadata from the document,
+  falling back to `Untitled` and `Author Name` when they are blank.
 
-**S-015** (e2e) — `Cmd/Ctrl+F` while focus mode is active should open the search
-panel and keep focus mode active.
+**S-016** (rust) — It should still produce a valid package with an empty spine when
+  the document has no visible sections.
 
-### Caret centring — e2e
+### Command — rust
 
-**S-016** (e2e) — Entering focus mode with the caret in a paragraph should
-scroll so that paragraph's vertical centre sits at the middle of the viewport.
+**S-017** (rust) — `export_epub(path)` should write the package atomically, leaving no
+  partial file at `path` when the export fails.
 
-**S-017** (e2e) — Moving the caret to a different paragraph while focus mode is
-active should centre the newly focused paragraph.
+**S-018** (rust) — `export_epub(path)` should return `Err` when the target directory does
+  not exist.
 
-**S-018** (e2e) — At the top of the document, entering focus mode should leave
-no blank space above the first paragraph (centring clamps rather than padding).
+### Frontend wiring — unit
+
+**S-019** (unit) — `exportEpub()` should open a save dialog filtered to `epub`,
+  defaulting to `<title>.epub`.
+
+**S-020** (unit) — It should invoke `export_epub` with the chosen path and nothing else.
+
+**S-021** (unit) — It should invoke nothing when the save dialog is cancelled.
+
+**S-022** (unit) — It should show an error dialog when the invoke rejects.
+
+**S-023** (unit) — It should default the proposed filename to `Untitled.epub` when the
+  document title is blank.
+
+### Reachability — e2e
+
+**S-024** (e2e) — The status bar should show an `Export .epub` button that invokes
+  `export_epub` with the path the save dialog returns.
 
 ## Context
 
-### What exists already
+### What already exists (do not rebuild it)
 
-- The app shell is `src/App.vue`. Chrome is three fixed components: `Toolbar.vue`
-  (`.toolbar`, 38 px tall, fixed top), `StatusBar.vue` (`.statusbar`, 36 px, fixed
-  bottom) and `ActivityBar.vue` (`.activity-bar`, 48 px wide, left rail).
-  `.scroll-layer` compensates with `padding-top: 38px; padding-bottom: 36px;
-  padding-left: 48px` — hiding the bars without collapsing the left padding
-  leaves the text indented, so S-012 needs that padding handled, not just
-  `display: none`.
-- Drawer state is `leftDrawerOpen` / `rightDrawerOpen` refs plus
-  `leftDrawerMode` in `App.vue`. Left drawers: `chapters`, `general-options`,
-  `text-options`, `history`. The right drawer is the Assistant panel.
-- All keyboard handling lives in `src/composables/useKeyboardShortcuts.js`
-  (one `keydown` listener on `document`). `Escape` currently closes the search
-  panel, then an open left drawer — focus-mode exit must slot in **after** both
-  (S-007).
-- `getParagraphAtCursor()` in `src/composables/useEditorCursor.js` returns the
-  `.paragraph` element containing the caret (or `null`). Each paragraph carries
-  `data-para-id`. `editorDisplay.vue` already exposes
-  `scrollToParagraph(id)`, which does
-  `el.scrollIntoView({ behavior: 'smooth', block: 'center' })`.
+- **`src-tauri/src/export_docx.rs` is the template.** It emits OPC parts by hand and
+  hands the bytes to the `zip` crate (`zip = "2"`, default-features off, `deflate`).
+  EPUB is the same shape: a ZIP of XML parts. Use `zip::write::SimpleFileOptions`
+  the way `export_docx` does; no new dependency is needed.
+- **`history::atomic_write`** is the atomic write path used by every export
+  (`export_text`, `export_docx`). Use it for S-017; do not hand-roll temp-file logic.
+- **The command pattern** is `export_docx(path: String, state: State<AppState>) -> Result<(), String>`:
+  clone the document out of `AppState`, render, write. `export_epub` mirrors it.
+  Register the command in `lib.rs`'s `tauri::generate_handler!` list — the tests cannot
+  observe registration, so this is on you.
+- **`src-tauri/src/lib.rs`** is the library target; integration tests import
+  `rite_lib::export_epub::document_to_epub`. The module is already declared and stubbed.
+- **Frontend:** `src/composables/useExport.js` holds `exportPlainText` / `exportMarkdown` /
+  `exportDocx`. `exportEpub` is stubbed there. UI buttons live in
+  `src/components/StatusBar.vue` (flat row of `btn-ghost` buttons), emitted up to
+  `App.vue` (`@export-docx="exportComposable.exportDocx"`). Mirror that wiring exactly.
 
-### Decisions taken with the user
+### Decisions that are intentional (do not "fix" them)
 
-1. **No persistence.** The mode always starts off and is never written to
-   localStorage. Do not add `loadPrefs`/`savePrefs` for it.
-2. **One mode, not two.** Hiding chrome and centring the caret are the same
-   toggle — there are no separate "focus" and "typewriter" switches.
-3. **Shortcut is `Cmd/Ctrl+Shift+F`.** It must call `preventDefault()`; with
-   Shift held, `e.key` may be `'F'`, so compare lower-cased.
-4. **Editor-only.** The manuscript and History views are never chrome-less;
-   switching to them deactivates the mode.
-5. **The search panel is not chrome.** `Cmd/Ctrl+F` still works in focus mode
-   and does not exit it (S-015); that is also why Esc precedence in S-007
-   matters.
-6. **No visible exit control.** The shortcut and Esc are the only ways out. A
-   floating button would itself be chrome.
-7. **Centring clamps** at the document edges (S-018). Do not add synthetic
-   scroll padding to force the caret to the middle of the first and last lines.
-8. **Entering with no caret focuses the sheet** and then centres the nearest
-   paragraph (S-010); it is not a no-op.
+1. **Hidden sections are skipped in EPUB only.** `export_text.rs:85` deliberately keeps a
+   hidden section's *body* and drops only its header. EPUB is a reader-facing artifact, so
+   here a hidden section disappears completely (S-011). The two exports disagree on
+   purpose; do not change `export_text`.
+2. **Chapter numbering is derived positionally** among *visible* chapters (S-012). A hidden
+   chapter must not consume a number, unlike `export_text`, which advances the counter for
+   hidden chapters to keep manuscript numbering stable.
+3. **`nav.xhtml` is always emitted**, regardless of `Document.has_toc`. That flag gates the
+   *printed* manuscript TOC (`manuscriptDisplay.vue:161`), not the ebook navigation.
+4. **`authorContact` is never exported** (S-014). It is manuscript-submission data
+   (address, phone, email), not reader-facing metadata.
+5. **`mimetype` must be the first entry and stored** (S-001). Readers use it to sniff the
+   format; a deflated or misplaced `mimetype` makes an EPUB unopenable even though the
+   archive is otherwise valid. `zip` needs `CompressionMethod::Stored` for that one entry.
+6. **Escaping is manual.** The existing exporters escape by hand
+   (`escape_html` in `useParagraphHTML.js` is the frontend counterpart). There is no XML
+   library in the crate; do not add one.
+7. **The title page is a manifest item but not a spine item.** S-016 requires an *empty
+   spine* when nothing is visible; putting the title page in the reading order would make
+   that impossible (and a reader would open an empty book at a title page with no content
+   behind it). `nav.xhtml` is likewise a manifest item only.
 
-### The drawer rule is a default, not a hard constraint
+### Explicitly out of scope
 
-S-009 describes today's default: drawers cannot be opened in focus mode. A
-future preference (`allowDrawersInFocusMode`, default `false`, persisted like
-`rite-section-format`) may relax it — but **do not build it now**.
+- Cover images (no image field exists on `Document`).
+- `toc.ncx` (EPUB 2 fallback) — EPUB 3 `nav.xhtml` only.
+- `epubcheck` validation — not installable in CI. The tests assert the structural
+  invariants from S-001…S-016 instead.
+- Changing `.txt` / `.md` / `.docx` behaviour.
 
-Shape the code for it anyway: every drawer open must go through a single gate,
-so that later only the gate's condition changes. Today `leftDrawerOpen.value = true`
-is assigned in six places (`App.vue` ×5, `useKeyboardShortcuts.js` ×1 for
-`Cmd+Enter`) plus one inline template binding for the right drawer. Route all of
-them through one helper pair (e.g. `openLeftDrawer(mode)` / `toggleRightDrawer()`)
-that consults the mode, rather than scattering `if (active) return` guards.
+### Test locations
 
-### Implementation notes
-
-- **Centring must scroll instantly**, not smoothly. `scrollToParagraph` uses
-  `behavior: 'smooth'`, which fights the writer when it fires on every caret
-  move and makes the e2e assertions depend on animation timing. Use
-  `behavior: 'auto'` (or `scrollTo`) for the centring path.
-- **Recentring triggers**: on entering the mode, and on caret movement while it
-  is active (the existing `selectionchange` listener in
-  `useKeyboardShortcuts.js` is the natural hook — it already calls
-  `format.syncFormatState()`). Do not recentre on scroll: only the caret moves
-  the page.
-- **No caret** means `getParagraphAtCursor()` returns `null`, or the caret is
-  outside the `.editor-sheet`. Focusing the sheet is enough; do not synthesize a
-  selection.
-- **Do not put behaviour in an `App.vue` computed** that the unit tests must
-  mount around: `App.vue` is already large and only the e2e layer covers it.
-
-### Wiring contract
-
-The unit tests need a seam, so `src/composables/useFocusMode.js` has this shape
-(it is currently an inert stub — the behaviour is what you add):
-
-```js
-useFocusMode({ viewMode, editorRef, leftDrawerOpen, rightDrawerOpen })
-  -> { active, toggle(), exit(), canOpenDrawer() }
-```
-
-- `active` is a `ref` that is `false` whenever focus mode is off.
-- `toggle()` flips it (and is a no-op outside the editor view, per S-004).
-- `exit()` deactivates unconditionally.
-- `canOpenDrawer()` answers "may a drawer open right now?" — `false` while
-  focus mode is active, `true` otherwise. Every drawer open routes through it
-  (see the drawer rule above).
-- Focusing the editor sheet means focusing the `.editor-sheet` element inside
-  `editorRef.value.$el`, which is how every other composable reaches the sheet
-  (e.g. `useFormat.js`).
-
-`useKeyboardShortcuts` takes the same object as a new `focusMode` parameter.
-`App.vue` owns the instance, because it owns `viewMode` and both drawer refs.
-
-### Test harness notes
-
-- Unit tests are vitest + jsdom, colocated (`src/**/*.test.js`). jsdom has no
-  layout: `getBoundingClientRect()` returns zeros and `scrollIntoView` is not
-  implemented. **Centring is therefore covered by e2e only** (S-016–S-018); the
-  unit tests cover state, keyboard routing and drawer handling.
-- e2e specs run against the Vite dev server with Tauri IPC mocked by
-  `window.__TAURI_IPC__` (see `e2e/search-highlight.spec.js`). `get_document`
-  determines the document: rejecting it makes the store fall back to a
-  one-paragraph default, so the centring tests must resolve it with a long seeded
-  document (the `Document` shape is camelCase; `src/constants/DocumentModel.js`
-  has the factories).
-- The stub for `src/composables/useFocusMode.js` intentionally returns an inert
-  object (`active` a `ref(false)`, `toggle`/`exit` no-ops, `canOpenDrawer`
-  returning `true`) rather than throwing: a throw would make every new test fail
-  with an error instead of an assertion, and the workflow requires assertion
-  failures. S-001 is the one sentence whose test passes against the stub — there
-  is no implementation that could make "starts inactive" fail except a wrong
-  default.
+- Rust: `src-tauri/tests/epub_export.rs` (integration, imports `rite_lib`).
+- Unit: `src/composables/useExport.test.js`.
+- E2E: `e2e/epub-export.spec.js` (mocked IPC; the dialog command is `saveDialog`).
