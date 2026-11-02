@@ -44,11 +44,16 @@ The status bar shows the title *and* the current filename so both remain visible
 - **No Rust change is needed.** `Document.title` is a serialised field of the `.rite`
   file (`src-tauri/src/document.rs`) and `open_document` returns it verbatim. Making the
   title independent makes it round-trip correctly; the Rust side already behaves.
-- **Existing test inverted, not weakened.** `src/composables/useFileIO.test.js` currently
-  asserts that the title becomes `novel-copy` after Save As, with a comment explaining
-  that this is deliberate. Under this spec the opposite is true, so that assertion is
-  replaced by its inverse and the comment is rewritten. This is an intentional reversal
-  of a previously-locked decision, not a loosened test.
+- **Existing tests inverted, not weakened.** `src/composables/useFileIO.test.js` holds
+  two assertions that encode the old coupling, and both are reversed on purpose:
+  - the title assertion expects `novel-copy` after Save As; under this spec it expects
+    the title to be unchanged.
+  - the Save As dialog assertion expects `defaultPath: 'Novel.rite'` for a document
+    titled "Novel" already saved as `novel.rite`; under decision 3 it expects
+    `'novel.rite'`, because the proposal is the current filename when a path exists.
+
+  Both reversals are intentional, dated decisions, not loosened tests. Anything else in
+  these files stays as it is.
 - The status bar receives the filename as a new `fileName` prop. `App.vue` wiring is
   implementation, not fixture.
 - Do not touch the native menu: that is the next feature, and it depends on the rules

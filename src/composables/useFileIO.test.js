@@ -46,7 +46,12 @@ describe('useFileIO', () => {
 
       expect(save).toHaveBeenCalledWith({
         filters: [{ name: 'Rite Document', extensions: ['rite'] }],
-        defaultPath: 'Novel.rite',
+        // The proposal is the CURRENT FILENAME, not the title. SPEC.md decision 3
+        // / S-007: once the title stops following the file, seeding from the title
+        // would offer a misleading name ("Novel.rite" for a file called
+        // "novel.rite"). This expectation used to be title-seeded; that is the same
+        // deliberate reversal applied to the sibling test's title assertion.
+        defaultPath: 'novel.rite',
       })
       expect(invoke).toHaveBeenCalledWith('save_document', { path: '/tmp/novel-copy.rite' })
     })
