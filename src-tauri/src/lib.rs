@@ -26,6 +26,7 @@ pub mod export_epub;
 pub mod export_text;
 pub mod history;
 pub mod llm;
+pub mod menu;
 pub mod retrieval;
 pub mod sidecar;
 pub mod state;
@@ -45,6 +46,7 @@ use export_text::export_text;
 use llm::{
     delete_role, list_roles, llm_cancel, llm_chat, llm_chat_stream, llm_list_models, save_role,
 };
+use menu::{app_menu, menu_event, MENU_EVENT_NAME};
 use retrieval::{embed_texts, reembed_document, retrieve_passages};
 use state::AppState;
 use structure::structural_signals;
@@ -129,12 +131,21 @@ fn enable_continuous_spellcheck() {}
 /// Build and run the Tauri application.
 ///
 /// `main.rs` calls this; it holds the single definition of the app's wiring
-/// (managed state + the command handler list) so the binary and any future
-/// harness share it rather than drifting.
+/// (managed state, the native menu + its event relay, and the command handler
+/// list) so the binary and any future harness share it rather than drifting.
 pub fn run() {
     enable_continuous_spellcheck();
     tauri::Builder::default()
         .manage(AppState::new())
+        .menu(app_menu())
+        .on_menu_event(|event| {
+            // Only app-owned items reach the frontend; native items (quit,
+            // hide, clipboard, window actions) and separators act outside it.
+            let id = event.menu_item_id().to_string();
+            if menu_event(&id).is_some() {
+                let _ = event.window().emit(MENU_EVENT_NAME, id);
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             get_document,
             delete_section,

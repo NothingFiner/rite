@@ -8,15 +8,6 @@
         class="save-status"
         :class="{ 'is-saving': saveStatus === 'Saving…', 'is-error': saveStatus === 'Save failed' }"
       >{{ saveStatus }}</span>
-      <button class="btn-ghost" @click="$emit('openFile')">Open</button>
-      <button class="btn-ghost" @click="$emit('saveFile')">Save</button>
-      <button class="btn-ghost" @click="$emit('saveFileAs')">Save As</button>
-      <button class="btn-ghost" @click="$emit('newFile')">New</button>
-      <button class="btn-ghost" @click="$emit('importFile')">Import</button>
-      <button class="btn-ghost" @click="$emit('exportPlainText')">Export .txt</button>
-      <button class="btn-ghost" @click="$emit('exportMarkdown')">Export .md</button>
-      <button class="btn-ghost" @click="$emit('exportDocx')">Export .docx</button>
-      <button class="btn-ghost" @click="$emit('exportEpub')">Export .epub</button>
     </div>
     <div class="status-right">
       <div class="theme-picker">
@@ -73,7 +64,7 @@ function swatchBorder(bg) {
   return isLightColor(bg) ? 'rgba(0, 0, 0, 0.35)' : 'rgba(255, 255, 255, 0.35)'
 }
 
-defineEmits(['openFile', 'saveFile', 'saveFileAs', 'newFile', 'importFile', 'exportPlainText', 'exportMarkdown', 'exportDocx', 'exportEpub', 'toggleThemePicker', 'selectTheme'])
+defineEmits(['toggleThemePicker', 'selectTheme'])
 </script>
 
 <style scoped>
@@ -142,21 +133,6 @@ defineEmits(['openFile', 'saveFile', 'saveFileAs', 'newFile', 'importFile', 'exp
 
 .word-count {
   color: var(--text-secondary);
-}
-
-.btn-ghost {
-  background: transparent;
-  border: 1px solid var(--bg-glass-border);
-  color: var(--text-primary);
-  padding: 2px 10px;
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-
-.btn-ghost:hover {
-  background: var(--hover-bg-strong);
 }
 
 .theme-picker {
