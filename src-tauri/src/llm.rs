@@ -279,6 +279,27 @@ fn roles_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+/// Resolve `<base>/roles/` from an already-resolved app-data base, creating the
+/// directory on first use. `None` means the app data directory could not be
+/// resolved; that must be an error naming the app data directory, never a
+/// fallback path.
+///
+/// Split out from [`roles_dir`] so the failure branch is testable without a
+/// Tauri runtime: v2 returns a `Result` instead of an `Option`, and the whole
+/// point of the migration's error handling is that this branch is exercised.
+pub fn roles_dir_in(base: Option<PathBuf>) -> Result<PathBuf, String> {
+    todo!("resolve the roles dir from an explicit app-data base (SPEC S-016)")
+}
+
+/// Built-in + user roles for an already-resolved app-data base. A missing
+/// `roles/` directory is normal on a fresh install (built-ins alone), but an
+/// unresolvable base is an error naming the app data directory.
+///
+/// Split out from [`list_roles`] for the same reason as [`roles_dir_in`].
+pub fn list_roles_from(base: Option<PathBuf>) -> Result<Vec<RoleInfo>, String> {
+    todo!("list built-in and user roles from an explicit app-data base (SPEC S-018)")
+}
+
 /// List all available roles (built-in + user), sorted alphabetically by name.
 /// The frontend selects a sensible default (Writing Assistant) when present.
 /// Composing the body here (base + persona) means the frontend sends the result

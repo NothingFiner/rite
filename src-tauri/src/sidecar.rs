@@ -106,6 +106,17 @@ fn sidecar_file_path(indexes_dir: &Path, manuscript_path: &str) -> PathBuf {
 /// `path_resolver().app_data_dir()` usage (Tauri v1: `Option<PathBuf>`, NOT the
 /// v2-style `app.path()`; `use tauri::Manager` is NOT needed — `path_resolver`
 /// resolves without it).
+/// Resolve `<base>/indexes/` from an already-resolved app-data base. The
+/// directory is NOT created (reads must not create empty dirs as a side
+/// effect). `None` means the app data directory could not be resolved; that is
+/// an error naming the app data directory, never a fallback path.
+///
+/// Split out from [`indexes_dir`] so the failure branch is testable without a
+/// Tauri runtime.
+pub fn indexes_dir_in(base: Option<PathBuf>) -> Result<PathBuf, String> {
+    todo!("resolve the index sidecar dir from an explicit app-data base (SPEC S-017)")
+}
+
 fn indexes_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
     let base = app
         .path_resolver()

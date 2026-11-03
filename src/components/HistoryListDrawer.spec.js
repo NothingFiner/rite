@@ -8,7 +8,7 @@ import HistoryListDrawer from './HistoryListDrawer.vue'
 // instance App hands it — so every assertion is about that delegation.
 
 const askMock = vi.hoisted(() => vi.fn())
-vi.mock('@tauri-apps/api/dialog', () => ({
+vi.mock('@tauri-apps/plugin-dialog', () => ({
   ask: (...args) => askMock(...args),
 }))
 

@@ -3,23 +3,19 @@ import { setActivePinia, createPinia } from 'pinia'
 import { useDocumentStore } from '../stores/document.js'
 import { useToastsStore } from '../stores/toasts.js'
 
-vi.mock('@tauri-apps/api/dialog', () => ({
+vi.mock('@tauri-apps/plugin-dialog', () => ({
   save: vi.fn(),
   open: vi.fn(),
   ask: vi.fn(),
   message: vi.fn(),
 }))
 
-vi.mock('@tauri-apps/api/tauri', () => ({
+vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }))
 
-vi.mock('@tauri-apps/api/fs', () => ({
-  readBinaryFile: vi.fn(),
-}))
-
-import { save, open, ask, message } from '@tauri-apps/api/dialog'
-import { invoke } from '@tauri-apps/api/tauri'
+import { save, open, ask, message } from '@tauri-apps/plugin-dialog'
+import { invoke } from '@tauri-apps/api/core'
 import { useFileIO } from './useFileIO.js'
 
 describe('useFileIO', () => {

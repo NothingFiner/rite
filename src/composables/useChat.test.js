@@ -4,14 +4,14 @@ import { documentToText, useChat, PRESETS, matchSlashCommands, estimateTokens, e
 // Mock the Tauri bridge: `invoke` for commands, `listen` for streaming events.
 // `listen` resolves to an unlisten function; we capture the event handlers so
 // tests can simulate token/error events arriving.
-vi.mock('@tauri-apps/api/tauri', () => ({
+vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }))
 vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn(),
 }))
 
-import { invoke } from '@tauri-apps/api/tauri'
+import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 
 // --- Test fixtures ----------------------------------------------------------

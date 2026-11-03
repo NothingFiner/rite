@@ -39,18 +39,28 @@ injected page script. The repo therefore vendors its envelope once, in
 `e2e/helpers/tauri-ipc.mock.js`, with a Node-side wrapper in
 `e2e/helpers/tauri-ipc.js`.
 
-- Never write `window.__TAURI_IPC__` in a spec. `e2e/conventions.spec.js` fails
-  the suite if you do.
-- Seed defaults with `installTauriIpc(page, { doc, docFails, dialogPaths })`.
+The envelope is **Tauri v2**: `invoke` is a promise-returning
+`window.__TAURI_INTERNALS__.invoke(cmd, args, options)`, `listen()` is
+`invoke('plugin:event|listen', …)` with a `transformCallback` handler id, and
+dialogs are `plugin:dialog|save` / `|open` / `|message`. The v1 callback
+protocol (`window['_<id>']` replies) is gone.
+
+- Never write `window.__TAURI_INTERNALS__` in a spec. `e2e/conventions.spec.js`
+  fails the suite if you do, and it also fails if any spec or helper keeps a v1
+  envelope reference.
+- Seed defaults with
+  `installTauriIpc(page, { doc, docFails, dialogPaths, openPaths, messageAnswer })`.
 - Register command behaviour with `window.__tauriMock.route(cmd, (args) => …)`
   inside a normal `page.addInitScript`, and return
   `window.__tauriMock.fail(message)` to reject.
 - Dispatch menu events with `emitMenu(page, id)`; inspect what the app sent with
-  `ipcCalls(page)` / `invoked(page, cmd, predicate)`.
+  `ipcCalls(page)` / `invoked(page, cmd, predicate)`; check which envelope the
+  page is speaking with `envelope(page)`.
 
-The helper owns the parts every hand-rolled copy used to get wrong: callback
-ids, top-level argument spreading, the `tauri`/Dialog `saveDialog` call, and the
-Event-module `listen` capture.
+The helper owns the parts every hand-rolled copy used to get wrong: the promise
+return, the plugin command names, the `transformCallback`/`listen` capture, and
+the `ask()` → `message` + `buttons: 'YesNo'` mapping (the mock's
+`messageAnswer` is the pressed label, so `'Yes'` makes `ask()` true).
 
 ## Stubs: tests must fail for the right reason
 Red means an assertion fails, never an import, compile or syntax error.

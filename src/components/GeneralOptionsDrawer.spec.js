@@ -3,11 +3,11 @@ import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
 
-vi.mock('@tauri-apps/api/tauri', () => ({
+vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }))
 
-import { invoke } from '@tauri-apps/api/tauri'
+import { invoke } from '@tauri-apps/api/core'
 import { useDocumentStore } from '../stores/document.js'
 import GeneralOptionsDrawer from './GeneralOptionsDrawer.vue'
 
