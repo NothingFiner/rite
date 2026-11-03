@@ -50,8 +50,11 @@ describe('S-001..S-006: v2 config and dependencies', () => {
 
   it('S-002: the product name and bundle identifier are unchanged', () => {
     const conf = tauriConf()
+    // v2 moves the package name and the identifier to the top level (v1 kept the
+    // identifier under `bundle`).
     expect(conf.productName).toBe('rite')
-    expect(conf.bundle.identifier).toBe('com.rite.app')
+    expect(conf.identifier).toBe('com.rite.app')
+    expect(conf.bundle.identifier).toBeUndefined()
   })
 
   it('S-003: the main window keeps its geometry and titlebar chrome', () => {
@@ -102,10 +105,13 @@ describe('S-001..S-006: v2 config and dependencies', () => {
     for (const line of depLines) {
       expect(line, `"${line}" still declares a v1 tauri version`).not.toMatch(/version\s*=\s*"1\./)
     }
-    expect(depLines.some((line) => /^tauri\s*=\s*\{\s*version\s*=\s*"2\./.test(line))).toBe(true)
-    expect(depLines.some((line) => /^tauri-build\s*=\s*\{\s*version\s*=\s*"2\./.test(line))).toBe(
+    // `"2"` and `"2.1.0"` are both valid majors: pin the major, not the patch.
+    expect(depLines.some((line) => /^tauri\s*=\s*\{\s*version\s*=\s*"2(\.|")/.test(line))).toBe(
       true,
     )
+    expect(
+      depLines.some((line) => /^tauri-build\s*=\s*\{\s*version\s*=\s*"2(\.|")/.test(line)),
+    ).toBe(true)
     // The `test` feature is what lets integration tests build a mock app.
     expect(cargo).toMatch(/features\s*=\s*\[[^\]]*"test"/)
   })

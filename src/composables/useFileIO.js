@@ -1,5 +1,5 @@
-import { open, save, ask, message } from '@tauri-apps/api/dialog'
-import { readBinaryFile } from '@tauri-apps/api/fs'
+import { open, save, ask, message } from '@tauri-apps/plugin-dialog'
+import { invoke } from '@tauri-apps/api/core'
 import { useDocumentStore } from '../stores/document.js'
 import { useToastsStore } from '../stores/toasts.js'
 import { importDocx, importOdt } from './useImport.js'
@@ -123,8 +123,8 @@ export function useFileIO() {
     })
     if (!filePath) return
     try {
-      const data = await readBinaryFile(filePath)
-      const arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
+      const bytes = await invoke('read_import_bytes', { path: filePath })
+      const arrayBuffer = new Uint8Array(bytes).buffer
       const lower = filePath.toLowerCase()
       let sections
       if (lower.endsWith('.docx')) {

@@ -29,7 +29,7 @@
 // `settings.value.*`, like useChat — NOT the reactive-wrapped one).
 
 import { ref, watch } from 'vue'
-import { invoke } from '@tauri-apps/api/tauri'
+import { invoke } from '@tauri-apps/api/core'
 
 /// Debounce for the docVersion watcher. Just longer than the 1000ms typing-sync
 /// debounce + its round-trip, so a typing burst syncs to Rust before the

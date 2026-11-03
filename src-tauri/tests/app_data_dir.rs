@@ -31,7 +31,10 @@ fn base_with_user_role(name: &str, description: &str, persona: &str) -> (TempDir
     fs::create_dir_all(&roles).expect("roles dir");
     fs::write(
         roles.join(format!("{}.md", name)),
-        format!("---\nname: {}\ndescription: {}\n---\n\n{}\n", name, description, persona),
+        format!(
+            "---\nname: {}\ndescription: {}\n---\n\n{}\n",
+            name, description, persona
+        ),
     )
     .expect("role file");
     let base = dir.path().to_path_buf();
@@ -55,9 +58,14 @@ fn s_016_roles_dir_resolves_under_the_base_and_creates_it() {
     let dir = TempDir::new().expect("scratch dir");
     let base = dir.path().to_path_buf();
 
-    let resolved = roles_dir_in(Some(base.clone())).expect("a resolved base must yield the roles dir");
+    let resolved =
+        roles_dir_in(Some(base.clone())).expect("a resolved base must yield the roles dir");
 
-    assert_eq!(resolved, base.join("roles"), "roles live directly under app data");
+    assert_eq!(
+        resolved,
+        base.join("roles"),
+        "roles live directly under app data"
+    );
     assert!(
         resolved.is_dir(),
         "the roles dir must be created on first use, otherwise saving a role fails"
@@ -81,9 +89,14 @@ fn s_017_indexes_dir_resolves_under_the_base_without_creating_it() {
     let dir = TempDir::new().expect("scratch dir");
     let base = dir.path().to_path_buf();
 
-    let resolved = indexes_dir_in(Some(base.clone())).expect("a resolved base must yield the indexes dir");
+    let resolved =
+        indexes_dir_in(Some(base.clone())).expect("a resolved base must yield the indexes dir");
 
-    assert_eq!(resolved, base.join("indexes"), "sidecars live under app_data_dir/indexes");
+    assert_eq!(
+        resolved,
+        base.join("indexes"),
+        "sidecars live under app_data_dir/indexes"
+    );
     assert!(
         !resolved.exists(),
         "reading history must not create an empty directory as a side effect"
@@ -133,10 +146,15 @@ fn s_018_a_user_role_overrides_the_built_in_of_the_same_name() {
         1,
         "a user role replaces the built-in of the same name, it does not duplicate it"
     );
-    assert!(!critics[0].is_built_in, "the surviving Critic is the user's");
+    assert!(
+        !critics[0].is_built_in,
+        "the surviving Critic is the user's"
+    );
     assert_eq!(critics[0].description, "my critic");
     assert!(
-        roles.iter().any(|role| role.name == "Writing Assistant" && role.is_built_in),
+        roles
+            .iter()
+            .any(|role| role.name == "Writing Assistant" && role.is_built_in),
         "user roles are merged over the built-ins, not instead of them"
     );
 }

@@ -1,5 +1,5 @@
 import { ref, watch } from 'vue'
-import { invoke } from '@tauri-apps/api/tauri'
+import { invoke } from '@tauri-apps/api/core'
 import { useDocumentStore } from '../stores/document.js'
 import { useRustSearch } from './useRustSearch.js'
 

@@ -20,7 +20,7 @@
 // array; method calls like `refreshRoles()` pass through the reactive proxy).
 
 import { ref, computed } from 'vue'
-import { invoke } from '@tauri-apps/api/tauri'
+import { invoke } from '@tauri-apps/api/core'
 
 export function useRoles(chatManager) {
   /// The role being edited, or null when the form is closed or creating a new

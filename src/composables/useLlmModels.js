@@ -4,7 +4,7 @@
 // goes through the one Rust boundary. The Rust command handles the
 // `/v1/models` → `/api/tags` fallback and Bearer auth for Ollama Cloud.
 
-import { invoke } from '@tauri-apps/api/tauri'
+import { invoke } from '@tauri-apps/api/core'
 
 /// Fetch the list of model names available at the endpoint. Throws on error
 /// (caught by the settings UI to show "can't reach endpoint").

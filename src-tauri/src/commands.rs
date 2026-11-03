@@ -1,8 +1,8 @@
+use crate::diff::{self, SectionDiff};
 use crate::document::{
     find_paragraph_mut, find_section_mut, Document, Element, Paragraph, ReplaceResult, SearchMatch,
     Section, SectionType, TextRun, TextStyleDelta,
 };
-use crate::diff::{self, SectionDiff};
 use crate::history::{self, HistoryEntry};
 use crate::state::AppState;
 use regex::Regex;
@@ -14,6 +14,19 @@ use tauri::{AppHandle, Runtime, State};
 pub fn get_document(state: State<AppState>) -> Result<Document, String> {
     let doc = state.document.lock().map_err(|e| e.to_string())?;
     Ok(doc.clone())
+}
+
+/// Read a file's raw bytes for the JS-side `docx`/`odt` importers.
+///
+/// The unzipping and XML parsing of an imported Word/ODT file happen in JS, but
+/// the bytes do not have to be fetched there too: Tauri v2 removed
+/// `@tauri-apps/api/fs`, and giving the webview an `fs` capability to read an
+/// arbitrary path the user picked would widen the permission surface far more
+/// than this one command does. Rust is not gated by capabilities at all, so the
+/// read belongs here — it is the same `std::fs` the rest of document IO uses.
+#[tauri::command]
+pub fn read_import_bytes(path: String) -> Result<Vec<u8>, String> {
+    fs::read(&path).map_err(|e| format!("could not read {}: {}", path, e))
 }
 
 /// Remove the section identified by `id`. The document always keeps at least
@@ -134,7 +147,10 @@ pub fn move_section(
     // failed command would otherwise silently drop it from the document).
     if let Some(to_after_id) = &to_after_id {
         if !doc.sections.iter().any(|s| s.id == *to_after_id) {
-            return Err(format!("MoveSection: to_after_id {} not found", to_after_id));
+            return Err(format!(
+                "MoveSection: to_after_id {} not found",
+                to_after_id
+            ));
         }
     }
     let from_idx = doc
@@ -218,7 +234,12 @@ pub fn replace_current(
             for m in re.find_iter(&text) {
                 let start_offset = text[..m.start()].chars().count();
                 let end_offset = text[..m.end()].chars().count();
-                matches.push((section.id.clone(), para.id.clone(), start_offset, end_offset));
+                matches.push((
+                    section.id.clone(),
+                    para.id.clone(),
+                    start_offset,
+                    end_offset,
+                ));
             }
         }
     }
@@ -1158,8 +1179,18 @@ mod tests {
         assert_eq!(para_text(&doc.sections[0].paragraphs[0]), "abcd");
         // Different styles -> two distinct runs, not concatenated into one.
         assert_eq!(doc.sections[0].paragraphs[0].elements.len(), 2);
-        assert!(!doc.sections[0].paragraphs[0].elements[0].text_run.text_style.bold);
-        assert!(doc.sections[0].paragraphs[0].elements[1].text_run.text_style.bold);
+        assert!(
+            !doc.sections[0].paragraphs[0].elements[0]
+                .text_run
+                .text_style
+                .bold
+        );
+        assert!(
+            doc.sections[0].paragraphs[0].elements[1]
+                .text_run
+                .text_style
+                .bold
+        );
     }
 
     #[test]
@@ -1212,8 +1243,7 @@ mod tests {
     fn replace_current_replaces_the_indexed_match() {
         let app = mock_app_with_state();
         let state = app.state::<AppState>();
-        *state.document.lock().unwrap() =
-            create_document(vec![create_paragraph("p1", "foo foo")]);
+        *state.document.lock().unwrap() = create_document(vec![create_paragraph("p1", "foo foo")]);
 
         // Replace the first of the two "foo" matches.
         let result =
@@ -1247,18 +1277,12 @@ mod tests {
     fn replace_current_no_match_journals_nothing() {
         let app = mock_app_with_state();
         let state = app.state::<AppState>();
-        *state.document.lock().unwrap() =
-            create_document(vec![create_paragraph("p1", "foo foo")]);
+        *state.document.lock().unwrap() = create_document(vec![create_paragraph("p1", "foo foo")]);
 
         // An out-of-range match index performs no replacement and records no
         // history entry, so undo is a no-op that leaves the text untouched.
-        let result = replace_current(
-            "foo".to_string(),
-            "bar".to_string(),
-            99,
-            state.clone(),
-        )
-        .unwrap();
+        let result =
+            replace_current("foo".to_string(), "bar".to_string(), 99, state.clone()).unwrap();
         assert!(result.matches.is_empty());
         assert_eq!(result.current_index, -1);
         assert!(!state.undo().unwrap());
@@ -1301,14 +1325,14 @@ mod tests {
 
         // Move s1 to the end (after s3) — the returned doc AND the live state
         // must both reflect the new order.
-        let returned = move_section(
-            "s1".to_string(),
-            Some("s3".to_string()),
-            state.clone(),
-        )
-        .unwrap();
+        let returned =
+            move_section("s1".to_string(), Some("s3".to_string()), state.clone()).unwrap();
         assert_eq!(
-            returned.sections.iter().map(|s| s.id.as_str()).collect::<Vec<_>>(),
+            returned
+                .sections
+                .iter()
+                .map(|s| s.id.as_str())
+                .collect::<Vec<_>>(),
             ["s2", "s3", "s1"]
         );
         assert_eq!(section_ids(&state), ["s2", "s3", "s1"]);
@@ -1336,8 +1360,7 @@ mod tests {
         // The move is journaled as a history delta (the whole point of the
         // MoveSection DocOp over a blind reorder), so undo must restore the
         // original order.
-        move_section("s1".to_string(), Some("s3".to_string()), state.clone())
-            .unwrap();
+        move_section("s1".to_string(), Some("s3".to_string()), state.clone()).unwrap();
         assert_eq!(section_ids(&state), ["s2", "s3", "s1"]);
 
         assert!(state.undo().unwrap());
@@ -1353,8 +1376,22 @@ mod tests {
         // The command returns the updated document (the JS store assigns it
         // back wholesale) — assert the flag round-trips through the wire doc.
         let updated = set_section_hidden("s2".to_string(), true, state.clone()).unwrap();
-        assert!(updated.sections.iter().find(|s| s.id == "s2").unwrap().hidden);
-        assert!(!updated.sections.iter().find(|s| s.id == "s1").unwrap().hidden);
+        assert!(
+            updated
+                .sections
+                .iter()
+                .find(|s| s.id == "s2")
+                .unwrap()
+                .hidden
+        );
+        assert!(
+            !updated
+                .sections
+                .iter()
+                .find(|s| s.id == "s1")
+                .unwrap()
+                .hidden
+        );
 
         // The toggle is journaled as a ChangeSectionHidden delta, so undo
         // must restore the visible state.
@@ -1381,12 +1418,8 @@ mod tests {
         let state = app.state::<AppState>();
         *state.document.lock().unwrap() = three_section_document();
 
-        let err = move_section(
-            "nope".to_string(),
-            Some("s2".to_string()),
-            state.clone(),
-        )
-        .unwrap_err();
+        let err =
+            move_section("nope".to_string(), Some("s2".to_string()), state.clone()).unwrap_err();
         assert!(err.contains("not found"));
         assert_eq!(section_ids(&state), ["s1", "s2", "s3"]);
         // A failed command must not journal a delta: undo has nothing to do.
@@ -1402,12 +1435,8 @@ mod tests {
         // The destination must be validated BEFORE the remove — the
         // regression this guards: removing first would silently drop s1 from
         // the document on the failed command's error path.
-        let err = move_section(
-            "s1".to_string(),
-            Some("nope".to_string()),
-            state.clone(),
-        )
-        .unwrap_err();
+        let err =
+            move_section("s1".to_string(), Some("nope".to_string()), state.clone()).unwrap_err();
         assert!(err.contains("not found"));
         assert_eq!(section_ids(&state), ["s1", "s2", "s3"]);
         assert!(!state.undo().unwrap());
@@ -1419,12 +1448,8 @@ mod tests {
         let state = app.state::<AppState>();
         *state.document.lock().unwrap() = three_section_document();
 
-        let err = move_section(
-            "s1".to_string(),
-            Some("s1".to_string()),
-            state.clone(),
-        )
-        .unwrap_err();
+        let err =
+            move_section("s1".to_string(), Some("s1".to_string()), state.clone()).unwrap_err();
         assert!(err.contains("cannot follow itself"));
         assert_eq!(section_ids(&state), ["s1", "s2", "s3"]);
     }

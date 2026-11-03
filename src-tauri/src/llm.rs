@@ -41,7 +41,7 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::{AppHandle, Window};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 /// A single message in the OpenAI chat format. `role` is "system" | "user" |
 /// "assistant". Built by the frontend's `buildContextMessages` (system prompt
@@ -98,11 +98,21 @@ struct EmbeddedRole {
 // The persona files. Order here does not matter — `list_roles` sorts
 // alphabetically by name before returning.
 static ROLES: &[EmbeddedRole] = &[
-    EmbeddedRole { source: include_str!("../roles/writingAssistant.md") },
-    EmbeddedRole { source: include_str!("../roles/critic.md") },
-    EmbeddedRole { source: include_str!("../roles/copyEditor.md") },
-    EmbeddedRole { source: include_str!("../roles/poet.md") },
-    EmbeddedRole { source: include_str!("../roles/genreFan.md") },
+    EmbeddedRole {
+        source: include_str!("../roles/writingAssistant.md"),
+    },
+    EmbeddedRole {
+        source: include_str!("../roles/critic.md"),
+    },
+    EmbeddedRole {
+        source: include_str!("../roles/copyEditor.md"),
+    },
+    EmbeddedRole {
+        source: include_str!("../roles/poet.md"),
+    },
+    EmbeddedRole {
+        source: include_str!("../roles/genreFan.md"),
+    },
 ];
 
 /// Parsed YAML frontmatter. The persona files use only `name` and
@@ -133,7 +143,10 @@ fn parse_frontmatter(source: &str) -> (Option<String>, Option<String>, String) {
     }
 
     let body = if body_start > 0 && body_start < lines.len() {
-        lines[body_start..].join("\n").trim_start_matches('\n').to_string()
+        lines[body_start..]
+            .join("\n")
+            .trim_start_matches('\n')
+            .to_string()
     } else if body_start == 0 {
         // No frontmatter fence — the whole source is the body.
         source.to_string()
@@ -261,9 +274,7 @@ fn sanitize_role_name(name: &str) -> String {
 fn role_file_text(name: &str, description: &str, persona_body: &str) -> String {
     format!(
         "---\nname: {}\ndescription: {}\n---\n\n{}",
-        name,
-        description,
-        persona_body
+        name, description, persona_body
     )
 }
 
@@ -271,9 +282,9 @@ fn role_file_text(name: &str, description: &str, persona_body: &str) -> String {
 /// path or a clear error string.
 fn roles_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let base = app
-        .path_resolver()
+        .path()
         .app_data_dir()
-        .ok_or_else(|| "could not resolve app data dir".to_string())?;
+        .map_err(|e| format!("could not resolve app data dir: {}", e))?;
     let dir = base.join("roles");
     fs::create_dir_all(&dir).map_err(|e| format!("could not create roles dir: {}", e))?;
     Ok(dir)
@@ -310,9 +321,9 @@ pub fn list_roles_from(base: Option<PathBuf>) -> Result<Vec<RoleInfo>, String> {
 #[tauri::command]
 pub fn list_roles(app: AppHandle) -> Vec<RoleInfo> {
     let built_ins = built_in_roles();
-    let user = match app.path_resolver().app_data_dir() {
+    let user = match app.path().app_data_dir().ok() {
         Some(base) => load_user_roles(&base.join("roles")),
-        None => vec![], // no resolvable app data dir → built-ins only
+        None => vec![],
     };
     merge_roles(&built_ins, &user)
 }
@@ -376,7 +387,9 @@ fn build_request_body(request: &ChatRequest, stream: bool) -> Value {
 /// (required for Ollama Cloud, ignored by local Ollama). `pub(crate)` so the
 /// embeddings path (`retrieval::embed_texts`, Phase 4.2) reuses the exact same
 /// header construction — one auth code path across chat, model-list, and embed.
-pub(crate) fn build_headers(api_key: &Option<String>) -> Result<reqwest::header::HeaderMap, String> {
+pub(crate) fn build_headers(
+    api_key: &Option<String>,
+) -> Result<reqwest::header::HeaderMap, String> {
     let mut headers = reqwest::header::HeaderMap::new();
     headers.insert(
         reqwest::header::CONTENT_TYPE,
@@ -513,7 +526,10 @@ pub async fn llm_chat(request: ChatRequest) -> Result<String, String> {
         let text = response.text().await.unwrap_or_default();
         return Err(format!("endpoint returned {}: {}", status.as_u16(), text));
     }
-    let json: Value = response.json().await.map_err(|e| format!("bad response: {}", e))?;
+    let json: Value = response
+        .json()
+        .await
+        .map_err(|e| format!("bad response: {}", e))?;
     let content = json
         .get("choices")
         .and_then(|c| c.get(0))
@@ -530,7 +546,10 @@ pub async fn llm_chat(request: ChatRequest) -> Result<String, String> {
 /// mid-stream failure. Checked against `CANCEL_REQUESTED` between chunks so a
 /// `Stop` press ends the loop promptly.
 #[tauri::command]
-pub async fn llm_chat_stream(request: ChatRequest, window: Window) -> Result<String, String> {
+pub async fn llm_chat_stream(
+    request: ChatRequest,
+    window: WebviewWindow,
+) -> Result<String, String> {
     CANCEL_REQUESTED.store(false, Ordering::SeqCst);
     let url = chat_completions_url(&request.endpoint);
     let body = build_request_body(&request, true);
@@ -600,7 +619,10 @@ pub async fn llm_chat_stream(request: ChatRequest, window: Window) -> Result<Str
 /// correctly. This matters because users may copy either the root URL or the
 /// native API base from provider docs.
 #[tauri::command]
-pub async fn llm_list_models(endpoint: String, api_key: Option<String>) -> Result<Vec<String>, String> {
+pub async fn llm_list_models(
+    endpoint: String,
+    api_key: Option<String>,
+) -> Result<Vec<String>, String> {
     let headers = build_headers(&api_key)?;
     let client = reqwest::Client::builder()
         .build()
@@ -614,14 +636,11 @@ pub async fn llm_list_models(endpoint: String, api_key: Option<String>) -> Resul
     if let Ok(response) = result {
         if response.status().is_success() {
             if let Ok(json) = response.json::<Value>().await {
-                let models = json
-                    .get("data")
-                    .and_then(|d| d.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|m| m.get("id").and_then(|id| id.as_str()).map(String::from))
-                            .collect::<Vec<_>>()
-                    });
+                let models = json.get("data").and_then(|d| d.as_array()).map(|arr| {
+                    arr.iter()
+                        .filter_map(|m| m.get("id").and_then(|id| id.as_str()).map(String::from))
+                        .collect::<Vec<_>>()
+                });
                 if let Some(models) = models {
                     if !models.is_empty() {
                         return Ok(models);
@@ -643,9 +662,16 @@ pub async fn llm_list_models(endpoint: String, api_key: Option<String>) -> Resul
     let status_code = response.status();
     if !status_code.is_success() {
         let text = response.text().await.unwrap_or_default();
-        return Err(format!("endpoint returned {}: {}", status_code.as_u16(), text));
+        return Err(format!(
+            "endpoint returned {}: {}",
+            status_code.as_u16(),
+            text
+        ));
     }
-    let json: Value = response.json().await.map_err(|e| format!("bad response: {}", e))?;
+    let json: Value = response
+        .json()
+        .await
+        .map_err(|e| format!("bad response: {}", e))?;
     let models = json
         .get("models")
         .and_then(|m| m.as_array())
@@ -671,11 +697,8 @@ mod tests {
 
     impl TempDir {
         fn new(name: &str) -> Self {
-            let dir = std::env::temp_dir().join(format!(
-                "rite-llm-test-{}-{}",
-                std::process::id(),
-                name
-            ));
+            let dir =
+                std::env::temp_dir().join(format!("rite-llm-test-{}-{}", std::process::id(), name));
             let _ = fs::remove_dir_all(&dir);
             fs::create_dir_all(&dir).unwrap();
             Self(dir)
@@ -727,8 +750,16 @@ mod tests {
         assert_eq!(roles.len(), 5);
         // Every built-in carries the built-in flag + an un-composed persona body.
         for role in &roles {
-            assert!(role.is_built_in, "role '{}' not flagged built-in", role.name);
-            assert!(!role.persona_body.is_empty(), "role '{}' has empty persona body", role.name);
+            assert!(
+                role.is_built_in,
+                "role '{}' not flagged built-in",
+                role.name
+            );
+            assert!(
+                !role.persona_body.is_empty(),
+                "role '{}' has empty persona body",
+                role.name
+            );
         }
     }
 
@@ -763,7 +794,13 @@ mod tests {
         let names: Vec<&str> = merged.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(
             names,
-            vec!["Copy Editor", "Critic", "Genre fan", "Poet", "Writing Assistant"]
+            vec![
+                "Copy Editor",
+                "Critic",
+                "Genre fan",
+                "Poet",
+                "Writing Assistant"
+            ]
         );
     }
 
@@ -835,7 +872,11 @@ mod tests {
         )
         .unwrap();
         // A file with no name frontmatter → skipped, not fatal.
-        fs::write(roles_path.join("bad.md"), "---\ndescription: no name\n---\n\nbody").unwrap();
+        fs::write(
+            roles_path.join("bad.md"),
+            "---\ndescription: no name\n---\n\nbody",
+        )
+        .unwrap();
         // `_base.md` is the shared rules, not a role → skipped.
         fs::write(roles_path.join("_base.md"), "Never add content.").unwrap();
         // A non-markdown file → skipped.
@@ -905,8 +946,14 @@ mod tests {
             model: "test-model".to_string(),
             api_key: None,
             messages: vec![
-                ChatMessage { role: "system".to_string(), content: "you are helpful".to_string() },
-                ChatMessage { role: "user".to_string(), content: "hi".to_string() },
+                ChatMessage {
+                    role: "system".to_string(),
+                    content: "you are helpful".to_string(),
+                },
+                ChatMessage {
+                    role: "user".to_string(),
+                    content: "hi".to_string(),
+                },
             ],
             temperature: Some(0.5),
         }
@@ -1003,7 +1050,10 @@ mod tests {
     #[test]
     fn parse_sse_line_extracts_token_from_data_json() {
         let line = r#"data: {"choices":[{"delta":{"content":"Hello"}}]}"#;
-        assert_eq!(parse_sse_line(line), Some(SseEvent::Token("Hello".to_string())));
+        assert_eq!(
+            parse_sse_line(line),
+            Some(SseEvent::Token("Hello".to_string()))
+        );
     }
 
     #[test]
@@ -1033,7 +1083,8 @@ mod tests {
 
     #[test]
     fn drain_sse_buffer_processes_complete_lines_and_keeps_partial() {
-        let buffer = "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\ndata: [DONE]\ndata: {\"ch";
+        let buffer =
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\ndata: [DONE]\ndata: {\"ch";
         let (events, leftover) = drain_sse_buffer(buffer);
         assert_eq!(events.len(), 2);
         assert_eq!(events[0], SseEvent::Token("Hi".to_string()));
@@ -1062,7 +1113,10 @@ mod tests {
     #[test]
     fn normalize_base_leaves_a_bare_host_unchanged() {
         assert_eq!(normalize_base("https://ollama.com"), "https://ollama.com");
-        assert_eq!(normalize_base("http://localhost:11434"), "http://localhost:11434");
+        assert_eq!(
+            normalize_base("http://localhost:11434"),
+            "http://localhost:11434"
+        );
     }
 
     #[test]
@@ -1070,24 +1124,45 @@ mod tests {
         // A run of trailing slashes collapses to the bare host (this is what
         // keeps `/api/api/tags` from forming when a user pastes a URL ending
         // in `/`).
-        assert_eq!(normalize_base("https://ollama.com///"), "https://ollama.com");
+        assert_eq!(
+            normalize_base("https://ollama.com///"),
+            "https://ollama.com"
+        );
     }
 
     #[test]
     fn normalize_base_strips_a_trailing_v1_or_api() {
-        assert_eq!(normalize_base("https://ollama.com/v1"), "https://ollama.com");
-        assert_eq!(normalize_base("https://ollama.com/api"), "https://ollama.com");
+        assert_eq!(
+            normalize_base("https://ollama.com/v1"),
+            "https://ollama.com"
+        );
+        assert_eq!(
+            normalize_base("https://ollama.com/api"),
+            "https://ollama.com"
+        );
         // A trailing slash between host and suffix is handled too: the slash
         // is stripped first, then the exposed `/v1`/`/api`.
-        assert_eq!(normalize_base("https://ollama.com/api/"), "https://ollama.com");
-        assert_eq!(normalize_base("https://ollama.com/v1/"), "https://ollama.com");
+        assert_eq!(
+            normalize_base("https://ollama.com/api/"),
+            "https://ollama.com"
+        );
+        assert_eq!(
+            normalize_base("https://ollama.com/v1/"),
+            "https://ollama.com"
+        );
     }
 
     #[test]
     fn normalize_base_does_not_strip_v1_or_api_in_the_middle() {
         // Only a *trailing* `/v1`/`/api` is stripped — a path segment that
         // merely contains those strings is left alone.
-        assert_eq!(normalize_base("https://host.example/v1/api"), "https://host.example/v1");
-        assert_eq!(normalize_base("https://host.example/ollama/api"), "https://host.example/ollama");
+        assert_eq!(
+            normalize_base("https://host.example/v1/api"),
+            "https://host.example/v1"
+        );
+        assert_eq!(
+            normalize_base("https://host.example/ollama/api"),
+            "https://host.example/ollama"
+        );
     }
 }

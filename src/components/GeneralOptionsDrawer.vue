@@ -309,7 +309,7 @@
 
 <script setup>
 import { ref, reactive, computed, watch } from 'vue'
-import { invoke } from '@tauri-apps/api/tauri'
+import { invoke } from '@tauri-apps/api/core'
 import { fetchModels } from '../composables/useLlmModels.js'
 import { useRoles } from '../composables/useRoles.js'
 

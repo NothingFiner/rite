@@ -17,12 +17,13 @@ rust-version = "1.70"
 [lib]
 name = "rite_lib"
 path = "src/lib.rs"
+crate-type = ["lib", "staticlib", "cdylib"]
 
 [build-dependencies]
-tauri-build = { version = "1.5.1", features = [] }
+tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "1.6.1", features = [ "window-start-dragging", "macos-private-api", "dialog-all", "fs-all"] }
+tauri = { version = "2", features = [ "macos-private-api"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 similar = "2.5"
@@ -45,6 +46,7 @@ futures-util = { version = "0.3", default-features = false, features = ["std"] }
 # Tauri v1 setup and so the output is plain readable OOXML that round-trips
 # with the existing mammoth-based import path.
 zip = { version = "2", default-features = false, features = ["deflate"] }
+tauri-plugin-dialog = "2"
 
 # macOS-only native spellcheck enable (Phase 5.8a). wry/Tauri's WKWebView ships
 # with continuous spell checking OFF (Tauri #7705), so the red misspelling
@@ -71,7 +73,7 @@ custom-protocol = ["tauri/custom-protocol"]
 # Enables `tauri::test` (mock app/builder) so command tests can construct a
 # `State<AppState>` without spinning up the full Tauri runtime. Only active
 # during `cargo test`; never compiled into production builds.
-tauri = { version = "1.6.1", features = ["test"] }
+tauri = { version = "2", features = ["test"] }
 # Integration tests that touch disk (`save_document` / `open_document` /
 # `autosave_document` / the `.rite` round-trip) need a scratch directory that
 # cleans itself up. Hand-rolled `std::env::temp_dir()` helpers leak on panic,

@@ -67,7 +67,7 @@
 </template>
 
 <script setup>
-import { ask } from '@tauri-apps/api/dialog'
+import { ask } from '@tauri-apps/plugin-dialog'
 import { formatHistoryTimestamp } from '../composables/useVersionHistory.js'
 
 const props = defineProps({
