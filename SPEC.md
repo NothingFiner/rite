@@ -155,9 +155,9 @@ do not undo it:
 v1's menu types were plain structs, so four menu tests rendered a *built* menu.
 v2 needs a `Manager` to create menu objects, and on macOS the underlying `muda`
 crate panics unless creation happens on the main thread — which a `cargo test`
-worker thread is not. Those four tests (`S-006`, `S-007`, `S-009`, `S-025` in
-`src-tauri/tests/menu.rs`) now lock the data the build reads, and the built menu
-is a **manual QA** row instead. Nothing about the contract was weakened; the ids,
+worker thread is not. Those four menu tests (the built-submenu, builder-install, separator-render and
+application-menu cases in `src-tauri/tests/menu.rs`) now lock the data the build
+reads, and the built menu is a **manual QA** row instead. Nothing about the contract was weakened; the ids,
 labels, order and event mapping are all still asserted.
 
 ### What is left (the task)
