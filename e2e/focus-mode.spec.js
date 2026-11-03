@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { installTauriIpc } from './helpers/tauri-ipc.js'
 
 // Focus / typewriter mode (roadmap 5.3), end to end in real Chromium.
 //
@@ -7,59 +8,52 @@ import { test, expect } from '@playwright/test'
 // a real viewport lives here: the chrome actually disappearing, the editor
 // actually widening, and the caret paragraph actually landing in the middle.
 //
-// Tauri IPC is mocked the same way e2e/search-highlight.spec.js does it, except
-// `get_document` resolves with a LONG seeded document instead of rejecting —
-// centring a paragraph is meaningless in a one-paragraph document.
+// Tauri IPC is the shared mock from ./helpers/tauri-ipc.js, seeded with a LONG
+// document instead of the default one — centring a paragraph is meaningless in a
+// one-paragraph document.
 
 const PARAGRAPH_COUNT = 40
 
-function installIpcMock(page) {
-  return page.addInitScript((count) => {
-    const style = { bold: false, italic: false, underline: false, fontSize: null }
-    const paragraph = (i) => ({
-      id: 'p-' + i,
-      elements: [
-        {
-          textRun: {
-            content:
-              `Paragraph ${i}. ` +
-              'The door opened onto a quiet street and the rain kept falling, ' +
-              'steady and grey, until the whole afternoon had gone soft at the edges.',
-            textStyle: style,
-          },
+const seededDoc = (() => {
+  const style = { bold: false, italic: false, underline: false, fontSize: null }
+  const paragraph = (i) => ({
+    id: 'p-' + i,
+    elements: [
+      {
+        textRun: {
+          content:
+            `Paragraph ${i}. ` +
+            'The door opened onto a quiet street and the rain kept falling, ' +
+            'steady and grey, until the whole afternoon had gone soft at the edges.',
+          textStyle: style,
         },
-      ],
-      leftIndent: null,
-      rightIndent: null,
-      firstLineIndent: null,
-    })
-    const sections = [0, 1].map((s) => ({
-      id: 's-' + s,
-      title: '',
-      sectionType: 'section',
-      hidden: false,
-      paragraphs: Array.from({ length: count / 2 }, (_, k) => paragraph(s * (count / 2) + k)),
-    }))
+      },
+    ],
+    leftIndent: null,
+    rightIndent: null,
+    firstLineIndent: null,
+  })
+  const sections = [0, 1].map((s) => ({
+    id: 's-' + s,
+    title: '',
+    sectionType: 'section',
+    hidden: false,
+    paragraphs: Array.from({ length: PARAGRAPH_COUNT / 2 }, (_, k) =>
+      paragraph(s * (PARAGRAPH_COUNT / 2) + k),
+    ),
+  }))
 
-    window.__TAURI_IPC__ = (req) => {
-      const ok = (r) => setTimeout(() => window['_' + req.callback](r), 0)
-      try {
-        if (req.cmd === 'get_document') {
-          return ok({
-            title: 'Untitled',
-            author: 'Author Name',
-            authorContact: '',
-            hasTOC: false,
-            sections,
-          })
-        }
-        if (req.cmd === 'list_roles') return ok([])
-        return ok(null)
-      } catch (e) {
-        setTimeout(() => window['_' + req.error]({ message: String(e) }), 0)
-      }
-    }
-  }, PARAGRAPH_COUNT)
+  return {
+    title: 'Untitled',
+    author: 'Author Name',
+    authorContact: '',
+    hasTOC: false,
+    sections,
+  }
+})()
+
+function installIpcMock(page) {
+  return installTauriIpc(page, { doc: seededDoc })
 }
 
 async function open(page) {

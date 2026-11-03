@@ -33,6 +33,25 @@ Default: run the Vite dev server in a browser and mock Tauri IPC with `mockIPC`
 from `@tauri-apps/api/mocks`. Do not use `tauri-driver` unless the sentence is
 specifically about real native behaviour.
 
+### The one IPC mock
+`addInitScript` cannot import ESM, so `mockIPC` itself is not usable from an
+injected page script. The repo therefore vendors its envelope once, in
+`e2e/helpers/tauri-ipc.mock.js`, with a Node-side wrapper in
+`e2e/helpers/tauri-ipc.js`.
+
+- Never write `window.__TAURI_IPC__` in a spec. `e2e/conventions.spec.js` fails
+  the suite if you do.
+- Seed defaults with `installTauriIpc(page, { doc, docFails, dialogPaths })`.
+- Register command behaviour with `window.__tauriMock.route(cmd, (args) => …)`
+  inside a normal `page.addInitScript`, and return
+  `window.__tauriMock.fail(message)` to reject.
+- Dispatch menu events with `emitMenu(page, id)`; inspect what the app sent with
+  `ipcCalls(page)` / `invoked(page, cmd, predicate)`.
+
+The helper owns the parts every hand-rolled copy used to get wrong: callback
+ids, top-level argument spreading, the `tauri`/Dialog `saveDialog` call, and the
+Event-module `listen` capture.
+
 ## Stubs: tests must fail for the right reason
 Red means an assertion fails, never an import, compile or syntax error.
 
