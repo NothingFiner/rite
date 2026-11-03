@@ -135,15 +135,6 @@
       :show-theme-picker="theme.showThemePicker"
       :word-count="wordCount"
       :selected-word-count="format.selectedWordCount"
-      @open-file="fileIO.openFile"
-      @save-file="fileIO.saveFile"
-      @save-file-as="fileIO.saveFileAs"
-      @new-file="onNewFile"
-      @import-file="fileIO.importFile"
-      @export-plain-text="exportComposable.exportPlainText"
-      @export-markdown="exportComposable.exportMarkdown"
-      @export-docx="exportComposable.exportDocx"
-      @export-epub="exportComposable.exportEpub"
       @toggle-theme-picker="theme.showThemePicker = !theme.showThemePicker"
       @select-theme="theme.selectTheme"
     />
@@ -155,13 +146,13 @@
     <!-- Name-on-creation prompt (1.8). Custom modal: Tauri v1 has no native
          text-input prompt and window.prompt is blocked in the WKWebView. -->
     <PromptModal
-      :visible="showNewDocPrompt"
+      :visible="newDocument.showPrompt"
       title="New Document"
       message="Name your document. This becomes the filename on first save."
       placeholder="Untitled"
       confirm-label="Create"
-      @confirm="onConfirmNewDocument"
-      @cancel="showNewDocPrompt = false"
+      @confirm="newDocument.onConfirm"
+      @cancel="newDocument.onCancel"
     />
 
   </div>
@@ -180,6 +171,8 @@ import { useFormat } from './composables/useFormat.js'
 import { useSectionFormat } from './composables/useSectionFormat.js'
 import { useFocusMode } from './composables/useFocusMode.js'
 import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts.js'
+import { createMenuActions, useMenuActions } from './composables/useMenu.js'
+import { useNewDocument } from './composables/useNewDocument.js'
 import { useVersionHistory } from './composables/useVersionHistory.js'
 import { useLlmSettings } from './composables/useLlmSettings.js'
 import { useChatManager } from './composables/useChat.js'
@@ -216,10 +209,6 @@ const leftDrawerOpen = ref(false)
 const leftDrawerMode = ref('chapters')
 const rightDrawerOpen = ref(false)
 const addExpanded = ref(false)
-// Name-on-creation (1.8): the New action opens this prompt modal so a document
-// is named before its first save. Tauri v1 has no native text-input prompt and
-// `window.prompt` is blocked in the WKWebView, so this is a custom modal.
-const showNewDocPrompt = ref(false)
 
 // How often autosave journals a delta to the on-disk history sidecar. The
 // store's autosaveDocument bails when there's no lastPath or nothing modified,
@@ -266,6 +255,17 @@ const navRaw = useNavigation(doc, editorRef, paginationRaw)
 const nav = reactive(navRaw)
 const fileIO = useFileIO()
 const exportComposable = useExport()
+// Name-on-creation (1.8): the New action runs the save-before guard
+// (useFileIO.newFile) and then opens the prompt modal so a document is named
+// before its first save. Tauri v1 has no native text-input prompt and
+// `window.prompt` is blocked in the WKWebView, so this is a custom modal.
+const newDocument = useNewDocument({ fileIO, store })
+
+// The native menu's single event sink (1.9): Rust emits a `menu` window event
+// whose payload is the item id and this map runs the matching action. Called
+// in setup so the `listen` registration lands during app load.
+const menuActions = createMenuActions({ store, fileIO, exports: exportComposable, newDocument })
+useMenuActions(menuActions)
 const format = reactive(useFormat(editorRef, store.markModified.bind(store)))
 const sectionFormat = reactive(useSectionFormat())
 const history = reactive(useVersionHistory(store))
@@ -505,21 +505,6 @@ function onSearchReplaceAll() {
 // LlmPanel empty state when no model is configured).
 function openGeneralOptions() {
   openLeftDrawer('general-options')
-}
-
-// Start a new document (1.8). First the save-before guard (useFileIO.newFile
-// offers to save real unsaved content, identical check to importFile), then the
-// name-prompt modal. The name is collected AFTER the guard so we don't prompt
-// for a name and then throw it away if the user cancels the save dialog.
-async function onNewFile() {
-  await fileIO.newFile()
-  showNewDocPrompt.value = true
-}
-
-// User confirmed a name in the prompt modal → build the fresh named document.
-async function onConfirmNewDocument(name) {
-  showNewDocPrompt.value = false
-  await store.newDocument(name)
 }
 
 // Focus / typewriter mode (5.3). One shared shell instance: the keyboard

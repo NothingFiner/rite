@@ -3,7 +3,7 @@ import { onMounted, onUnmounted } from 'vue'
 /**
  * Centralised keyboard-shortcut handling for the app shell.
  *
- * Takes the pieces of state it needs to act on (store, file IO, the format and
+ * Takes the pieces of state it needs to act on (store, the format and
  * search composables, the editor ref, the drawer refs, and an insert-heading
  * callback) and wires its own `keydown` + `selectionchange` listeners on
  * `document` for the host component's lifetime. Keeping this out of App.vue's
@@ -19,7 +19,6 @@ import { onMounted, onUnmounted } from 'vue'
  */
 export function useKeyboardShortcuts({
   store,
-  fileIO,
   format,
   search,
   viewMode,
@@ -37,29 +36,14 @@ export function useKeyboardShortcuts({
   function onKeydown(e) {
     const cmd = e.metaKey || e.ctrlKey
 
-    // Cmd+Shift+S → Save As (copy to a new path). Checked BEFORE plain Cmd+S
-    // so the shifted variant doesn't fall through to the quick-save branch.
-    // `e.key` is 'S' (uppercase) when Shift is held on most layouts, but lower-
-    // casing keeps it correct regardless of layout/CapsLock state.
-    if (cmd && e.shiftKey && e.key.toLowerCase() === 's') {
-      e.preventDefault()
-      fileIO.saveFileAs()
-      return
-    }
-
-    if (cmd && e.key === 's') {
-      e.preventDefault()
-      fileIO.saveFile()
-      return
-    }
-
-    if (cmd && e.key === 'z' && !e.shiftKey) {
-      e.preventDefault()
-      store.undo()
-      return
-    }
-
-    if (cmd && ((e.key === 'z' && e.shiftKey) || e.key === 'y')) {
+    // The native menu owns Save (Cmd/Ctrl+S), Save As (Cmd/Ctrl+Shift+S),
+    // Undo (Cmd/Ctrl+Z) and Redo (Cmd/Ctrl+Shift+Z) — see src-tauri/src/menu.rs.
+    // Handling those keys here too would fire each action twice per press (a
+    // double undo is silent data loss), so this listener leaves them alone
+    // entirely: no preventDefault, no action (SPEC.md S-021).
+    // Cmd/Ctrl+Y carries no menu item, so it stays here as a second redo
+    // spelling.
+    if (cmd && e.key === 'y') {
       e.preventDefault()
       store.redo()
       return
