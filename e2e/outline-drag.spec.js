@@ -1,16 +1,17 @@
 import { test, expect } from '@playwright/test'
+import { installTauriIpc } from './helpers/tauri-ipc.js'
 
 // Drag-reorder e2e (roadmap 5.5). Drives the REAL pointer-input machinery
 // end-to-end with Playwright's mouse API (pointerdown → 4px threshold →
 // pointermove → pointerup) → invoke('move_section') → store reassign →
 // drawer re-renders. The harness runs pure Vite with no Tauri runtime, so
-// `move_section` is served by an IPC mock that mirrors the real command's
-// contract: given { id, toAfterId } it returns the document with the
-// section moved (after `toAfterId`, null = front) — exactly what the Rust
-// command does. The component uses a CUSTOM pointer drag (not native HTML5
-// DnD) because WKWebView misroutes drag-session events; unit-spec coverage
-// of the gesture lives in NavigationDrawer.spec.js, this proves the whole
-// chain in a real browser.
+// `move_section` is served by the shared IPC mock (./helpers/tauri-ipc.js) with
+// a route that mirrors the real command's contract: given { id, toAfterId } it
+// returns the document with the section moved (after `toAfterId`, null = front)
+// — exactly what the Rust command does. The component uses a CUSTOM pointer drag
+// (not native HTML5 DnD) because WKWebView misroutes drag-session events;
+// unit-spec coverage of the gesture lives in NavigationDrawer.spec.js, this
+// proves the whole chain in a real browser.
 
 function makeParagraph(id, content) {
   return {
@@ -42,36 +43,26 @@ const initialDoc = {
 // The mock mirrors the real Rust command's contract: { id, toAfterId } (the
 // camelCase wire names Tauri v1 converts to to_after_id server-side) → the
 // document with the section moved after toAfterId (null = front).
-function installIpcMock(page) {
-  return page.addInitScript((doc) => {
-    window.__TAURI_IPC__ = (req) => {
-      const ok = (r) => setTimeout(() => window['_' + req.callback](r), 0)
-      const fail = (e) => setTimeout(() => window['_' + req.error](e), 0)
-      try {
-        if (req.cmd === 'get_document') return ok(doc)
-        if (req.cmd === 'list_roles') return ok([])
-        if (req.cmd === 'move_section') {
-          // Tauri v1 spreads invoke args onto the IPC request — read both
-          // shapes defensively (same pattern as search-highlight.spec.js).
-          const arg = (name) =>
-            req.args && req.args[name] !== undefined ? req.args[name] : req[name]
-          const id = arg('id')
-          const toAfterId = arg('toAfterId')
-          const moved = doc.sections.find((s) => s.id === id)
-          if (!moved) return fail({ message: 'MoveSection: section not found' })
-          const rest = doc.sections.filter((s) => s.id !== id)
-          const updated =
-            toAfterId === null
-              ? [moved, ...rest]
-              : rest.flatMap((s) => (s.id === toAfterId ? [s, moved] : [s]))
-          doc = { ...doc, sections: updated }
-          return ok(doc)
-        }
-        return ok(null)
-      } catch (e) {
-        fail({ message: String(e) })
-      }
-    }
+async function installIpcMock(page) {
+  await installTauriIpc(page)
+  await page.addInitScript((doc) => {
+    let liveDoc = doc
+    window.__tauriMock
+      .route('get_document', () => liveDoc)
+      .route('move_section', (args) => {
+        // Mirrors the real Rust command: { id, toAfterId } (the camelCase wire
+        // names Tauri v1 converts to to_after_id server-side) → the document
+        // with the section moved after toAfterId (null = front).
+        const moved = liveDoc.sections.find((s) => s.id === args.id)
+        if (!moved) return window.__tauriMock.fail('MoveSection: section not found')
+        const rest = liveDoc.sections.filter((s) => s.id !== args.id)
+        const updated =
+          args.toAfterId === null
+            ? [moved, ...rest]
+            : rest.flatMap((s) => (s.id === args.toAfterId ? [s, moved] : [s]))
+        liveDoc = { ...liveDoc, sections: updated }
+        return liveDoc
+      })
   }, initialDoc)
 }
 

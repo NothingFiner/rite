@@ -1,43 +1,41 @@
 import { test, expect } from '@playwright/test'
+import { installTauriIpc } from './helpers/tauri-ipc.js'
 
-// Mock Tauri IPC so the e2e (pure Vite, no Tauri runtime) can exercise the
-// JS-side search integration in real Chromium: useSearchPanel →
-// editorRef.applySearchHighlights → DOM. `search_document` returns real
-// SearchMatch objects computed from the live DOM text (char offsets against the
-// paragraph's text node, matching how the Rust backend measures joined run
-// contents for ASCII). `get_document` REJECTS so the store falls back to its
-// default doc (same as the no-Tauri harness); `list_roles` → [] so the chat
-// panel's role select doesn't crash. This isolates the highlight + next/prev
-// path from the Rust/sync path, which only runs inside real `npx tauri dev`.
-function installIpcMock(page) {
-  return page.addInitScript(() => {
-    window.__TAURI_IPC__ = (req) => {
-      const ok = (r) => setTimeout(() => window['_' + req.callback](r), 0)
-      const fail = (e) => setTimeout(() => window['_' + req.error](e), 0)
-      try {
-        if (req.cmd === 'get_document') return fail({ message: 'no tauri' })
-        if (req.cmd === 'list_roles') return ok([])
-        if (req.cmd === 'search_document') {
-          const q = (req.args && req.args.query) != null ? req.args.query : req.query
-          const needle = String(q || '').toLowerCase()
-          const out = []
-          if (needle) {
-            for (const p of document.querySelectorAll('.editor-sheet .paragraph')) {
-              const text = p.textContent || ''
-              let i = 0
-              while ((i = text.toLowerCase().indexOf(needle, i)) !== -1) {
-                out.push({ sectionId: p.dataset.sectionId, paragraphId: p.dataset.paraId, startOffset: i, endOffset: i + q.length, text: text.slice(i, i + q.length) })
-                i += q.length
-              }
-            }
+// Search highlighting end to end, in real Chromium: useSearchPanel →
+// editorRef.applySearchHighlights → DOM.
+//
+// The IPC envelope is the shared mock from ./helpers/tauri-ipc.js.
+// `search_document` returns real SearchMatch objects computed from the live DOM
+// text (char offsets against the paragraph's text node, matching how the Rust
+// backend measures joined run contents for ASCII) — a jsdom test cannot measure
+// a real text node the same way. `get_document` REJECTS so the store falls back
+// to its default doc (same as the no-Tauri harness). This isolates the
+// highlight + next/prev path from the Rust/sync path, which only runs inside
+// real `npx tauri dev`.
+async function installIpcMock(page) {
+  await installTauriIpc(page, { docFails: true })
+  await page.addInitScript(() => {
+    window.__tauriMock.route('search_document', (args) => {
+      const needle = String(args.query || '').toLowerCase()
+      const out = []
+      if (needle) {
+        for (const p of document.querySelectorAll('.editor-sheet .paragraph')) {
+          const text = p.textContent || ''
+          let i = 0
+          while ((i = text.toLowerCase().indexOf(needle, i)) !== -1) {
+            out.push({
+              sectionId: p.dataset.sectionId,
+              paragraphId: p.dataset.paraId,
+              startOffset: i,
+              endOffset: i + args.query.length,
+              text: text.slice(i, i + args.query.length),
+            })
+            i += args.query.length
           }
-          return ok(out)
         }
-        return ok(null)
-      } catch (e) {
-        fail({ message: String(e) })
       }
-    }
+      return out
+    })
   })
 }
 

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { emitMenu, installTauriIpc, ipcCalls, waitForMenuListener } from './helpers/tauri-ipc.js'
 
 // Save / Save As end to end (SPEC.md S-022, S-024), in real Chromium.
 //
@@ -8,100 +9,63 @@ import { test, expect } from '@playwright/test'
 // Every assertion is unchanged — the save path still runs for real and the
 // store's filename still has to reach the bar the writer is looking at.
 //
-// IPC mocking follows e2e/epub-export.spec.js. Three wrinkles here:
+// IPC is the shared mock (./helpers/tauri-ipc.js). Two things it already does
+// for this spec:
 //
-//   1. The native save dialog is not `cmd: 'saveDialog'` at the top level.
-//      `save()` goes through `invokeTauriCommand`, so `__TAURI_IPC__` sees
-//      `cmd: 'tauri'` with the dialog module and request as sibling keys:
-//        { cmd: 'tauri', callback, error, __tauriModule: 'Dialog',
-//          message: { cmd: 'saveDialog', options } }
-//   2. The dialog must answer DIFFERENT paths on the first and the second call
-//      (Save, then Save As), so the mock holds a queue and shifts one path per
-//      dialog. Each test gets a fresh page, so each test gets a fresh queue.
-//   3. `listen('menu', …)` arrives as `__tauriModule: 'Event'` with
-//      `message.cmd: 'listen'` and the transformed callback id. The mock stores
-//      it and exposes `window.__emitMenu(id)`.
+//   1. The native save dialog arrives as a `tauri`/`Dialog` module call, not as
+//      a top-level `saveDialog` command. `dialogPaths` is a QUEUE: Save then
+//      Save As must get DIFFERENT paths, and each test gets a fresh queue.
+//   2. `listen('menu', …)` is captured, so `emitMenu` can deliver the event.
 
-function installIpcMock(page, dialogPaths) {
-  return page.addInitScript((paths) => {
-    const style = { bold: false, italic: false, underline: false, fontSize: null }
-    const doc = {
+const seededDoc = {
+  title: 'Chapter One',
+  author: 'Author Name',
+  authorContact: '',
+  hasTOC: false,
+  sections: [
+    {
+      id: 's-0',
       title: 'Chapter One',
-      author: 'Author Name',
-      authorContact: '',
-      hasTOC: false,
-      sections: [
+      sectionType: 'chapter',
+      hidden: false,
+      paragraphs: [
         {
-          id: 's-0',
-          title: 'Chapter One',
-          sectionType: 'chapter',
-          hidden: false,
-          paragraphs: [
+          id: 'p-0',
+          elements: [
             {
-              id: 'p-0',
-              elements: [
-                {
-                  textRun: {
-                    content: 'A short paragraph long enough to click on.',
-                    textStyle: style,
-                  },
-                },
-              ],
-              leftIndent: null,
-              rightIndent: null,
-              firstLineIndent: null,
+              textRun: {
+                content: 'A short paragraph long enough to click on.',
+                textStyle: { bold: false, italic: false, underline: false, fontSize: null },
+              },
             },
           ],
+          leftIndent: null,
+          rightIndent: null,
+          firstLineIndent: null,
         },
       ],
-    }
+    },
+  ],
+}
 
-    const queue = paths.slice()
-    window.__INVOKED__ = []
-    window.__TAURI_IPC__ = (req) => {
-      const ok = (r) => setTimeout(() => window['_' + req.callback](r), 0)
-      // The envelope keys are protocol plumbing; everything else is the command's
-      // own args (Tauri v1 spreads them at the top level).
-      const { cmd, callback: _cb, error: _err, ...payload } = req
-      window.__INVOKED__.push({ cmd, payload })
-      try {
-        if (
-          req.cmd === 'tauri' &&
-          req.__tauriModule === 'Dialog' &&
-          req.message?.cmd === 'saveDialog'
-        ) {
-          return ok(queue.length ? queue.shift() : null)
-        }
-        if (req.cmd === 'tauri' && req.__tauriModule === 'Event' && req.message?.cmd === 'listen') {
-          if (req.message.event === 'menu') {
-            window.__emitMenu = (itemId) =>
-              window['_' + req.message.handler]({ event: 'menu', id: 1, payload: itemId })
-          }
-          return ok(1)
-        }
-        if (req.cmd === 'get_document') return ok(doc)
-        if (req.cmd === 'list_roles') return ok([])
-        return ok(null)
-      } catch (e) {
-        setTimeout(() => window['_' + req.error]({ message: String(e) }), 0)
-      }
-    }
-  }, dialogPaths)
+function installIpcMock(page, dialogPaths) {
+  return installTauriIpc(page, { doc: seededDoc, dialogPaths })
 }
 
 async function open(page, dialogPaths) {
   await installIpcMock(page, dialogPaths)
   await page.goto('/')
   await page.waitForSelector('.editor-sheet .paragraph', { timeout: 5000 })
-  await expect
-    .poll(() => page.evaluate(() => typeof window.__emitMenu), { timeout: 3000 })
-    .toBe('function')
+  await waitForMenuListener(page)
 }
 
 async function savedTo(page, path) {
   await expect
     .poll(
-      () => page.evaluate((p) => window.__INVOKED__.some((c) => c.cmd === 'save_document' && c.payload?.path === p), path),
+      async () => {
+        const calls = await ipcCalls(page)
+        return calls.some((call) => call.cmd === 'save_document' && call.args?.path === path)
+      },
       { timeout: 3000 },
     )
     .toBe(true)
@@ -111,7 +75,7 @@ test.describe('save and save as', () => {
   test('S-022: a menu event with id save should save the document with no button clicked', async ({ page }) => {
     await open(page, ['/tmp/novel.rite'])
 
-    await page.evaluate(() => window.__emitMenu('save'))
+    await emitMenu(page, 'save')
     await savedTo(page, '/tmp/novel.rite')
 
     const bar = page.locator('.statusbar')
@@ -126,10 +90,10 @@ test.describe('save and save as', () => {
     // start from. Then Save As to a different name.
     await open(page, ['/tmp/novel.rite', '/tmp/renamed.rite'])
 
-    await page.evaluate(() => window.__emitMenu('save'))
+    await emitMenu(page, 'save')
     await savedTo(page, '/tmp/novel.rite')
 
-    await page.evaluate(() => window.__emitMenu('save_as'))
+    await emitMenu(page, 'save_as')
     await savedTo(page, '/tmp/renamed.rite')
 
     const bar = page.locator('.statusbar')

@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { installTauriIpc } from './helpers/tauri-ipc.js'
 
 // Hidden-section e2e (roadmap 5.10). Drives the full toggle chain in a real
 // browser: drawer eye badge → emit toggleHidden → store setSectionHidden
@@ -9,8 +10,9 @@ import { test, expect } from '@playwright/test'
 // (the empty .ms-para marker display:none'd by the page CSS), and toggling
 // back restores the heading.
 //
-// The harness runs pure Vite with no Tauri runtime, so the commands are
-// served by an IPC mock mirroring the real Rust contracts:
+// The harness runs pure Vite with no Tauri runtime, so the commands are served
+// by the shared IPC mock (./helpers/tauri-ipc.js) with routes mirroring the real
+// Rust contracts:
 //   - sync_document: journals/installs the shipped doc → () — the mock keeps
 //     its copy current so a later command's returned doc doesn't wipe typed
 //     text (the real backend holds the synced doc the same way).
@@ -43,39 +45,27 @@ const initialDoc = {
   ],
 }
 
-function installIpcMock(page) {
-  return page.addInitScript((doc) => {
+async function installIpcMock(page) {
+  await installTauriIpc(page)
+  await page.addInitScript((doc) => {
     let liveDoc = doc
-    window.__TAURI_IPC__ = (req) => {
-      const ok = (r) => setTimeout(() => window['_' + req.callback](r), 0)
-      const fail = (e) => setTimeout(() => window['_' + req.error](e), 0)
-      try {
-        // Tauri v1 spreads invoke args onto the IPC request — read both
-        // shapes defensively (same pattern as the other e2e specs).
-        const arg = (name) =>
-          req.args && req.args[name] !== undefined ? req.args[name] : req[name]
-        if (req.cmd === 'get_document') return ok(liveDoc)
-        if (req.cmd === 'list_roles') return ok([])
-        if (req.cmd === 'sync_document') {
-          liveDoc = arg('data')
-          return ok(null)
+    window.__tauriMock
+      .route('get_document', () => liveDoc)
+      .route('sync_document', (args) => {
+        liveDoc = args.data
+        return null
+      })
+      .route('set_section_hidden', (args) => {
+        const target = liveDoc.sections.find((s) => s.id === args.id)
+        if (!target) return window.__tauriMock.fail('ChangeSectionHidden: section not found')
+        liveDoc = {
+          ...liveDoc,
+          sections: liveDoc.sections.map((s) =>
+            s.id === args.id ? { ...s, hidden: Boolean(args.hidden) } : s,
+          ),
         }
-        if (req.cmd === 'set_section_hidden') {
-          const id = arg('id')
-          const hidden = Boolean(arg('hidden'))
-          const target = liveDoc.sections.find((s) => s.id === id)
-          if (!target) return fail({ message: 'ChangeSectionHidden: section not found' })
-          liveDoc = {
-            ...liveDoc,
-            sections: liveDoc.sections.map((s) => (s.id === id ? { ...s, hidden } : s)),
-          }
-          return ok(liveDoc)
-        }
-        return ok(null)
-      } catch (e) {
-        fail({ message: String(e) })
-      }
-    }
+        return liveDoc
+      })
   }, initialDoc)
 }
 
