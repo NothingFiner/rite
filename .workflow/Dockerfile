@@ -3,15 +3,15 @@ FROM node:22-bookworm
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Tauri build deps (webkit2gtk etc.), python for the orchestrator, xvfb in case you use tauri-driver.
-# The 4.0 / libsoup-2.4 generation is deliberate: this app is Tauri v1
-# (Cargo.toml: tauri = "1.6", resolved to 1.8.3 -> webkit2gtk 0.18 + soup2-sys),
-# and soup2-sys builds against `libsoup-2.4`. The 4.1 stack is Tauri v2 only and
-# leaves `cargo test` failing with "Package 'libsoup-2.4' ... not found".
-# If you ever move the app to Tauri v2, swap these three for the -4.1 packages.
+# The 4.1 / libsoup-3.0 generation is deliberate: this app is Tauri v2
+# (Cargo.toml: tauri = "2" -> webkit2gtk 2.x + soup3-sys), and soup3-sys builds
+# against `libsoup-3.0`. The 4.0 stack is Tauri v1 only and leaves `cargo test`
+# failing with "Package 'libsoup-3.0' ... not found" (the mirror of the note that
+# used to be here, which said to swap these three when the app moved to v2).
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git curl wget file ca-certificates build-essential pkg-config \
       python3 python3-yaml xvfb \
-      libwebkit2gtk-4.0-dev libjavascriptcoregtk-4.0-dev libsoup2.4-dev \
+      libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev \
       libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev \
     && rm -rf /var/lib/apt/lists/*
 
