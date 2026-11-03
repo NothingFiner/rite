@@ -259,7 +259,10 @@ const exportComposable = useExport()
 // (useFileIO.newFile) and then opens the prompt modal so a document is named
 // before its first save. Tauri v1 has no native text-input prompt and
 // `window.prompt` is blocked in the WKWebView, so this is a custom modal.
-const newDocument = useNewDocument({ fileIO, store })
+const newDocument = reactive(useNewDocument({ fileIO, store }))
+// reactive() here is load-bearing, not style: setup only auto-unwraps top-level
+// bindings, so on a plain object the template's `newDocument.showPrompt` would
+// receive the raw Ref — always truthy — and pin the prompt modal open.
 
 // The native menu's single event sink (1.9): Rust emits a `menu` window event
 // whose payload is the item id and this map runs the matching action. Called
