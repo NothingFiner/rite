@@ -111,9 +111,17 @@ async function selectWord(page, needle) {
 
 async function open(page) {
   await installTauriIpc(page, { doc: seededDoc })
-  await page.addInitScript((result) => {
-    window.__tauriMock.route('thesaurus_lookup', () => result)
-  }, LOOKUP_RESULT)
+  await page.addInitScript(
+    ({ result, doc }) => {
+      window.__tauriMock.route('thesaurus_lookup', () => result)
+      // The multi-word test uses Undo as a barrier: it is another app-owned menu
+      // item, so its IPC call proves the right-click had its chance to send one.
+      // The real command hands back the current document; model that here
+      // instead of teaching the store to tolerate an unusable reply.
+      window.__tauriMock.route('undo', () => doc)
+    },
+    { result: LOOKUP_RESULT, doc: seededDoc }
+  )
   await page.goto('/')
   await page.waitForSelector('.editor-sheet .paragraph', { timeout: 5000 })
   await waitForMenuListener(page)

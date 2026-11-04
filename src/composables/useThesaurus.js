@@ -153,6 +153,11 @@ export function useThesaurus() {
     if (!range || range.startContainer.nodeType !== Node.TEXT_NODE) return
 
     const textNode = range.startContainer
+    // Only the editor sheet is ours. A right-click on a chapter title in the
+    // drawer, in the assistant panel or on the status bar is not a thesaurus
+    // request, so the native menu stays there too.
+    if (!textNode.parentElement?.closest('.editor-sheet')) return
+
     const hit = wordAtOffset(textNode.textContent, range.startOffset)
     if (!hit) return
 
