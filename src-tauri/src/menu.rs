@@ -278,6 +278,16 @@ pub fn system_spell_check<R: Runtime>(
     spelling_impl::system_spell_check(window)
 }
 
+/// Read the webview's spell-check document tag, once, before the first word
+/// menu is ever popped.
+///
+/// Separate from [`system_spell_check`] because it needs the window at startup
+/// and because it is fire-and-forget: the answer arrives on the event loop and
+/// [`SpellingCheck::can_ignore`] reports `false` until it does.
+pub fn prime_spell_document_tag<R: Runtime>(window: &tauri::WebviewWindow<R>) {
+    spelling_impl::prime_spell_document_tag(window)
+}
+
 /// The macOS spell-check path behind [`system_spell_check`].
 ///
 /// objc 0.2's macros emit `cfg(cargo-clippy)` checks that the
@@ -290,8 +300,9 @@ mod spelling_impl {
     use crate::menu::SpellingCheck;
     use objc::msg_send;
     use objc::runtime::{BOOL, NO, Object};
-    use objc::sel;
+    use objc::{class, sel};
     use objc::sel_impl;
+    use std::sync::OnceLock;
     use tauri::Runtime;
 
     /// The system spell checker, via `NSSpellChecker`.
@@ -306,9 +317,9 @@ mod spelling_impl {
     }
 
     impl MacSpellChecker {
-        fn for_window<R: Runtime>(window: &tauri::Window<R>) -> Self {
+        fn for_window<R: Runtime>(_window: &tauri::Window<R>) -> Self {
             Self {
-                tag: webview_spell_document_tag(window),
+                tag: SPELL_DOCUMENT_TAG.get().copied(),
             }
         }
     }
@@ -396,21 +407,44 @@ mod spelling_impl {
     /// `respondsToSelector:` because it may vanish in a future WebKit; a
     /// `None` answer then drops the Ignore item (S-014) — never offer one
     /// that cannot take effect.
-    fn webview_spell_document_tag<R: Runtime>(window: &tauri::Window<R>) -> Option<isize> {
-        let wkwebview: *mut std::ffi::c_void =
-            window.webviews().into_iter().next()?.inner();
-        if wkwebview.is_null() {
-            return None;
-        }
-        let wkwebview = wkwebview as *mut Object;
-        objc::rc::autoreleasepool(|| unsafe {
+    /// The tag WebKit uses for this webview's spell-check document, once seen.
+    ///
+    /// `with_webview` hands the platform webview to a callback on the event
+    /// loop; it does not run inline, so the answer cannot be read synchronously
+    /// from a command running on the main thread without deadlocking the
+    /// dispatch. Instead the tag is read once, early (see
+    /// [`prime_spell_document_tag`]), and remembered here. Until it is known no
+    /// Ignore item is offered — the fallback S-014 asks for — rather than an
+    /// item that cannot take effect.
+    static SPELL_DOCUMENT_TAG: OnceLock<isize> = OnceLock::new();
+
+    /// Read the webview's spell-check document tag and remember it.
+    ///
+    /// Called once at startup. `_spellCheckerDocumentTag` is a private
+    /// property, so the send is guarded by `respondsToSelector:`; a WebKit that
+    /// stops publishing it simply leaves the tag unset.
+    pub fn prime_spell_document_tag<R: Runtime>(window: &tauri::WebviewWindow<R>) {
+        let _ = window.with_webview(|platform| {
+            let wkwebview = platform.inner() as *mut Object;
+            if wkwebview.is_null() {
+                return;
+            }
+            if let Some(tag) = unsafe { read_spell_document_tag(wkwebview) } {
+                let _ = SPELL_DOCUMENT_TAG.set(tag);
+            }
+        });
+    }
+
+    /// The private-property read itself. Every call is a message send, so it is
+    /// `unsafe` and must run inside an autorelease pool.
+    unsafe fn read_spell_document_tag(wkwebview: *mut Object) -> Option<isize> {
+        objc::rc::autoreleasepool(|| {
             let responds: BOOL =
                 msg_send![wkwebview, respondsToSelector: sel!(_spellCheckerDocumentTag)];
             if responds == NO {
                 return None;
             }
-            let tag: isize = msg_send![wkwebview, _spellCheckerDocumentTag];
-            Some(tag)
+            Some(msg_send![wkwebview, _spellCheckerDocumentTag])
         })
     }
 
@@ -442,6 +476,10 @@ mod spelling_impl {
 mod spelling_impl {
     use crate::menu::SpellingCheck;
     use tauri::Runtime;
+
+    /// No system spell checker is wired on this platform, so there is no tag
+    /// to read. Kept so `run` can prime unconditionally.
+    pub fn prime_spell_document_tag<R: Runtime>(_window: &tauri::WebviewWindow<R>) {}
 
     /// A stand-in for platforms with no wired checker.
     struct NoSpellChecker;
