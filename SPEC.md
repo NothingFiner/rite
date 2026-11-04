@@ -85,6 +85,32 @@ the Ignore item (S-014): never ship a menu item that cannot take effect.
 
 The command itself gains the word: `show_word_menu(window, x, y, word)`.
 
+### How the real checker is covered (added 2026-11-04, after two defects)
+
+Every menu test drives the `SpellingCheck` **fake**, so for a while not one line
+of the macOS implementation was ever executed. That let two defects through: the
+module did not compile (the headless harness builds Linux, where the non-macOS
+stand-in is what gets compiled), and it sent
+`isWordInUserDictionaries:caseSensitive:` — a name no `NSSpellChecker` answers,
+which raises `NSInvalidArgumentException` and terminates the app on the first
+right-click of a word.
+
+`src-tauri/tests/spell_checker.rs` closes both:
+
+- **Execute the read-only calls** against the real checker —
+  `is_flagged("zzqqxwv")` (a nonsense fixture word: true), `is_flagged("the")`
+  (false), `has_learned("zzqqxwv")` (false). A wrong selector here aborts the
+  test process, which is the signal we want.
+- **Ask about the mutating ones.** `learn`, `unlearn` and `ignore` write to the
+  running user's system dictionary, so a test must never send them.
+  `missing_spell_checker_selectors()` asks
+  `instancesRespondToSelector:` instead, driven by `SPELL_CHECKER_SELECTORS`.
+  **A new `msg_send!` in `spelling_impl` belongs in that list.**
+
+Rules: a test never calls `learn`, `unlearn` or `ignore`, and the read-only
+checker (`system_spell_check_readonly`) reports `can_ignore() == false` so this
+path is structurally incapable of ignoring.
+
 ### Amendments to existing tests (made by the spec author)
 
 - `src-tauri/tests/thesaurus.rs` `s_011_the_word_menu_is_one_thesaurus_item`

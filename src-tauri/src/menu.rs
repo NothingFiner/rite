@@ -278,6 +278,52 @@ pub fn system_spell_check<R: Runtime>(
     spelling_impl::system_spell_check(window)
 }
 
+/// Every selector the macOS implementation sends to `NSSpellChecker`.
+///
+/// A wrong selector is not a wrong answer: sending one raises
+/// `NSInvalidArgumentException` and terminates the app — which is how
+/// `isWordInUserDictionaries:caseSensitive:` took the whole application down on
+/// the first right-click of a word. So the names live here as data, and
+/// [`missing_spell_checker_selectors`] asks the runtime whether it can answer
+/// them. **A new send in `spelling_impl` belongs in this list.**
+pub const SPELL_CHECKER_SELECTORS: [&str; 5] = [
+    "checkSpellingOfString:startingAt:language:wrap:inSpellDocumentWithTag:wordCount:",
+    "hasLearnedWord:",
+    "learnWord:",
+    "unlearnWord:",
+    "ignoreWord:inSpellDocumentWithTag:",
+];
+
+/// Whether the system spell checker can answer `selector`.
+///
+/// Deliberately takes a string so a caller can pass a name that *should* be
+/// absent: that is how a test proves this probe is not vacuously true.
+pub fn spell_checker_responds(selector: &str) -> bool {
+    spelling_impl::spell_checker_responds(selector)
+}
+
+/// The selectors from [`SPELL_CHECKER_SELECTORS`] the system checker cannot
+/// answer: empty on macOS means every call this module makes is answerable.
+/// On platforms with no system checker, all of them are missing.
+pub fn missing_spell_checker_selectors() -> Vec<&'static str> {
+    SPELL_CHECKER_SELECTORS
+        .iter()
+        .copied()
+        .filter(|selector| !spell_checker_responds(selector))
+        .collect()
+}
+
+/// A checker for **read-only** questions: is this word flagged, is it learned.
+///
+/// No webview sits behind it, so it can neither learn nor ignore — `learn`,
+/// `unlearn` and `ignore` do nothing, and [`SpellingCheck::can_ignore`] is
+/// false. That is deliberate: the only caller is the regression test, and a
+/// test must never write to the running user's system dictionary. The spelling
+/// *actions* need a window precisely because they change state.
+pub fn system_spell_check_readonly() -> Box<dyn SpellingCheck + Send + Sync> {
+    spelling_impl::system_spell_check_readonly()
+}
+
 /// Read the webview's spell-check document tag, once, before the first word
 /// menu is ever popped.
 ///
@@ -469,6 +515,25 @@ mod spelling_impl {
     ) -> Box<dyn SpellingCheck + Send + Sync> {
         Box::new(MacSpellChecker::for_window(window))
     }
+
+    /// The read-only checker: same `NSSpellChecker`, but with no spell-check
+    /// document to ignore against, so `can_ignore` is false and `ignore` is a
+    /// no-op. Nothing about `is_flagged` or `has_learned` needs a webview.
+    pub fn system_spell_check_readonly() -> Box<dyn SpellingCheck + Send + Sync> {
+        Box::new(MacSpellChecker { tag: None })
+    }
+
+    /// `instancesRespondToSelector:` on the checker class — asking before
+    /// sending, which is the only way to test the mutating calls safely.
+    pub fn spell_checker_responds(selector: &str) -> bool {
+        let name = std::ffi::CString::new(selector)
+            .expect("selector names contain no interior NUL");
+        objc::rc::autoreleasepool(|| unsafe {
+            let sel = objc::runtime::Sel::register(name.to_str().expect("ascii selector"));
+            let responds: BOOL = msg_send![class!(NSSpellChecker), instancesRespondToSelector: sel];
+            responds != NO
+        })
+    }
 }
 
 /// The non-macOS path behind [`system_spell_check`]: no system spell checker
@@ -505,6 +570,15 @@ mod spelling_impl {
         fn unlearn(&self, _word: &str) {}
 
         fn ignore(&self, _word: &str) {}
+    }
+
+    pub fn system_spell_check_readonly() -> Box<dyn SpellingCheck + Send + Sync> {
+        Box::new(NoSpellChecker)
+    }
+
+    /// There is no system spell checker on this platform, so nothing answers.
+    pub fn spell_checker_responds(_selector: &str) -> bool {
+        false
     }
 
     pub fn system_spell_check<R: Runtime>(
