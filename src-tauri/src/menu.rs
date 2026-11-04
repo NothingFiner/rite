@@ -345,9 +345,11 @@ mod spelling_impl {
                     inSpellDocumentWithTag: self.tag.unwrap_or(0)
                     wordCount: &mut word_count
                 ];
-                // A single word was asked about, so a flagged answer starts
-                // at offset 0; NSNotFound (with nothing flagged) is not 0.
-                range.location == 0 && range.location != usize::MAX
+                // One word was asked about, so a flagged answer is the range
+                // at offset 0, and a clean word answers NSNotFound — which is
+                // `isize::MAX`, *not* `usize::MAX`, so it must not be compared
+                // against the latter. Offset 0 is the whole test.
+                range.location == 0
             })
         }
 
@@ -355,11 +357,12 @@ mod spelling_impl {
             objc::rc::autoreleasepool(|| unsafe {
                 let checker: *mut Object = msg_send![class!(NSSpellChecker), sharedSpellChecker];
                 let ns = ns_string(word);
-                let in_dictionaries: BOOL = msg_send![
-                    checker,
-                    isWordInUserDictionaries: ns caseSensitive: NO
-                ];
-                in_dictionaries != NO
+                // `hasLearnedWord:`. Not `isWordInUserDictionaries:caseSensitive:`
+                // — that name reads better but no NSSpellChecker on macOS
+                // responds to it, and an unrecognised selector terminates the
+                // app. Verified against the live class with `responds(to:)`.
+                let learned: BOOL = msg_send![checker, hasLearnedWord: ns];
+                learned != NO
             })
         }
 
