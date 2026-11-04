@@ -41,6 +41,12 @@ instructions: |
   3. Read the failing tests. Group the failures into work units whose file sets do NOT overlap.
      Write the plan to .workflow-out/plan-iter-<iteration>.md: each unit lists its S-IDs and the
      files it owns.
+     The failures file opens with a Scope section. If it names one layer and a count, those
+     failures — and only those — are your work for this iteration. The failures listed under
+     Deferred are out of scope: do not plan units for them, do not widen a unit to reach them.
+     A shared helper that also happens to repair a deferred test is fine; editing to make one
+     deferred test pass is not. If the Scope section says all failures are in scope, group them
+     as before and do the smallest coherent unit rather than all of them.
   4. Delegate each unit to the coder sub-recipe, one at a time (never in parallel; they share one
      working tree). Give each coder its task, the S-IDs, and its owned paths.
   5. You may run a layer's command from config to sanity-check, but the orchestrator is the

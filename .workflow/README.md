@@ -40,6 +40,57 @@ goose recipe: spec-to-tests              run-headless.sh -> orchestrator.py
    check, then stops before the first goose call (~90s, no API cost):
    `.workflow/run-headless.sh feature/<branch> <pr> --baseline-only`
 
+## What the planner is asked to fix (iteration scoping)
+
+An iteration briefed with every failure produces a lot of partial work. Measured on
+this repo, a planner given eight failures across three languages grouped them into two
+work units, both units "implemented the full spec", and the run ended in a
+`needs_human` objection having fixed nothing. The cost is not the test run — all three
+layers together are ~94 s. It is the model calls, which are ~86% of an iteration.
+
+So each iteration is briefed on **one layer, at most `limits.failures_in_scope`
+failures from it** (default 3). The planner is told the rest are deferred, in the same
+file it already reads, so no extra recipe parameter is needed:
+
+```
+## Scope — rust only, 3 of 8 failures
+Fix these 3 tests, and nothing else. The other 5 failures are listed under
+*Deferred* at the bottom of this file...
+```
+
+**This is a focus instruction, not a filter.** Every layer still runs every iteration,
+and a run is still green only when *every* test passes. Nothing about the verdict
+changed.
+
+Ranking is by cohesion, not ease: the largest S-ID family first, because tests that
+share a sentence tend to share a helper. Three tests one helper away from green is one
+piece of work; three "easy" tests from three families are three contexts, which is the
+problem with a smaller number.
+
+Three guards keep it from becoming a way to avoid work:
+
+- **starvation** — a layer red and unselected for 2 iterations is forced next, however
+  many failures another layer has.
+- **stall** — an iteration that clears none of its in-scope tests drops the next scope
+  to a single test, and tests already attempted sink below untried ones in their
+  family. That is the B1 arm as an escalation state rather than a separate mode.
+- **churn** — narrowing the work means the failing *set* changes every iteration, so
+  the existing "same failing set" escalation would never fire. A second counter
+  (`no_gain`: iterations with no reduction in the total) reaches `needs_human` and the
+  strong model by the other signature.
+
+`scope_depends_on` keeps `e2e` out of the rotation while `unit` or `rust` is red: every
+e2e failure is a symptom of a vue or rust defect, and playwright is the slowest thing
+to boot.
+
+**Set `limits.failures_in_scope: 0` to disable all of this** — every failure reaches the
+planner exactly as before. That is the control arm if you want to compare the two, and
+the reason this is one config key rather than a branch.
+
+`progress.jsonl` records `scope_layer`, `scope_in`, `scope_deferred` and
+`scope_cleared` per iteration. Failures cleared per model call is the rate that stays
+comparable when one feature is harder than the last.
+
 ## Coding standards the coder reads
 The coder is handed the project's coding standards before it writes code. They are
 **copied in at launch**, never vendored here, so the copy cannot drift from the source:
