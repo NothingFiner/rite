@@ -2670,6 +2670,7 @@ dependencies = [
 name = "rite"
 version = "0.1.0"
 dependencies = [
+ "brotli",
  "chrono",
  "futures-util",
  "objc",

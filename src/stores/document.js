@@ -183,6 +183,13 @@ export const useDocumentStore = defineStore('document', {
         // no-ops on an unchanged doc, so no spurious undo step is created.
         await this.syncToRust()
         const updated = await invoke('undo')
+        if (!updated || !Array.isArray(updated.sections)) {
+          // Not a document: the real command always returns the current document
+          // (Ok(doc.clone())) even with no history to undo, so an unusable reply is
+          // a broken IPC contract, never something to adopt. Treat as a no-op: the
+          // open document stays exactly as it was.
+          return
+        }
         this.doc = updated
         this.isModified = true
         this.docVersion++
@@ -198,6 +205,13 @@ export const useDocumentStore = defineStore('document', {
         // redo after a new edit) before reapplying the next forward delta.
         await this.syncToRust()
         const updated = await invoke('redo')
+        if (!updated || !Array.isArray(updated.sections)) {
+          // Not a document: the real command always returns the current document
+          // (Ok(doc.clone())) even with no history to redo, so an unusable reply is
+          // a broken IPC contract, never something to adopt. Treat as a no-op: the
+          // open document stays exactly as it was.
+          return
+        }
         this.doc = updated
         this.isModified = true
         this.docVersion++
