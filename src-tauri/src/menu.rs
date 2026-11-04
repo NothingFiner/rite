@@ -4,16 +4,17 @@
 //! contract (which items exist, which ids this app owns) can be asserted without
 //! a runtime. [`build_menu`] is the only place that touches Tauri's menu types,
 //! and [`menu_event`] is the single authority on which ids this app owns: the
-//! File items plus undo/redo emit the [`MENU_EVENT_NAME`] window event, while
-//! native items (quit, hide, clipboard, window) and separators never emit —
-//! the OS or the webview handles them.
+//! File items plus undo/redo and the on-demand word menu's item emit the
+//! [`MENU_EVENT_NAME`] window event, while native items (quit, hide, clipboard,
+//! window) and separators never emit — the OS or the webview handles them.
 //!
 //! Tauri v2 needs a `Manager` to create any menu object (v1 menu types were
 //! plain structs), so `build_menu` and `app_menu` take one and return a
 //! `Result`. The definition, the ids and the event mapping are unchanged.
 
 use tauri::menu::{
-    IsMenuItem, Menu, MenuBuilder, MenuItem, PredefinedMenuItem, Submenu, SubmenuBuilder,
+    ContextMenu, IsMenuItem, Menu, MenuBuilder, MenuItem, PredefinedMenuItem, Submenu,
+    SubmenuBuilder,
 };
 use tauri::{Manager, Runtime};
 
@@ -67,6 +68,48 @@ pub struct MenuEvent {
 
 /// The window event name the frontend listens for.
 pub const MENU_EVENT_NAME: &str = "menu";
+
+/// The id of the thesaurus item on the right-click word menu.
+///
+/// This id never appears in the static application menu: it is only offered
+/// for a single word, so it is built on demand by [`show_word_menu`]. It still
+/// flows through [`menu_event`], so activation travels the same window event
+/// as every other app-owned item.
+pub const THESAURUS_ITEM_ID: &str = "thesaurus";
+
+/// The one-item menu popped over a right-clicked word.
+///
+/// Plain data on purpose: the contract (one item, this id, this label) is
+/// assertable without a runtime, and building the real menu needs a `Manager`.
+pub fn word_menu_definition() -> Vec<MenuNode> {
+    vec![MenuNode::Item {
+        id: THESAURUS_ITEM_ID,
+        label: "Thesaurus…",
+        accelerator: None,
+    }]
+}
+
+/// Pop the word menu at the click point, in window coordinates.
+///
+/// `x` and `y` come from the browser's `contextmenu` event, which reports
+/// viewport pixels; the webview fills the window, so they are window pixels.
+#[tauri::command]
+pub fn show_word_menu<R: Runtime>(window: tauri::Window<R>, x: f64, y: f64) -> Result<(), String> {
+    let menu = Menu::new(&window).map_err(|error| error.to_string())?;
+    // The definition is one item today; build whatever plain data says, the
+    // same way `submenu` builds the static menu, and keep the items alive until
+    // the popup has run (muda keeps owning refs to what it is given).
+    let entries = word_menu_definition()
+        .iter()
+        .map(|node| node_entry(&window, node))
+        .collect::<tauri::Result<Vec<Box<dyn IsMenuItem<R>>>>>()
+        .map_err(|error| error.to_string())?;
+    for entry in &entries {
+        menu.append(entry.as_ref()).map_err(|error| error.to_string())?;
+    }
+    menu.popup_at(window, tauri::LogicalPosition::new(x, y))
+        .map_err(|error| error.to_string())
+}
 
 /// The canonical menu definition.
 pub fn definition() -> MenuDefinition {
@@ -179,9 +222,18 @@ pub fn definition() -> MenuDefinition {
 /// The event for an activated menu item id, or `None` when this app does not own it.
 ///
 /// Read straight from [`definition`], so the data is the single source of
-/// truth: exactly the File items plus undo/redo own an event; everything else
-/// — separators, native items, unknown strings — yields `None`.
+/// truth: exactly the File items plus undo/redo own an event, as does the
+/// on-demand word menu's [`THESAURUS_ITEM_ID`]; everything else — separators,
+/// native items, unknown strings — yields `None`.
 pub fn menu_event(menu_item_id: &str) -> Option<MenuEvent> {
+    // The word menu is not in `definition` (it is built on demand, never in
+    // the menu bar), so its id is recognised here beside the static items.
+    if menu_item_id == THESAURUS_ITEM_ID {
+        return Some(MenuEvent {
+            name: MENU_EVENT_NAME,
+            id: THESAURUS_ITEM_ID,
+        });
+    }
     let definition = definition();
     definition
         .file
