@@ -69,6 +69,18 @@ pub struct MenuEvent {
 /// The window event name the frontend listens for.
 pub const MENU_EVENT_NAME: &str = "menu";
 
+/// Every id the right-click word menu owns, beside the static menu items.
+///
+/// The thesaurus route re-emits to the frontend (the popover lives in JS); the
+/// spelling routes are handled entirely in Rust, because the system spell
+/// checker has no JS API.
+pub const WORD_MENU_ITEM_IDS: [&str; 4] = [
+    THESAURUS_ITEM_ID,
+    LEARN_SPELLING_ITEM_ID,
+    UNLEARN_SPELLING_ITEM_ID,
+    IGNORE_SPELLING_ITEM_ID,
+];
+
 /// The id of the thesaurus item on the right-click word menu.
 ///
 /// This id never appears in the static application menu: it is only offered
@@ -77,16 +89,70 @@ pub const MENU_EVENT_NAME: &str = "menu";
 /// as every other app-owned item.
 pub const THESAURUS_ITEM_ID: &str = "thesaurus";
 
-/// The one-item menu popped over a right-clicked word.
+/// The id of the spell-checker items on the right-click word menu.
 ///
-/// Plain data on purpose: the contract (one item, this id, this label) is
+/// App-owned like [`THESAURUS_ITEM_ID`]: Tauri v2 has no predefined spelling
+/// item, so the action runs in Rust against the system spell checker.
+pub const LEARN_SPELLING_ITEM_ID: &str = "learn_spelling";
+pub const UNLEARN_SPELLING_ITEM_ID: &str = "unlearn_spelling";
+pub const IGNORE_SPELLING_ITEM_ID: &str = "ignore_spelling";
+
+/// What the spell checker knows about the word under the pointer.
+///
+/// Plain data: the word menu is a function of this and nothing else, so every
+/// ordering rule is assertable without a webview, a runtime or AppKit.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SpellingState {
+    /// The checker marks the word as misspelled.
+    pub flagged: bool,
+    /// The word is in the user's learned words.
+    pub learned: bool,
+    /// An ignore can be recorded against the webview's own spell-check
+    /// document. False when WebKit will not report its tag, in which case an
+    /// Ignore item could not clear the marker and is left out.
+    pub can_ignore: bool,
+}
+
+/// The spell checker, as far as the word menu needs it.
+///
+/// A trait rather than direct `NSSpellChecker` calls so tests can drive the
+/// menu without touching the user's real learned-words list (`learn()` mutates
+/// it), and so the whole menu is testable on a machine with no WKWebView.
+pub trait SpellingCheck {
+    /// Whether the checker marks `word` as misspelled.
+    fn is_flagged(&self, word: &str) -> bool;
+    /// Whether `word` is already in the user's learned words.
+    fn has_learned(&self, word: &str) -> bool;
+    /// Whether an ignore can be recorded at all (see [`SpellingState::can_ignore`]).
+    fn can_ignore(&self) -> bool;
+    /// Add `word` to the user's learned words.
+    fn learn(&self, word: &str);
+    /// Remove `word` from the user's learned words.
+    fn unlearn(&self, word: &str);
+    /// Ignore `word` for the webview's spell-check document, without learning it.
+    fn ignore(&self, word: &str);
+}
+
+/// Ask the checker about `word`: the one query the word menu makes.
+pub fn spelling_state(_check: &dyn SpellingCheck, _word: &str) -> SpellingState {
+    todo!("S-008: flagged/learned/can_ignore for the right-clicked word")
+}
+
+/// Run an app-owned spelling item. Returns an error for an id this does not own.
+pub fn apply_spelling_action(
+    _check: &dyn SpellingCheck,
+    _id: &str,
+    _word: &str,
+) -> Result<(), String> {
+    todo!("S-009/S-010: learn, unlearn or ignore the word the menu was opened on")
+}
+
+/// The menu popped over a right-clicked word.
+///
+/// Plain data on purpose: the contract (order, ids, which items are native) is
 /// assertable without a runtime, and building the real menu needs a `Manager`.
-pub fn word_menu_definition() -> Vec<MenuNode> {
-    vec![MenuNode::Item {
-        id: THESAURUS_ITEM_ID,
-        label: "Thesaurus…",
-        accelerator: None,
-    }]
+pub fn word_menu_definition(_spelling: SpellingState) -> Vec<MenuNode> {
+    todo!("S-001/S-002/S-003/S-014: thesaurus, edit items, then spelling items")
 }
 
 /// Pop the word menu at the click point, in window coordinates.
@@ -94,21 +160,13 @@ pub fn word_menu_definition() -> Vec<MenuNode> {
 /// `x` and `y` come from the browser's `contextmenu` event, which reports
 /// viewport pixels; the webview fills the window, so they are window pixels.
 #[tauri::command]
-pub fn show_word_menu<R: Runtime>(window: tauri::Window<R>, x: f64, y: f64) -> Result<(), String> {
-    let menu = Menu::new(&window).map_err(|error| error.to_string())?;
-    // The definition is one item today; build whatever plain data says, the
-    // same way `submenu` builds the static menu, and keep the items alive until
-    // the popup has run (muda keeps owning refs to what it is given).
-    let entries = word_menu_definition()
-        .iter()
-        .map(|node| node_entry(&window, node))
-        .collect::<tauri::Result<Vec<Box<dyn IsMenuItem<R>>>>>()
-        .map_err(|error| error.to_string())?;
-    for entry in &entries {
-        menu.append(entry.as_ref()).map_err(|error| error.to_string())?;
-    }
-    menu.popup_at(window, tauri::LogicalPosition::new(x, y))
-        .map_err(|error| error.to_string())
+pub fn show_word_menu<R: Runtime>(
+    _window: tauri::Window<R>,
+    _x: f64,
+    _y: f64,
+    _word: String,
+) -> Result<(), String> {
+    todo!("S-008: ask the spell checker about `word`, then pop the menu it yields")
 }
 
 /// The canonical menu definition.
@@ -227,11 +285,14 @@ pub fn definition() -> MenuDefinition {
 /// native items, unknown strings — yields `None`.
 pub fn menu_event(menu_item_id: &str) -> Option<MenuEvent> {
     // The word menu is not in `definition` (it is built on demand, never in
-    // the menu bar), so its id is recognised here beside the static items.
-    if menu_item_id == THESAURUS_ITEM_ID {
+    // the menu bar), so its ids are recognised here beside the static items.
+    if let Some(id) = WORD_MENU_ITEM_IDS
+        .iter()
+        .find(|candidate| **candidate == menu_item_id)
+    {
         return Some(MenuEvent {
             name: MENU_EVENT_NAME,
-            id: THESAURUS_ITEM_ID,
+            id,
         });
     }
     let definition = definition();
