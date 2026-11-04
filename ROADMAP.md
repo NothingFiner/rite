@@ -1,8 +1,8 @@
 # Rite — Roadmap
 
-Status as of **2026-11-03**, `development` at `d7b9271` (native menu #13 and the test-harness PR #14 merged).
+Status as of **2026-11-04**, `development` at `c57b4c9` (word menu #17 and iteration scoping #18 merged).
 
-Tauri v1 → v2 migration is in flight on `chore/tauri-v2-migration` (PR #15) — a prerequisite for 5.11's context menu, not a roadmap item of its own.
+Tauri v1 → v2 migration landed as PR #15 — a prerequisite for 5.11's context menu, not a roadmap item of its own.
 
 **Numbering rule:** IDs are stable. A moved item keeps a pointer at its old ID instead of being renumbered, so commit messages, branch names and old notes stay resolvable. New work takes the next free number in its phase.
 
@@ -17,7 +17,7 @@ The last feature phase. When this is done, Rite is feature-complete for a first 
 | 5.1 | View-aware navigation / page preservation | done |
 | 5.2 | Drawer / view IA restructure | done |
 | 5.3 | Focus / typewriter mode | done (#1) |
-| **5.4** | **Writing stats: per-session word target + progress graph in a sidebar item** | **open — scoped 2026-11-03** |
+| **5.4** | **Writing stats: per-session word target + progress graph in a sidebar item** | **open — spec in progress, `feature/5.4-writing-stats`** |
 | 5.5 | Outline drag-reorder + `MoveSection` | done |
 | 5.6 | Editor extraction (cursor → page-nav → readback → render) | done (PR1–4) |
 | **5.7** | **Accessibility pass** | **open** |
@@ -28,9 +28,9 @@ The last feature phase. When this is done, Rite is feature-complete for a first 
 | **5.12** | **History diff next/previous change navigation** | **open — moved from 6.1** |
 | **5.13** | **Move the colour/theme picker into Text Options (with font, zoom, margins)** | **open — new, 2026-11-03** |
 | 5.14 | `NSSpellChecker` spelling actions | absorbed into 5.15 |
-| **5.15** | **Restored word menu: Cut / Copy / Paste / Select All + Learn / Ignore Spelling** | **open — next spec** |
+| 5.15 | Restored word menu: Cut / Copy / Paste / Select All + Learn / Ignore Spelling | done (#17) |
 
-### 5.15 — Restored word menu
+### 5.15 — Restored word menu (done, #17)
 
 5.11 replaced WKWebView's right-click menu over a single word with a one-item
 `Thesaurus…` menu, which removed the standard editing items and the spell-check
