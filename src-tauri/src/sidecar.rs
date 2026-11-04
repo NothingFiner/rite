@@ -109,15 +109,17 @@ fn sidecar_file_path(indexes_dir: &Path, manuscript_path: &str) -> PathBuf {
 /// Split out from [`indexes_dir`] so the failure branch is testable without a
 /// Tauri runtime.
 pub fn indexes_dir_in(base: Option<PathBuf>) -> Result<PathBuf, String> {
-    todo!("resolve the index sidecar dir from an explicit app-data base (SPEC S-017)")
+    match base {
+        Some(base) => Ok(base.join("indexes")),
+        None => Err("could not resolve app data dir".to_string()),
+    }
 }
 
 fn indexes_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
-    let base = app
-        .path()
+    app.path()
         .app_data_dir()
-        .map_err(|e| format!("could not resolve app data dir: {}", e))?;
-    Ok(base.join("indexes"))
+        .map_err(|e| format!("could not resolve app data dir: {}", e))
+        .and_then(|base| indexes_dir_in(Some(base)))
 }
 
 /// Parse a sidecar JSON string into a `Sidecar`. A file whose `schemaVersion` is

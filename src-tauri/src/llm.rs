@@ -281,13 +281,10 @@ fn role_file_text(name: &str, description: &str, persona_body: &str) -> String {
 /// Resolve `<app_data_dir>/roles/`, creating it on first use. Returns the dir
 /// path or a clear error string.
 fn roles_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let base = app
-        .path()
+    app.path()
         .app_data_dir()
-        .map_err(|e| format!("could not resolve app data dir: {}", e))?;
-    let dir = base.join("roles");
-    fs::create_dir_all(&dir).map_err(|e| format!("could not create roles dir: {}", e))?;
-    Ok(dir)
+        .map_err(|e| format!("could not resolve app data dir: {}", e))
+        .and_then(|base| roles_dir_in(Some(base)))
 }
 
 /// Resolve `<base>/roles/` from an already-resolved app-data base, creating the
@@ -299,7 +296,13 @@ fn roles_dir(app: &AppHandle) -> Result<PathBuf, String> {
 /// Tauri runtime: v2 returns a `Result` instead of an `Option`, and the whole
 /// point of the migration's error handling is that this branch is exercised.
 pub fn roles_dir_in(base: Option<PathBuf>) -> Result<PathBuf, String> {
-    todo!("resolve the roles dir from an explicit app-data base (SPEC S-016)")
+    let base = match base {
+        Some(base) => base,
+        None => return Err("could not resolve app data dir".to_string()),
+    };
+    let dir = base.join("roles");
+    fs::create_dir_all(&dir).map_err(|e| format!("could not create roles dir: {}", e))?;
+    Ok(dir)
 }
 
 /// Built-in + user roles for an already-resolved app-data base. A missing
@@ -308,24 +311,31 @@ pub fn roles_dir_in(base: Option<PathBuf>) -> Result<PathBuf, String> {
 ///
 /// Split out from [`list_roles`] for the same reason as [`roles_dir_in`].
 pub fn list_roles_from(base: Option<PathBuf>) -> Result<Vec<RoleInfo>, String> {
-    todo!("list built-in and user roles from an explicit app-data base (SPEC S-018)")
+    let base = match base {
+        Some(base) => base,
+        None => return Err("could not resolve app data dir".to_string()),
+    };
+    Ok(merge_roles(
+        &built_in_roles(),
+        &load_user_roles(&base.join("roles")),
+    ))
 }
 
 /// List all available roles (built-in + user), sorted alphabetically by name.
 /// The frontend selects a sensible default (Writing Assistant) when present.
 /// Composing the body here (base + persona) means the frontend sends the result
-/// verbatim as the system prompt — no client-side assembly. Returns `Vec` (not
-/// `Result`) so a corrupted user dir never breaks the assistant — `load_user_roles`
-/// skips bad files and returns empty if the dir is missing. `AppHandle` is
+/// verbatim as the system prompt — no client-side assembly. A corrupted user
+/// dir never breaks the assistant — `load_user_roles` skips bad files and a
+/// missing user dir is empty — but an unresolvable app data dir IS an error
+/// (the v1 built-ins-only swallow is gone): the alternative is silently reading
+/// and writing somewhere the user will never find. `AppHandle` is
 /// auto-injected by Tauri, so the JS `invoke('list_roles')` call is unchanged.
 #[tauri::command]
-pub fn list_roles(app: AppHandle) -> Vec<RoleInfo> {
-    let built_ins = built_in_roles();
-    let user = match app.path().app_data_dir().ok() {
-        Some(base) => load_user_roles(&base.join("roles")),
-        None => vec![],
-    };
-    merge_roles(&built_ins, &user)
+pub fn list_roles(app: AppHandle) -> Result<Vec<RoleInfo>, String> {
+    app.path()
+        .app_data_dir()
+        .map_err(|e| format!("could not resolve app data dir: {}", e))
+        .and_then(|base| list_roles_from(Some(base)))
 }
 
 /// Save (create or overwrite) a user role as `roles/{sanitize(name)}.md` in
