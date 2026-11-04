@@ -68,6 +68,31 @@ pub struct MenuEvent {
 /// The window event name the frontend listens for.
 pub const MENU_EVENT_NAME: &str = "menu";
 
+/// The id of the thesaurus item on the right-click word menu.
+///
+/// This id never appears in the static application menu: it is only offered
+/// for a single word, so it is built on demand by [`show_word_menu`]. It still
+/// flows through [`menu_event`], so activation travels the same window event
+/// as every other app-owned item.
+pub const THESAURUS_ITEM_ID: &str = "thesaurus";
+
+/// The one-item menu popped over a right-clicked word.
+///
+/// Plain data on purpose: the contract (one item, this id, this label) is
+/// assertable without a runtime, and building the real menu needs a `Manager`.
+pub fn word_menu_definition() -> Vec<MenuNode> {
+    Vec::new()
+}
+
+/// Pop the word menu at the click point, in window coordinates.
+///
+/// `x` and `y` come from the browser's `contextmenu` event, which reports
+/// viewport pixels; the webview fills the window, so they are window pixels.
+#[tauri::command]
+pub fn show_word_menu(_window: tauri::WebviewWindow, _x: f64, _y: f64) -> Result<(), String> {
+    todo!("build word_menu_definition() and pop it at (x, y) (SPEC S-011)")
+}
+
 /// The canonical menu definition.
 pub fn definition() -> MenuDefinition {
     MenuDefinition {

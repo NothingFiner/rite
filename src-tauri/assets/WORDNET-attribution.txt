@@ -1,0 +1,20 @@
+The thesaurus dataset in this directory (thesaurus.tsv.br) is derived from
+English WordNet 2020.
+
+English WordNet 2020
+  https://github.com/globalwordnet/english-wordnet
+  Licensed under the Creative Commons Attribution 4.0 International licence
+  (CC BY 4.0): https://creativecommons.org/licenses/by/4.0/
+
+English WordNet 2020 is itself derived from Princeton WordNet 3.0:
+  Princeton University, "About WordNet", https://wordnet.princeton.edu
+  WordNet 3.0 Copyright 2006 by Princeton University. All rights reserved.
+  The Princeton WordNet licence is reproduced at
+  https://wordnet.princeton.edu/license-and-commercial-use
+
+What was changed: WordNet's synsets were flattened to one row per sense
+(lemma, part of speech, sense number, gloss, synonyms, antonyms), multi-word
+lemmas were dropped, and the result was compressed with brotli. The generator
+is scripts/build-thesaurus.py; the licence of the derived asset is unchanged.
+
+This attribution must travel with the asset: CC BY 4.0 requires it.

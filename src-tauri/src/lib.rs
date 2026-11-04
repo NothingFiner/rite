@@ -32,6 +32,7 @@ pub mod sidecar;
 pub mod state;
 pub mod structure;
 pub mod summary;
+pub mod thesaurus;
 
 use commands::{
     apply_text_style, autosave_document, change_section_type, delete_section, diff_against_current,
@@ -46,10 +47,11 @@ use export_text::export_text;
 use llm::{
     delete_role, list_roles, llm_cancel, llm_chat, llm_chat_stream, llm_list_models, save_role,
 };
-use menu::{app_menu, menu_event, MENU_EVENT_NAME};
+use menu::{app_menu, menu_event, show_word_menu, MENU_EVENT_NAME};
 use retrieval::{embed_texts, reembed_document, retrieve_passages};
 use state::AppState;
 use structure::structural_signals;
+use thesaurus::thesaurus_lookup;
 use summary::{
     retrieve_stale_summary_section_ids, retrieve_summaries, summarize_and_store_section,
 };
@@ -191,6 +193,8 @@ pub fn run() {
             structural_signals,
             summarize_and_store_section,
             retrieve_summaries,
+            thesaurus_lookup,
+            show_word_menu,
             retrieve_stale_summary_section_ids,
         ])
         .run(tauri::generate_context!())

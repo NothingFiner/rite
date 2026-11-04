@@ -139,6 +139,21 @@
       @select-theme="theme.selectTheme"
     />
 
+    <!-- Thesaurus popover (5.11). Anchored at the right-click point; mounted
+         once, outside the editor, because the takeover listener lives on
+         `document` — the editor sheet itself is untouched. -->
+    <ThesaurusPopover
+      :visible="thesaurus.state.open"
+      :word="thesaurus.state.word"
+      :senses="thesaurus.state.senses"
+      :loading="thesaurus.state.loading"
+      :error="thesaurus.state.error"
+      :x="thesaurus.state.x"
+      :y="thesaurus.state.y"
+      @apply="thesaurus.apply"
+      @cancel="thesaurus.close"
+    />
+
     <!-- Toast notifications overlay. Mounted once at the root so it sits above
          every drawer, panel, and the status bar. -->
     <Toaster />
@@ -172,6 +187,7 @@ import { useSectionFormat } from './composables/useSectionFormat.js'
 import { useFocusMode } from './composables/useFocusMode.js'
 import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts.js'
 import { createMenuActions, useMenuActions } from './composables/useMenu.js'
+import { useThesaurus } from './composables/useThesaurus.js'
 import { useNewDocument } from './composables/useNewDocument.js'
 import { useVersionHistory } from './composables/useVersionHistory.js'
 import { useLlmSettings } from './composables/useLlmSettings.js'
@@ -195,6 +211,7 @@ import ActivityBar from './components/ActivityBar.vue'
 import LlmPanel from './components/LlmPanel.vue'
 import Toaster from './components/Toaster.vue'
 import PromptModal from './components/PromptModal.vue'
+import ThesaurusPopover from './components/ThesaurusPopover.vue'
 
 const store = useDocumentStore()
 const { doc } = storeToRefs(store)
@@ -267,7 +284,17 @@ const newDocument = reactive(useNewDocument({ fileIO, store }))
 // The native menu's single event sink (1.9): Rust emits a `menu` window event
 // whose payload is the item id and this map runs the matching action. Called
 // in setup so the `listen` registration lands during app load.
-const menuActions = createMenuActions({ store, fileIO, exports: exportComposable, newDocument })
+// Thesaurus (5.11): the document-level contextmenu listener decides whether a
+// right-click belongs to the app; if it does, Rust pops the one-item word menu
+// and its activation arrives through the same `menu` event as every other item.
+const thesaurus = reactive(useThesaurus())
+const menuActions = createMenuActions({
+  store,
+  fileIO,
+  exports: exportComposable,
+  newDocument,
+  thesaurus,
+})
 useMenuActions(menuActions)
 const format = reactive(useFormat(editorRef, store.markModified.bind(store)))
 const sectionFormat = reactive(useSectionFormat())
