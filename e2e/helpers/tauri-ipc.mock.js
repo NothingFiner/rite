@@ -1,174 +1,209 @@
-// Page-side half of the shared Tauri v1 IPC mock.
+// Page-side half of the shared Tauri IPC mock — **Tauri v2 envelope**.
 //
-// This file is NOT a module and is never imported. Playwright injects it with
-// `page.addInitScript({ path })` (see ./tauri-ipc.js), so it must be a plain
-// script that runs in the browser before the app bundle.
+// A plain script on purpose: Playwright's `addInitScript` cannot import ESM, so
+// `mockIPC` from `@tauri-apps/api/mocks` is not usable from an injected page
+// script. This file is the vendored replacement, and it is the ONLY place that
+// knows the wire shape.
 //
-// Why it exists: Tauri v1's IPC envelope is easy to get subtly wrong, and every
-// hand-rolled copy was wrong in a different way. The protocol is:
+// Tauri v2 (unlike v1) is a promise API:
 //
-//   invoke(cmd, args)  ->  window.__TAURI_IPC__({ cmd, callback, error, ...args })
+//   invoke(cmd, args)  ->  window.__TAURI_INTERNALS__.invoke(cmd, args, options)
 //
-// (tauri.js does exactly that spread), so command arguments arrive as SIBLING
-// keys of the request, not under `args`. The reply is NOT returned: the Rust
-// side calls back into `window['_' + request.callback](payload)`, and failures
-// go to `window['_' + request.error](error)`. A mock that returns a value, that
-// looks for `req.payload`, or that answers `saveDialog` at the top level never
-// reaches the caller. This file owns that plumbing once.
+// `listen()` is not special-cased any more — it is `invoke('plugin:event|listen',
+// { event, target, handler })` where `handler` is an id minted by
+// `__TAURI_INTERNALS__.transformCallback`. Dialogs are `plugin:dialog|save`,
+// `plugin:dialog|open` and `plugin:dialog|message` (note: `ask()` is a `message`
+// with `buttons: 'YesNo'` and resolves to the pressed *label*).
 //
-// Specs register plain `cmd -> (args, request) => result` routes, which is the
-// same shape as `mockIPC` from `@tauri-apps/api/mocks` — but usable from an
-// injected page script, where no ESM import is available.
+// A spec must never touch `window.__TAURI_INTERNALS__` itself, and must never
+// reintroduce the v1 global this file replaced: use
+// `installTauriIpc()` from `e2e/helpers/tauri-ipc.js`, register behaviour with
+// `window.__tauriMock.route(cmd, handler)`, and dispatch menu events with
+// `emitMenu(page, id)`. `e2e/conventions.spec.js` enforces that.
 //
-// Usage from a spec:
+// Usage from a spec (inside `page.addInitScript`):
 //
-//   await page.addInitScript((doc) => {
-//     let live = doc
-//     window.__tauriMock
-//       .route('get_document', () => live)
-//       .route('sync_document', (args) => { live = args.data; return null })
-//   }, initialDoc)
+//   window.__tauriMock
+//     .route('save_document', (args) => { written = args; return null })
+//     .route('get_document', () => doc)
 //
-// Returning `window.__tauriMock.fail(message)` rejects the call instead of
-// resolving it.
+//   return window.__tauriMock.fail('ChangeSectionHidden: section not found')
+//
+// returns a rejected promise from the app's point of view.
+
 ;(function () {
   'use strict'
 
-  // Request keys that are protocol plumbing. Everything else on the request is
-  // the command's own argument (Tauri v1 spreads `invoke` args at top level).
-  var PROTOCOL_KEYS = ['cmd', 'callback', 'error', '__tauriModule', 'message', 'args']
-
   var api = {
-    /** cmd -> handler(args, request) */
     routes: Object.create(null),
-    /** every request this page saw: { cmd, module, args } */
     invoked: [],
+    callbacks: Object.create(null),
+    _nextCallbackId: 1,
     _doc: null,
     _docFails: false,
     _dialogPaths: [],
-    _menuHandler: null,
+    _openPaths: [],
+    _messageAnswer: 'Yes',
+    _menuHandlers: [],
 
-    /**
-     * Defaults shared by every spec: the seeded document, whether
-     * `get_document` rejects, and the queue of paths the native save dialog
-     * returns. Routes always win over these.
-     */
+    /// Seed defaults. `doc` / `docFails` drive `get_document`; `dialogPaths`
+    /// seeds the save dialog (and `openPaths` the open dialog); `messageAnswer`
+    /// is the label `dialog|message` returns, which is what `ask()` compares
+    /// against (so `'Yes'` makes `ask()` true).
     configure: function (options) {
       var opts = options || {}
       if ('doc' in opts) api._doc = opts.doc
       if ('docFails' in opts) api._docFails = Boolean(opts.docFails)
       if (Array.isArray(opts.dialogPaths)) api._dialogPaths = opts.dialogPaths.slice()
+      if (Array.isArray(opts.openPaths)) api._openPaths = opts.openPaths.slice()
+      if (typeof opts.messageAnswer === 'string') api._messageAnswer = opts.messageAnswer
       return api
     },
 
+    /// Register behaviour for a command. The handler receives `(args, request)`
+    /// and may return a value or `api.fail(message)`.
     route: function (cmd, handler) {
       api.routes[cmd] = handler
       return api
     },
 
-    /** Marker: return this from a route to reject the invocation. */
+    /// Sentinel: returning this from a route rejects the app's promise.
     fail: function (message) {
       return { __tauriMockError: message }
     },
 
-    /** True once the app has registered an Event-module listener. */
     hasMenuListener: function () {
-      return typeof api._menuHandler === 'function'
+      return api._menuHandlers.length > 0
     },
 
-    /**
-     * Deliver one window event payload to the app's listener, exactly as the
-     * Rust side does after a native menu item is activated. Returns false when
-     * the app has not subscribed yet (call hasMenuListener first).
-     */
+    /// Deliver a `menu` event to the app's registered listener. Returns false
+    /// when the app has not registered one yet.
     emitMenu: function (payload) {
       if (!api.hasMenuListener()) return false
-      api._menuHandler({ event: (api._menuEventName || 'menu'), id: 1, payload: payload })
+      for (var i = 0; i < api._menuHandlers.length; i += 1) {
+        api._menuHandlers[i]({ event: 'menu', id: 1, payload: payload })
+      }
       return true
     },
   }
 
   window.__tauriMock = api
 
-  /** The command's own arguments, however this Tauri build laid them out. */
-  function argsOf(request) {
-    if (request.args && typeof request.args === 'object' && !Array.isArray(request.args)) {
-      return request.args
+  function transformCallback(callback, once) {
+    var id = api._nextCallbackId
+    api._nextCallbackId += 1
+    api.callbacks[id] = function (data) {
+      if (once) delete api.callbacks[id]
+      if (typeof callback === 'function') callback(data)
     }
-    var args = {}
-    for (var key in request) {
-      if (!Object.prototype.hasOwnProperty.call(request, key)) continue
-      if (PROTOCOL_KEYS.indexOf(key) !== -1) continue
-      args[key] = request[key]
-    }
-    return args
+    return id
   }
 
-  /** The native save dialog, which arrives as a `tauri`/Dialog module call. */
-  function handleTauriModule(request, ok, fail) {
-    var module = request.__tauriModule
-    var message = request.message
-
-    if (module === 'Dialog' && message && message.cmd === 'saveDialog') {
-      var path = api._dialogPaths.length ? api._dialogPaths.shift() : null
-      return ok(path)
+  // `plugin:dialog|save` / `|open` take `{ options }`; `|message` takes
+  // `{ message, title, kind, buttons }` and resolves to the pressed label.
+  function handleDialog(cmd, args, ok, fail) {
+    if (cmd === 'save') {
+      return ok(api._dialogPaths.length ? api._dialogPaths.shift() : null)
     }
+    if (cmd === 'open') {
+      return ok(api._openPaths.length ? api._openPaths.shift() : null)
+    }
+    if (cmd === 'message') {
+      return ok(api._messageAnswer)
+    }
+    return fail('unsupported dialog command: ' + String(cmd))
+  }
 
-    if (module === 'Event' && message && message.cmd === 'listen') {
-      if (message.event) api._menuEventName = message.event
-      // Tauri transforms the frontend callback into a page-level function id;
-      // the event name and that id are all the mock needs to fire later.
-      if (message.handler !== undefined) {
-        api._menuHandler = function (event) {
-          window['_' + message.handler](event)
-        }
+  // `plugin:event|listen` takes `{ event, target, handler }`, where `handler` is
+  // the integer id minted by `transformCallback`.
+  function handleEvent(cmd, args, ok, fail) {
+    if (cmd === 'listen') {
+      var handlerId = args && args.handler
+      var name = args && args.event
+      if (typeof handlerId === 'number' && api.callbacks[handlerId]) {
+        var deliver = api.callbacks[handlerId]
+        api._menuHandlers.push(function (event) {
+          if (!name || event.event === name) deliver(event)
+        })
       }
       return ok(1)
     }
-
-    // Any other module call (window, app, path, …) resolves like a no-op.
-    return ok(null)
+    if (cmd === 'unlisten') return ok(null)
+    return fail('unsupported event command: ' + String(cmd))
   }
 
-  window.__TAURI_IPC__ = function (request) {
-    var ok = function (result) {
-      setTimeout(function () {
-        window['_' + request.callback](result)
-      }, 0)
-    }
-    var fail = function (error) {
-      setTimeout(function () {
-        window['_' + request.error](error)
-      }, 0)
-    }
+  function invoke(cmd, args, options) {
+    return new Promise(function (resolve, reject) {
+      var request = { cmd: cmd, args: args || {}, options: options }
+      api.invoked.push({ cmd: cmd, args: request.args })
 
-    var args = argsOf(request)
-    api.invoked.push({ cmd: request.cmd, module: request.__tauriModule, args: args })
-
-    try {
-      if (request.cmd === 'tauri') {
-        return handleTauriModule(request, ok, fail)
-      }
-
-      var route = api.routes[request.cmd]
+      var route = api.routes[cmd]
       if (typeof route === 'function') {
-        var result = route(args, request)
-        if (result && typeof result === 'object' && '__tauriMockError' in result) {
-          return fail({ message: String(result.__tauriMockError) })
+        var result
+        try {
+          result = route(request.args, request)
+        } catch (error) {
+          reject({ message: String(error) })
+          return
         }
-        return ok(result)
+        if (result && typeof result === 'object' && '__tauriMockError' in result) {
+          reject({ message: String(result.__tauriMockError) })
+          return
+        }
+        resolve(result)
+        return
       }
 
-      // Defaults every spec wants, so a spec only declares what it cares about.
-      if (request.cmd === 'get_document') {
-        return api._docFails ? fail({ message: 'no tauri' }) : ok(api._doc)
+      // The two commands the app always issues on startup.
+      if (cmd === 'get_document') {
+        if (api._docFails) reject({ message: 'no tauri' })
+        else resolve(api._doc)
+        return
       }
-      if (request.cmd === 'list_roles') {
-        return ok([])
+      if (cmd === 'list_roles') {
+        resolve([])
+        return
       }
-      return ok(null)
-    } catch (error) {
-      return fail({ message: String(error) })
-    }
+
+      // v2 plugin commands arrive as `plugin:<name>|<command>`.
+      var plugin = /^plugin:([a-z-]+)\|(.+)$/.exec(cmd)
+      if (plugin) {
+        var pluginName = plugin[1]
+        var inner = plugin[2]
+        if (pluginName === 'dialog') {
+          try {
+            handleDialog(inner, request.args, resolve, reject)
+          } catch (error) {
+            reject({ message: String(error) })
+          }
+          return
+        }
+        if (pluginName === 'event') {
+          try {
+            handleEvent(inner, request.args, resolve, reject)
+          } catch (error) {
+            reject({ message: String(error) })
+          }
+          return
+        }
+      }
+
+      // Unmodelled commands are a no-op, not an error: the tests that care
+      // register a route.
+      resolve(null)
+    })
+  }
+
+  window.__TAURI_INTERNALS__ = {
+    invoke: invoke,
+    transformCallback: transformCallback,
+    callbacks: api.callbacks,
+    metadata: {
+      currentWindow: { label: 'main' },
+      currentWebview: { windowLabel: 'main', label: 'main' },
+    },
+    convertFileSrc: function (path) {
+      return 'asset://localhost/' + encodeURIComponent(path)
+    },
   }
 })()

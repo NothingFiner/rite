@@ -3,11 +3,11 @@ import { setActivePinia, createPinia } from 'pinia'
 import { useDocumentStore } from '../stores/document.js'
 import { useToastsStore } from '../stores/toasts.js'
 
-vi.mock('@tauri-apps/api/tauri', () => ({
+vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }))
 
-import { invoke } from '@tauri-apps/api/tauri'
+import { invoke } from '@tauri-apps/api/core'
 
 function makeSection(id, title = '', sectionType = 'section', paragraphs = []) {
   return { id, title, sectionType, paragraphs }

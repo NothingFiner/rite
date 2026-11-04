@@ -1,14 +1,21 @@
 //! Native application menu.
 //!
-//! Why the menu is defined as data: Tauri v1's `Menu` exposes no getters, so a
-//! built menu cannot be inspected. A plain-data definition is the test seam;
-//! [`build_menu`] is the only place that touches Tauri's menu types, and
-//! [`menu_event`] is the single authority on which ids this app owns: the
+//! Why the menu is defined as data: the definition is a plain-data seam, so the
+//! contract (which items exist, which ids this app owns) can be asserted without
+//! a runtime. [`build_menu`] is the only place that touches Tauri's menu types,
+//! and [`menu_event`] is the single authority on which ids this app owns: the
 //! File items plus undo/redo emit the [`MENU_EVENT_NAME`] window event, while
 //! native items (quit, hide, clipboard, window) and separators never emit —
 //! the OS or the webview handles them.
+//!
+//! Tauri v2 needs a `Manager` to create any menu object (v1 menu types were
+//! plain structs), so `build_menu` and `app_menu` take one and return a
+//! `Result`. The definition, the ids and the event mapping are unchanged.
 
-use tauri::{CustomMenuItem, Menu, MenuEntry, MenuItem, Submenu};
+use tauri::menu::{
+    IsMenuItem, Menu, MenuBuilder, MenuItem, PredefinedMenuItem, Submenu, SubmenuBuilder,
+};
+use tauri::{Manager, Runtime};
 
 /// One node of a menu: a separator, an app-owned item, or a native item.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -192,58 +199,81 @@ pub fn menu_event(menu_item_id: &str) -> Option<MenuEvent> {
 /// Build the native menu described by `definition`: the app submenu first,
 /// then File, Edit and Window.
 ///
-/// Separators render as native separators, app-owned items render as custom
-/// items whose `id_str` is the node's `id` (accelerator attached only when
-/// defined), and native items map onto Tauri's OS-handled items.
-pub fn build_menu(definition: &MenuDefinition) -> Menu {
-    Menu::with_items([
-        Submenu::new("rite", Menu::with_items(definition.app.iter().map(node_entry))).into(),
-        Submenu::new("File", Menu::with_items(definition.file.iter().map(node_entry))).into(),
-        Submenu::new("Edit", Menu::with_items(definition.edit.iter().map(node_entry))).into(),
-        Submenu::new(
-            "Window",
-            Menu::with_items(definition.window.iter().map(node_entry)),
-        )
-        .into(),
-    ])
+/// Separators render as native separators, app-owned items render as items whose
+/// id is the node's `id` (accelerator attached only when defined), and native
+/// items map onto Tauri's predefined OS-handled items.
+pub fn build_menu<R: Runtime, M: Manager<R>>(
+    manager: &M,
+    definition: &MenuDefinition,
+) -> tauri::Result<Menu<R>> {
+    let app = submenu(manager, "rite", &definition.app)?;
+    let file = submenu(manager, "File", &definition.file)?;
+    let edit = submenu(manager, "Edit", &definition.edit)?;
+    let window = submenu(manager, "Window", &definition.window)?;
+
+    MenuBuilder::new(manager)
+        .items(&[
+            &app as &dyn IsMenuItem<R>,
+            &file as &dyn IsMenuItem<R>,
+            &edit as &dyn IsMenuItem<R>,
+            &window as &dyn IsMenuItem<R>,
+        ])
+        .build()
+}
+
+/// One submenu: its title plus one entry per definition node, in order.
+fn submenu<R: Runtime, M: Manager<R>>(
+    manager: &M,
+    title: &str,
+    nodes: &[MenuNode],
+) -> tauri::Result<Submenu<R>> {
+    let entries = nodes
+        .iter()
+        .map(|node| node_entry(manager, node))
+        .collect::<tauri::Result<Vec<Box<dyn IsMenuItem<R>>>>>()?;
+    let refs: Vec<&dyn IsMenuItem<R>> = entries.iter().map(|entry| entry.as_ref()).collect();
+    SubmenuBuilder::new(manager, title).items(&refs).build()
 }
 
 /// Renders one data node as the Tauri menu entry it represents.
-fn node_entry(node: &MenuNode) -> MenuEntry {
-    match node {
-        MenuNode::Separator => MenuItem::Separator.into(),
+fn node_entry<R: Runtime, M: Manager<R>>(
+    manager: &M,
+    node: &MenuNode,
+) -> tauri::Result<Box<dyn IsMenuItem<R>>> {
+    Ok(match node {
+        MenuNode::Separator => Box::new(PredefinedMenuItem::separator(manager)?),
         MenuNode::Item {
             id,
             label,
             accelerator,
-        } => {
-            let item = CustomMenuItem::new(*id, *label);
-            match accelerator {
-                Some(acc) => item.accelerator(*acc),
-                None => item,
-            }
-            .into()
-        }
-        MenuNode::Native { item, .. } => menu_item(*item).into(),
-    }
+        } => Box::new(MenuItem::with_id(manager, *id, *label, true, *accelerator)?),
+        MenuNode::Native { item, .. } => native_item(manager, *item)?,
+    })
 }
 
-/// Maps the app's native items onto the Tauri items the OS acts on.
-fn menu_item(item: NativeItem) -> MenuItem {
-    match item {
-        NativeItem::Quit => MenuItem::Quit,
-        NativeItem::Hide => MenuItem::Hide,
-        NativeItem::Cut => MenuItem::Cut,
-        NativeItem::Copy => MenuItem::Copy,
-        NativeItem::Paste => MenuItem::Paste,
-        NativeItem::SelectAll => MenuItem::SelectAll,
-        NativeItem::EnterFullScreen => MenuItem::EnterFullScreen,
-        NativeItem::Minimize => MenuItem::Minimize,
-        NativeItem::CloseWindow => MenuItem::CloseWindow,
-    }
+/// Maps the app's native items onto the Tauri predefined items the OS acts on.
+///
+/// Every variant has a v2 counterpart, so the match is exhaustive and a new
+/// `NativeItem` that v2 cannot express is a compile error, not a dropped menu
+/// row.
+fn native_item<R: Runtime, M: Manager<R>>(
+    manager: &M,
+    item: NativeItem,
+) -> tauri::Result<Box<dyn IsMenuItem<R>>> {
+    Ok(match item {
+        NativeItem::Quit => Box::new(PredefinedMenuItem::quit(manager, None)?),
+        NativeItem::Hide => Box::new(PredefinedMenuItem::hide(manager, None)?),
+        NativeItem::Cut => Box::new(PredefinedMenuItem::cut(manager, None)?),
+        NativeItem::Copy => Box::new(PredefinedMenuItem::copy(manager, None)?),
+        NativeItem::Paste => Box::new(PredefinedMenuItem::paste(manager, None)?),
+        NativeItem::SelectAll => Box::new(PredefinedMenuItem::select_all(manager, None)?),
+        NativeItem::EnterFullScreen => Box::new(PredefinedMenuItem::fullscreen(manager, None)?),
+        NativeItem::Minimize => Box::new(PredefinedMenuItem::minimize(manager, None)?),
+        NativeItem::CloseWindow => Box::new(PredefinedMenuItem::close_window(manager, None)?),
+    })
 }
 
 /// The menu `run` installs on the app builder.
-pub fn app_menu() -> Menu {
-    build_menu(&definition())
+pub fn app_menu<R: Runtime, M: Manager<R>>(manager: &M) -> tauri::Result<Menu<R>> {
+    build_menu(manager, &definition())
 }

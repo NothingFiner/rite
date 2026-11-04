@@ -34,11 +34,11 @@ pub mod structure;
 pub mod summary;
 
 use commands::{
-    apply_text_style, autosave_document, change_section_type, delete_section,
-    diff_against_current, get_document, list_history, merge_paragraphs, move_section,
-    open_document, reconstruct_version, redo, rename_section, replace_all, replace_current,
-    restore_version, save_document, save_snapshot, search_document, set_section_hidden,
-    split_paragraph, sync_document, undo,
+    apply_text_style, autosave_document, change_section_type, delete_section, diff_against_current,
+    get_document, list_history, merge_paragraphs, move_section, open_document, read_import_bytes,
+    reconstruct_version, redo, rename_section, replace_all, replace_current, restore_version,
+    save_document, save_snapshot, search_document, set_section_hidden, split_paragraph,
+    sync_document, undo,
 };
 use export_docx::export_docx;
 use export_epub::export_epub;
@@ -53,6 +53,8 @@ use structure::structural_signals;
 use summary::{
     retrieve_stale_summary_section_ids, retrieve_summaries, summarize_and_store_section,
 };
+#[allow(unused_imports)]
+use tauri::Emitter;
 
 /// Turn on continuous spell checking in the WKWebView before it is created.
 ///
@@ -106,8 +108,8 @@ fn enable_continuous_spellcheck() {
         // `CString`. The NSString copies the bytes, so the `CString` can drop
         // right after the `msg_send!` returns.
         let make_key = |cstr: &str| -> *mut Object {
-            let null_terminated =
-                std::ffi::CString::new(cstr).expect("spellcheck defaults keys contain no interior NUL");
+            let null_terminated = std::ffi::CString::new(cstr)
+                .expect("spellcheck defaults keys contain no interior NUL");
             msg_send![
                 class!(NSString),
                 stringWithUTF8String: null_terminated.as_ptr()
@@ -136,14 +138,16 @@ fn enable_continuous_spellcheck() {}
 pub fn run() {
     enable_continuous_spellcheck();
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState::new())
-        .menu(app_menu())
-        .on_menu_event(|event| {
+        .menu(|app| app_menu(app))
+        .on_menu_event(|app, event| {
             // Only app-owned items reach the frontend; native items (quit,
             // hide, clipboard, window actions) and separators act outside it.
-            let id = event.menu_item_id().to_string();
+            // v2 hands the event to the app, not to a window.
+            let id = event.id().0.clone();
             if menu_event(&id).is_some() {
-                let _ = event.window().emit(MENU_EVENT_NAME, id);
+                let _ = app.emit_to("main", MENU_EVENT_NAME, id);
             }
         })
         .invoke_handler(tauri::generate_handler![
@@ -161,6 +165,7 @@ pub fn run() {
             replace_all,
             save_document,
             open_document,
+            read_import_bytes,
             autosave_document,
             save_snapshot,
             list_history,

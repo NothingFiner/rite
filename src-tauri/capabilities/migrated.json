@@ -1,0 +1,13 @@
+{
+  "identifier": "default",
+  "description": "Rite: native dialogs, and dragging the window by the toolbar. Nothing else.",
+  "local": true,
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "dialog:default"
+  ]
+}

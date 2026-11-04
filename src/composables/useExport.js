@@ -1,5 +1,5 @@
-import { save, message } from '@tauri-apps/api/dialog'
-import { invoke } from '@tauri-apps/api/tauri'
+import { save, message } from '@tauri-apps/plugin-dialog'
+import { invoke } from '@tauri-apps/api/core'
 import { useDocumentStore } from '../stores/document.js'
 
 /// Export the live document to a plain-text (.txt) or Markdown (.md) file.

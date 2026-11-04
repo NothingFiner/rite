@@ -3,9 +3,9 @@ import { ref } from 'vue'
 import { setActivePinia, createPinia } from 'pinia'
 import { useDocumentStore } from '../stores/document.js'
 
-vi.mock('@tauri-apps/api/tauri', () => ({ invoke: vi.fn() }))
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 
-import { invoke } from '@tauri-apps/api/tauri'
+import { invoke } from '@tauri-apps/api/core'
 import { useRetrieval } from './useRetrieval.js'
 
 // A stand-in for the RAW useLlmSettings() composable: same shape useRetrieval

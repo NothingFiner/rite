@@ -14,7 +14,7 @@
 // back to Rust, since Rust already holds it).
 
 import { ref } from 'vue'
-import { invoke } from '@tauri-apps/api/tauri'
+import { invoke } from '@tauri-apps/api/core'
 
 export function useVersionHistory(store) {
   // `{ timestamp, kind, label }` from list_history, oldest first. `kind` is

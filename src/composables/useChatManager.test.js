@@ -4,14 +4,14 @@ import { reactive } from 'vue'
 // Mock the Tauri bridge: `invoke` for commands (list_roles + llm_chat_stream +
 // llm_cancel), `listen` for streaming events. The same shape useChat.test.js
 // uses; `listen` resolves to an unlisten function and captures handlers.
-vi.mock('@tauri-apps/api/tauri', () => ({
+vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }))
 vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn(),
 }))
 
-import { invoke } from '@tauri-apps/api/tauri'
+import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useChatManager } from './useChat.js'
 

@@ -25,7 +25,7 @@
 // `settings.value.*`, like useChat — NOT the reactive-wrapped one).
 
 import { ref, watch } from 'vue'
-import { invoke } from '@tauri-apps/api/tauri'
+import { invoke } from '@tauri-apps/api/core'
 
 /// Debounce for the docVersion status-refresh watcher. Matches `useRetrieval`'s
 /// re-embed debounce so the "K stale" readout settles at the same point the

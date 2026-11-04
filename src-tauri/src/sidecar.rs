@@ -28,7 +28,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::hash::{DefaultHasher, Hasher};
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 
 /// The sidecar schema version this build writes and understands. Independent of
 /// `RiteFile`'s `.rite` schema — the sidecar is a separate file in
@@ -101,17 +101,25 @@ fn sidecar_file_path(indexes_dir: &Path, manuscript_path: &str) -> PathBuf {
     indexes_dir.join(format!("{}.json", path_digest(manuscript_path)))
 }
 
-/// Resolve `<app_data_dir>/indexes/` (the directory, NOT created here — reads
-/// must not create empty dirs as a side effect). Mirrors `llm.rs::roles_dir`'s
-/// `path_resolver().app_data_dir()` usage (Tauri v1: `Option<PathBuf>`, NOT the
-/// v2-style `app.path()`; `use tauri::Manager` is NOT needed — `path_resolver`
-/// resolves without it).
+/// Resolve `<base>/indexes/` from an already-resolved app-data base. The
+/// directory is NOT created (reads must not create empty dirs as a side
+/// effect). `None` means the app data directory could not be resolved; that is
+/// an error naming the app data directory, never a fallback path.
+///
+/// Split out from [`indexes_dir`] so the failure branch is testable without a
+/// Tauri runtime.
+pub fn indexes_dir_in(base: Option<PathBuf>) -> Result<PathBuf, String> {
+    match base {
+        Some(base) => Ok(base.join("indexes")),
+        None => Err("could not resolve app data dir".to_string()),
+    }
+}
+
 fn indexes_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
-    let base = app
-        .path_resolver()
+    app.path()
         .app_data_dir()
-        .ok_or_else(|| "could not resolve app data dir".to_string())?;
-    Ok(base.join("indexes"))
+        .map_err(|e| format!("could not resolve app data dir: {}", e))
+        .and_then(|base| indexes_dir_in(Some(base)))
 }
 
 /// Parse a sidecar JSON string into a `Sidecar`. A file whose `schemaVersion` is
@@ -144,10 +152,9 @@ pub fn migrate_sidecar(mut sidecar: Sidecar) -> Result<Sidecar, String> {
             Ok(sidecar)
         }
         2 => Ok(sidecar),
-        v if v > CURRENT_SIDECAR_SCHEMA_VERSION => Err(format!(
-            "unsupported sidecar schema version {}",
-            v
-        )),
+        v if v > CURRENT_SIDECAR_SCHEMA_VERSION => {
+            Err(format!("unsupported sidecar schema version {}", v))
+        }
         _ => Err(format!(
             "unknown sidecar schema version {}",
             sidecar.schema_version
@@ -218,12 +225,20 @@ mod tests {
     #[test]
     fn path_digest_is_stable_and_distinguishing() {
         // Same path → same digest.
-        assert_eq!(path_digest("/Users/x/novel.rite"), path_digest("/Users/x/novel.rite"));
+        assert_eq!(
+            path_digest("/Users/x/novel.rite"),
+            path_digest("/Users/x/novel.rite")
+        );
         // Different paths → different digests (so two manuscripts don't collide).
-        assert_ne!(path_digest("/Users/x/novel.rite"), path_digest("/Users/x/novel2.rite"));
+        assert_ne!(
+            path_digest("/Users/x/novel.rite"),
+            path_digest("/Users/x/novel2.rite")
+        );
         // 16-char hex.
         assert_eq!(path_digest("/x/y.rite").len(), 16);
-        assert!(path_digest("/x/y.rite").chars().all(|c| c.is_ascii_hexdigit()));
+        assert!(path_digest("/x/y.rite")
+            .chars()
+            .all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]
@@ -266,14 +281,23 @@ mod tests {
     fn sidecar_round_trips_summaries() {
         // Summaries persist alongside vectors + hashes and come back equal.
         let summaries = HashMap::from([
-            ("s1".to_string(), make_summary("s1", 111, "Chapter one recap.")),
-            ("s2".to_string(), make_summary("s2", 222, "Chapter two recap.")),
+            (
+                "s1".to_string(),
+                make_summary("s1", 111, "Chapter one recap."),
+            ),
+            (
+                "s2".to_string(),
+                make_summary("s2", 222, "Chapter two recap."),
+            ),
         ]);
         let sidecar = Sidecar::new(HashMap::new(), Vec::new(), summaries.clone());
         let json = serde_json::to_string_pretty(&sidecar).unwrap();
         let back = parse_sidecar(&json).unwrap();
         assert_eq!(back.summaries, summaries);
-        assert_eq!(back.summaries.get("s1").unwrap().summary, "Chapter one recap.");
+        assert_eq!(
+            back.summaries.get("s1").unwrap().summary,
+            "Chapter one recap."
+        );
         assert_eq!(back.summaries.get("s2").unwrap().section_hash, 222);
     }
 
@@ -332,10 +356,7 @@ mod tests {
     fn parse_sidecar_defaults_missing_payload_fields() {
         // A parseable file with just the version still loads (empty index) —
         // truncated payloads degrade to empty rather than failing.
-        let json = format!(
-            "{{\"schemaVersion\":{}}}",
-            CURRENT_SIDECAR_SCHEMA_VERSION
-        );
+        let json = format!("{{\"schemaVersion\":{}}}", CURRENT_SIDECAR_SCHEMA_VERSION);
         let back = parse_sidecar(&json).unwrap();
         assert!(back.vectors.is_empty());
         assert!(back.section_hashes.is_empty());
@@ -343,10 +364,8 @@ mod tests {
 
     #[test]
     fn load_sidecar_at_returns_none_for_missing_file() {
-        let tmp = std::env::temp_dir().join(format!(
-            "rite-sidecar-test-missing-{}",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("rite-sidecar-test-missing-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         let path = tmp.join("nope.json");
@@ -356,10 +375,8 @@ mod tests {
 
     #[test]
     fn load_sidecar_at_returns_none_for_corrupt_json() {
-        let tmp = std::env::temp_dir().join(format!(
-            "rite-sidecar-test-corrupt-{}",
-            std::process::id()
-        ));
+        let tmp =
+            std::env::temp_dir().join(format!("rite-sidecar-test-corrupt-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         std::fs::create_dir_all(&tmp).unwrap();
         let path = tmp.join("bad.json");
