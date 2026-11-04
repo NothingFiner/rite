@@ -41,8 +41,19 @@ ALLOW_OFFPLATFORM_GREEN = False
 
 
 def platform_state():
-    """Which platform this run is actually measuring."""
-    return {"system": platform.system().lower(), "machine": platform.machine()}
+    """Which platform this run is actually measuring.
+
+    `platform.system()` says "Darwin" and "Linux"; config.yaml says "macos" and
+    "linux" (what a person would write, and what `target_platform` uses). The two
+    vocabularies are mapped here once, so the gate compares like with like —
+    otherwise a macOS run rejects itself, which is exactly what it did the first
+    time this was tried.
+    """
+    system = platform.system().lower()
+    return {
+        "system": "macos" if system == "darwin" else system,
+        "machine": platform.machine(),
+    }
 
 
 def log(msg):
