@@ -109,6 +109,32 @@ limits:
   escalate_after: 2         # same failing set N iterations in a row -> use models.strong
   strong_attempts: 2        # iterations allowed on the strong model before giving up
 
+  # How many failures ONE iteration is told to fix, from ONE layer. The planner is
+  # briefed on these and told the rest are deferred; the orchestrator still runs
+  # every layer and still requires the whole suite for green. So this changes
+  # convergence, not the verdict.
+  #
+  # Why: an iteration given eight failures across three languages produced eight
+  # half-fixes, two work units that both "implemented the full spec", and a
+  # needs_human objection — measured, not hypothetical. One layer is one language
+  # is one work unit is one coder call, and the model calls are ~86% of an
+  # iteration's wall clock (all three layers together are ~94 s).
+  #
+  # Selection is by cohesion, not ease: the largest S-ID family first, because
+  # tests that share a sentence tend to share a helper. Two guards keep it honest —
+  # a layer red and unselected for 2 iterations is forced next, and an iteration
+  # that clears nothing drops the next scope to a single test.
+  #
+  # Set 0 to disable scoping: every failure reaches the planner, exactly as it did
+  # before this key existed. That is the control arm if you ever want to compare.
+  failures_in_scope: 3
+
+# A layer that cannot be a coherent unit of work while another layer is red. Every
+# e2e failure is a symptom of a vue or rust defect, and playwright is the slowest
+# thing to boot, so it is never the iteration that gets scoped first.
+scope_depends_on:
+  e2e: [unit, rust]
+
 # Set via GOOSE_MODEL for each goose invocation. Blank = whatever goose is already configured with.
 # The orchestrator escalates to `strong` after `escalate_after` iterations on the same failures.
 models:

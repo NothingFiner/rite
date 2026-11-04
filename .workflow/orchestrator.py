@@ -8,12 +8,14 @@ It has no GitHub credentials and never pushes. On success it exits 0 and the hos
 Exit codes: 0 green | 1 setup/config error | 2 needs a human | 3 protected-path tampering
 
 Per iteration:
-  1. goose plans and codes (plan-and-code.yaml + coder sub-recipes)
-  2. revert any edits to protected paths (second offence aborts)
-  3. revert any edits to `test_regions` inside otherwise-editable files (second offence aborts)
-  4. run every test layer, parse results
-  5. fail if any baseline test disappeared, was skipped, or became skipped
-  6. commit the work, then decide: green / continue / escalate model / give up
+  1. brief the planner on ONE layer's most cohesive failures (scoping.py) — the
+     planner's focus only; every layer still runs and every test still has to pass
+  2. goose plans and codes (plan-and-code.yaml + coder sub-recipes)
+  3. revert any edits to protected paths (second offence aborts)
+  4. revert any edits to `test_regions` inside otherwise-editable files (second offence aborts)
+  5. run every test layer, parse results
+  6. fail if any baseline test disappeared, was skipped, or became skipped
+  7. commit the work, then decide: green / continue / escalate model / give up
 """
 import argparse
 import hashlib
@@ -28,6 +30,11 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import yaml
+
+# `.workflow/` is sys.path[0] when this file runs as a script, but not when it is
+# imported, so make the sibling import explicit rather than order-dependent.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import scoping  # noqa: E402 - sibling module, path set up on the line above
 
 OUT = Path(".workflow-out")
 GIT_ID = ["-c", "user.name=goose-bot", "-c", "user.email=goose-bot@localhost"]
@@ -131,8 +138,13 @@ def fmt_tokens(n):
     return str(n)
 
 
-def progress(i, res, prev_failing, started, tokens_before, tokens_total):
-    """One line per iteration: pass/fail counts, delta, wall clock, tokens."""
+def progress(i, res, prev_failing, started, tokens_before, tokens_total, scope=None, cleared=None):
+    """One line per iteration: pass/fail counts, delta, wall clock, tokens.
+
+    The scope fields are the measurement that makes runs comparable to each other:
+    minutes per failure *cleared* is the only rate that survives a feature being
+    harder than the last one.
+    """
     total = len(res["tests"])
     failing = len(res["failing"])
     passed = total - failing
@@ -141,11 +153,13 @@ def progress(i, res, prev_failing, started, tokens_before, tokens_total):
     now = goose_tokens_used()
     spent = (now - tokens_before) if (now is not None and tokens_before is not None) else None
     total_now = now if now is not None else tokens_total
+    scoped = f" | scope: {scope.layer} {len(scope.in_scope)}/{prev_failing}, cleared {cleared}" \
+        if (scope is not None and scope.enabled) else ""
 
     log(
         f"progress: {passed}/{total} passing, {failing} failing "
         f"({delta:+d} vs previous) | {duration / 60:.1f} min | "
-        f"{fmt_tokens(spent)} tokens this iteration | {fmt_tokens(total_now)} total"
+        f"{fmt_tokens(spent)} tokens this iteration | {fmt_tokens(total_now)} total{scoped}"
     )
     try:
         OUT.mkdir(exist_ok=True)
@@ -154,6 +168,10 @@ def progress(i, res, prev_failing, started, tokens_before, tokens_total):
                 "iteration": i, "total": total, "passing": passed, "failing": failing,
                 "delta": delta, "seconds": round(duration, 1),
                 "tokens_iteration": spent, "tokens_total": total_now,
+                "scope_layer": scope.layer if scope is not None else None,
+                "scope_in": len(scope.in_scope) if scope is not None else None,
+                "scope_deferred": len(scope.deferred) if scope is not None else None,
+                "scope_cleared": cleared,
             }) + "\n")
     except OSError:
         pass
@@ -389,15 +407,30 @@ def failing_excluding_baseline_skips(res, base_status):
     ]
 
 
-def write_failures(path, res, notes, tail_lines=60, cap=8000):
+def write_failures(path, res, notes, scope=None, tail_lines=60, cap=8000):
+    """Write the planner's brief: the failures, plus what is out of scope this time.
+
+    A scope is a *focus* instruction, not a filter. The deferred failures stay in the
+    file under their own heading, because the run is still judged on the whole suite
+    and a regression in a deferred layer has to be visible to whoever reads the
+    iteration — while the planner is told, in the same file, not to work on them.
+    """
     parts = [f"## NOTE\n{n}" for n in notes]
+    if scope is not None:
+        parts.append(scoping.scope_note(scope, len(res["failing"])))
+    in_scope = set(scope.in_scope) if (scope is not None and scope.enabled) else None
     for name, info in res["per_layer"].items():
-        if not info["failing"]:
+        shown = [f for f in info["failing"] if in_scope is None or f in in_scope]
+        if not shown:
             continue
         parts.append(f"## Layer {name} (exit code {info['rc']})\nFailing:\n"
-                     + "\n".join(f"- {f}" for f in info["failing"][:50]))
+                     + "\n".join(f"- {f}" for f in shown[:50]))
         tail = "\n".join(Path(info["log"]).read_text().splitlines()[-tail_lines:])
         parts.append(f"```\n{tail}\n```")
+    if scope is not None:
+        deferred = scoping.deferred_note(scope)
+        if deferred:
+            parts.append(deferred)
     path.write_text(("\n\n".join(parts))[:cap] or "No failures recorded.")
 
 
@@ -861,6 +894,35 @@ def goose_log_tail(log_path, n=3):
 
 # ---------- main ----------
 
+def log_scope(iteration, scope, total):
+    """One line saying what the planner is about to be asked to do, and why."""
+    if not scope.enabled:
+        log(f"iteration {iteration} scope: all {total} failures — {scope.reason}")
+        return
+    log(f"iteration {iteration} scope: {scope.layer} only, "
+        f"{len(scope.in_scope)} of {total} failures, {len(scope.deferred)} deferred "
+        f"— {scope.reason}")
+
+
+def scope_limit_from(value):
+    """Validate `limits.failures_in_scope`. A bad value must never end a run.
+
+    0 disables scoping and is the supported way to get the pre-scoping behaviour
+    back. A typo is not a request to disable it, so it falls back to the default
+    rather than being read as 0 — silence here would quietly change how every
+    iteration is briefed.
+    """
+    try:
+        limit = int(value)
+    except (TypeError, ValueError):
+        log(f"failures_in_scope={value!r} is not an integer; using 3")
+        return 3
+    if limit < 0:
+        log(f"failures_in_scope={limit} is negative; using 3 (set 0 to disable)")
+        return 3
+    return limit
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=".workflow/config.yaml")
@@ -899,6 +961,17 @@ def main():
     lim = {"max_iterations": 8, "goose_timeout_min": 45, "test_timeout_min": 15,
            "escalate_after": 2, "strong_attempts": 2, **(cfg.get("limits") or {})}
     models = cfg.get("models") or {}
+    # What the planner is asked to fix per iteration. The verdict is unaffected: every
+    # layer still runs and every test still has to pass for green.
+    scope_limit = scope_limit_from(lim.get("failures_in_scope", 3))
+    layer_order = [layer["name"] for layer in cfg["test_layers"]]
+    scope_depends_on = cfg.get("scope_depends_on") or {"e2e": ["unit", "rust"]}
+    if scope_limit:
+        log(f"iteration scoping: one layer, at most {plural(scope_limit, 'failure')} "
+            f"per iteration (limits.failures_in_scope)")
+    else:
+        log("iteration scoping: off (limits.failures_in_scope = 0) — "
+            "the planner sees every failure, as before")
     patterns = [glob_to_regex(g) for g in cfg["protected_paths"]]
     test_to, goose_to = lim["test_timeout_min"] * 60, lim["goose_timeout_min"] * 60
 
@@ -994,10 +1067,25 @@ def main():
                baseline_tests=len(base_ids), baseline_failing=sorted(base["failing"]))
 
     failures_file = OUT / "last_failures.md"
-    write_failures(failures_file, base, ["Initial state. Every failure below is expected: make them pass."])
+    # Scoping state lives for the whole run: which layer was skipped how often, how
+    # many tests have been tried, and whether the last iteration cleared anything.
+    scope_state = {}
+    scope = scoping.select_scope(base["failing"], scope_limit, layer_order,
+                                 scope_depends_on, scope_state)
+    log_scope(1, scope, len(base["failing"]))
+    write_failures(failures_file, base,
+                   ["Initial state. Every failure below is expected: make them pass."], scope)
 
     prev_sig, same, violations, goose_fails = None, 0, 0, 0
     prev_failing = len(base["failing"])
+    # The ids, not just the count, so scoping can tell which in-scope tests cleared.
+    prev_failing_ids = list(base["failing"])
+    # Sibling of `same`: how many iterations in a row produced no reduction at all.
+    # Scoping narrows the work, so the failing *set* legitimately changes every
+    # iteration — the sha1 signature below then never repeats and stuck-detection
+    # would go quiet exactly when it is needed. This counter is what keeps the
+    # strong-model escalation reachable once the set starts churning.
+    no_gain = 0
     # Whether the previous iteration's goose run actually completed. A run that
     # never started must not count towards escalation: an unchanged failing set
     # after a no-op is not evidence that the model needs a stronger one.
@@ -1009,7 +1097,8 @@ def main():
     if not strong_ok:
         log("no strong model configured: this run will not escalate")
     for i in range(1, lim["max_iterations"] + 1):
-        escalated = goose_ok and strong_ok and same >= lim["escalate_after"]
+        escalated = goose_ok and strong_ok and (
+            same >= lim["escalate_after"] or no_gain >= lim["escalate_after"])
         log(f"iteration {i}/{lim['max_iterations']}" + (" [ESCALATED to strong model]" if escalated else ""))
         notes = []
         iteration_started = time.time()
@@ -1085,7 +1174,17 @@ def main():
 
         commit(f"wip: iteration {i}, {len(res['failing'])} failing")
 
-        tokens_total = progress(i, res, prev_failing, iteration_started, tokens_before, tokens_total)
+        # Fold the outcome into the scoping state before the next scope is chosen:
+        # which tests cleared, which layers went unselected, whether this iteration
+        # gained anything. `no_gain` is evaluated against the count from *before*
+        # this iteration's work.
+        reduced = len(res["failing"]) < prev_failing
+        no_gain = 0 if (reduced or not goose_ok) else no_gain + 1
+        cleared = scoping.update_state(scope_state, scope, prev_failing_ids, res["failing"])
+        prev_failing_ids = list(res["failing"])
+
+        tokens_total = progress(i, res, prev_failing, iteration_started, tokens_before,
+                                tokens_total, scope, cleared)
         prev_failing = len(res["failing"])
 
         if not res["failing"]:
@@ -1106,11 +1205,23 @@ def main():
         sig = hashlib.sha1("\n".join(sorted(res["failing"])).encode()).hexdigest()
         same = same + 1 if (sig == prev_sig and goose_ok) else 1
         prev_sig = sig
-        log(f"{len(res['failing'])} failing, same failing set for {same} iteration(s)")
+        log(f"{len(res['failing'])} failing, same failing set for {same} iteration(s), "
+            f"no reduction for {no_gain} iteration(s)")
         if same >= lim["escalate_after"] + lim["strong_attempts"]:
             finish("needs_human", f"stuck on the same {len(res['failing'])} failures", 2,
                    iterations=i, failing=res["failing"][:50])
-        write_failures(failures_file, res, notes)
+        if no_gain >= lim["escalate_after"] + lim["strong_attempts"]:
+            # The set churns (scoping narrows it) but the total does not fall: the
+            # model is making changes that do not land. Same verdict as an identical
+            # set, reached by the other signature.
+            finish("needs_human",
+                   f"no reduction in failures for {no_gain} iterations "
+                   f"({len(res['failing'])} still failing)", 2,
+                   iterations=i, failing=res["failing"][:50])
+        scope = scoping.select_scope(res["failing"], scope_limit, layer_order,
+                                     scope_depends_on, scope_state)
+        log_scope(i + 1, scope, len(res["failing"]))
+        write_failures(failures_file, res, notes, scope)
 
     finish("needs_human", "max iterations reached", 2, iterations=lim["max_iterations"])
 
