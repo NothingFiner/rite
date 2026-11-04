@@ -2,8 +2,19 @@
 # Host-side launcher for stage 2. Run from the repo root:
 #   .workflow/run-headless.sh feature/my-branch [pr-number]
 #
-# The container never sees GitHub credentials. This script clones the branch on the host,
-# runs the orchestrator in Docker, and only if it exits 0 pushes and marks the PR ready.
+# Two runners, chosen by WORKFLOW_RUNNER (default: native):
+#
+#   native  the orchestrator runs on this machine. The only runner that measures
+#           what ships: the app is macOS-only, and a Linux container compiles the
+#           `#[cfg(not(target_os = "macos"))]` stand-ins instead of the real code.
+#           5.15 came back "green" from the container with a macOS module that did
+#           not compile, so native is the default on macOS.
+#   docker  the Linux container: reproducible, but blind to macOS-only code. Only
+#           usable with `allow_offplatform_green: true`, because the orchestrator
+#           refuses a green verdict off the target platform (exit 6).
+#
+# This script clones the branch on the host, runs the orchestrator, and only if it
+# exits 0 pushes and marks the PR ready. GitHub credentials never enter a container.
 #
 # Provider credentials must be exported in the calling shell: the container has an empty
 # HOME, so it cannot read ~/.config/goose (provider/model) or the macOS keychain (API keys).
@@ -41,6 +52,11 @@ GIT_ID_ARGS=(-c user.name=goose-bot -c user.email=goose-bot@localhost)
 PUSH=1
 for a in "$@"; do [ "$a" = "--baseline-only" ] && PUSH=0; done
 IMAGE="${IMAGE:-goose-headless}"
+RUNNER="${WORKFLOW_RUNNER:-native}"
+case "$RUNNER" in
+  native|docker) ;;
+  *) echo "WORKFLOW_RUNNER must be 'native' or 'docker', got '$RUNNER'" >&2; exit 1 ;;
+esac
 # Overridable so a broken ssh-agent (or an ssh remote you can only reach over
 # https) does not block the run: REPO_URL=https://github.com/owner/repo.git
 REPO_URL="${REPO_URL:-$(git config --get remote.origin.url)}"
@@ -105,7 +121,9 @@ if [ "$KEEP_WORK" -gt 0 ] 2>/dev/null && [ "$RESUME" -eq 0 ]; then
   fi
 fi
 
-docker build -q -t "$IMAGE" -f .workflow/Dockerfile .workflow >/dev/null
+if [ "$RUNNER" = "docker" ]; then
+  docker build -q -t "$IMAGE" -f .workflow/Dockerfile .workflow >/dev/null
+fi
 
 # Preflight: goose is useless without a provider, and the container starts with
 # an empty HOME by design — it can NOT read ~/.config/goose (provider settings)
@@ -163,6 +181,20 @@ if isinstance(secrets, dict) and isinstance(secrets.get(sys.argv[1]), str):
   fi
 fi
 
+if [ "$RUNNER" = "native" ]; then
+  # Native: goose runs here, so its own config and keychain are readable. Check
+  # the binary and the provider name, and let goose complain about a bad key.
+  command -v goose >/dev/null 2>&1 || {
+    echo "FATAL: native runner needs the goose CLI on PATH (or set WORKFLOW_RUNNER=docker)." >&2
+    exit 5
+  }
+  if [ -z "${GOOSE_PROVIDER:-}" ]; then
+    echo "FATAL: no provider. Export the key and provider in this shell:" >&2
+    echo "  export GOOSE_PROVIDER=ollama_cloud  OLLAMA_CLOUD_API_KEY=..." >&2
+    exit 5
+  fi
+  echo "provider preflight: native goose, provider '$GOOSE_PROVIDER'"
+else
 PREFLIGHT_OUT="$(docker run --rm -e HOME=/cache/home \
       -e GOOSE_PROVIDER -e ANTHROPIC_API_KEY -e OPENAI_API_KEY \
       -e OLLAMA_API_KEY -e OLLAMA_CLOUD_API_KEY \
@@ -185,6 +217,7 @@ PREFLIGHT_OUT="$(docker run --rm -e HOME=/cache/home \
   exit 5
 }
 echo "provider preflight: $PREFLIGHT_OUT"
+fi
 
 if [ "$RESUME" -eq 0 ]; then
   git clone --quiet --branch "$BRANCH" --single-branch "$REPO_URL" "$WORK/repo"
@@ -256,8 +289,8 @@ STANDARDS_COPY
 
 # Preflight: prove the bind mount really crosses into the VM before spending
 # minutes on clone/setup/goose. Costs ~1s and turns a silent empty mount into a
-# one-line explanation.
-if ! docker run --rm -v "$WORK/repo:/preflight:ro" -w / "$IMAGE" \
+# one-line explanation. Container-only.
+if [ "$RUNNER" = "docker" ] && ! docker run --rm -v "$WORK/repo:/preflight:ro" -w / "$IMAGE" \
       test -f /preflight/.workflow/orchestrator.py >/dev/null 2>&1; then
   echo "FATAL: $WORK/repo is not visible inside the container." >&2
   echo "The Docker VM is not sharing that host path, so /work would be empty." >&2
@@ -272,6 +305,12 @@ fi
 
 # Read-only mounts from config (needs python3 + pyyaml on the host).
 # No `mapfile` here: macOS ships bash 3.2, which does not have it.
+#
+# Container-only defence in depth. Natively the coder could edit a test file, but
+# the orchestrator still reverts it: `protected_paths` and `test_regions` are the
+# enforcement, the read-only mount is belt and braces.
+RO_LIST=""
+if [ "$RUNNER" = "docker" ]; then
 RO_LIST="$(python3 -c '
 import os, sys, yaml
 root = sys.argv[1]
@@ -280,6 +319,7 @@ for p in cfg.get("readonly_mounts", []):
     if os.path.exists(os.path.join(root, p)):
         print(p)
 ' "$WORK/repo")"
+fi
 RO_ARGS=()
 while IFS= read -r p; do
   if [ -n "$p" ]; then
@@ -293,20 +333,33 @@ done <<< "$RO_LIST"
 # that same host uid. Trust it: this is a throwaway clone the script made
 # itself, not somebody else's repository.
 set +e
-docker run --rm --user "$(id -u):$(id -g)" \
-  -e HOME=/cache/home \
-  -e CARGO_HOME=/cache/cargo \
-  -e CARGO_TARGET_DIR=/cache/target \
-  -e PLAYWRIGHT_BROWSERS_PATH=/cache/playwright \
-  -e ANTHROPIC_API_KEY -e OPENAI_API_KEY -e GOOSE_PROVIDER -e GOOSE_MODEL \
-  -e OLLAMA_API_KEY -e OLLAMA_CLOUD_API_KEY -e OLLAMA_HOST \
-  -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-  -v "$CACHE:/cache" \
-  -v "$WORK/repo:/work" \
-  "${RO_ARGS[@]+"${RO_ARGS[@]}"}" \
-  -w /work "$IMAGE" \
-  python3 /work/.workflow/orchestrator.py --config .workflow/config.yaml "$@"
-RC=$?
+if [ "$RUNNER" = "native" ]; then
+  # Native: the same command the container runs, in the same work tree, so the
+  # only difference is which platform's toolchain answers. Caches are pointed at
+  # the shared host cache for cargo and Playwright so a run does not rebuild
+  # 300 dependencies or re-download Chromium every time.
+  (
+    cd "$WORK/repo" || exit 1
+    export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$CACHE/target}"
+    python3 .workflow/orchestrator.py --config .workflow/config.yaml "$@"
+  )
+  RC=$?
+else
+  docker run --rm --user "$(id -u):$(id -g)" \
+    -e HOME=/cache/home \
+    -e CARGO_HOME=/cache/cargo \
+    -e CARGO_TARGET_DIR=/cache/target \
+    -e PLAYWRIGHT_BROWSERS_PATH=/cache/playwright \
+    -e ANTHROPIC_API_KEY -e OPENAI_API_KEY -e GOOSE_PROVIDER -e GOOSE_MODEL \
+    -e OLLAMA_API_KEY -e OLLAMA_CLOUD_API_KEY -e OLLAMA_HOST \
+    -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+    -v "$CACHE:/cache" \
+    -v "$WORK/repo:/work" \
+    "${RO_ARGS[@]+"${RO_ARGS[@]}"}" \
+    -w /work "$IMAGE" \
+    python3 /work/.workflow/orchestrator.py --config .workflow/config.yaml "$@"
+  RC=$?
+fi
 set -e
 
 echo "--- result ---"

@@ -19,6 +19,7 @@ import argparse
 import hashlib
 import json
 import os
+import platform
 import re
 import subprocess
 import sys
@@ -33,6 +34,16 @@ GIT_ID = ["-c", "user.name=goose-bot", "-c", "user.email=goose-bot@localhost"]
 SYNTHETIC = ("__BUILD_OR_RUN_ERROR__", "__NO_TESTS_RAN__")
 SPEC_ID = re.compile(r"(?<![A-Za-z0-9])[Ss][-_ ]?(\d{3})(?!\d)")
 
+# The platform the app ships for (`target_platform:` in config.yaml), and whether
+# a green verdict elsewhere is allowed anyway. Set from the config in `main`.
+TARGET_PLATFORM = None
+ALLOW_OFFPLATFORM_GREEN = False
+
+
+def platform_state():
+    """Which platform this run is actually measuring."""
+    return {"system": platform.system().lower(), "machine": platform.machine()}
+
 
 def log(msg):
     print(f"[orchestrator {time.strftime('%H:%M:%S')}] {msg}", flush=True)
@@ -43,8 +54,31 @@ def plural(n, word):
 
 
 def finish(status, reason, code, **extra):
+    """Write the verdict and exit. The one place a run states what it proved."""
     OUT.mkdir(exist_ok=True)
-    (OUT / "result.json").write_text(json.dumps({"status": status, "reason": reason, **extra}, indent=2))
+    here = platform_state()
+    # A green verdict is a claim about the shipping build. Measured anywhere else
+    # it is not that claim: the whole `#[cfg(target_os = "macos")]` half of the
+    # crate is not compiled, so it can neither pass nor fail. 5.15 shipped exactly
+    # that — "0 failing" from a Linux container, and the macOS spell-check module
+    # did not compile. Fail closed instead of quietly grading a build nobody ships.
+    if (
+        status == "green"
+        and TARGET_PLATFORM
+        and here["system"] != TARGET_PLATFORM
+        and not ALLOW_OFFPLATFORM_GREEN
+    ):
+        reason = (
+            f"tests pass on {here['system']}/{here['machine']}, but the app ships for "
+            f"{TARGET_PLATFORM}: this build never compiled the {TARGET_PLATFORM}-only code, "
+            f"so the suite cannot vouch for it. Re-run on {TARGET_PLATFORM} "
+            f"(.workflow/run-headless.sh runs natively there by default), or set "
+            f"allow_offplatform_green: true in config.yaml if all you wanted was a smoke test"
+        )
+        status, code = "wrong_platform", 6
+    (OUT / "result.json").write_text(
+        json.dumps({"status": status, "reason": reason, "platform": here, **extra}, indent=2)
+    )
     log(f"{status}: {reason}")
     sys.exit(code)
 
@@ -848,6 +882,9 @@ def main():
         except OSError:
             pass
     cfg = yaml.safe_load(Path(args.config).read_text())
+    global TARGET_PLATFORM, ALLOW_OFFPLATFORM_GREEN
+    TARGET_PLATFORM = (cfg.get("target_platform") or "").strip().lower() or None
+    ALLOW_OFFPLATFORM_GREEN = bool(cfg.get("allow_offplatform_green", False))
     lim = {"max_iterations": 8, "goose_timeout_min": 45, "test_timeout_min": 15,
            "escalate_after": 2, "strong_attempts": 2, **(cfg.get("limits") or {})}
     models = cfg.get("models") or {}
