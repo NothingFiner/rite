@@ -17,6 +17,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => null) }))
 
 import { invoke } from '@tauri-apps/api/core'
 import {
+  placePopover,
   shapeReplacement,
   splitAffixes,
   takeOverWord,
@@ -130,5 +131,36 @@ describe('keeping the writer’s word shape', () => {
   it('S-021: a replacement keeps the original trailing punctuation', () => {
     expect(shapeReplacement('term', splitAffixes('word.'))).toBe('term.')
     expect(shapeReplacement('term', splitAffixes('word'))).toBe('term')
+  })
+})
+
+describe('placing the popover in the window', () => {
+  const POPOVER = { width: 280, height: 300 }
+  const WINDOW = { viewportWidth: 1200, viewportHeight: 800 }
+
+  it('S-037: opens at the click point when there is room, and flips or lifts when there is not', () => {
+    // Room on both axes: the click point is the top-left corner.
+    expect(placePopover({ x: 100, y: 80, ...POPOVER, ...WINDOW })).toEqual({ left: 100, top: 80 })
+
+    // Right edge: 1000 + 280 crosses 1200, so the popover moves to the left of
+    // the click instead of hanging off the window.
+    expect(placePopover({ x: 1000, y: 80, ...POPOVER, ...WINDOW }).left).toBe(720)
+    expect(placePopover({ x: 1000, y: 80, ...POPOVER, ...WINDOW }).top).toBe(80)
+
+    // Bottom edge: it lifts so its own height fits.
+    expect(placePopover({ x: 100, y: 650, ...POPOVER, ...WINDOW }).top).toBe(492)
+
+    // A window smaller than the popover cannot be satisfied by moving it: the
+    // position pins to the margin instead of going negative, and the stylesheet
+    // caps the element at the same size (`max-width` / `max-height`).
+    const cramped = placePopover({
+      x: 390,
+      y: 290,
+      width: 500,
+      height: 400,
+      viewportWidth: 400,
+      viewportHeight: 300,
+    })
+    expect(cramped).toEqual({ left: 8, top: 8 })
   })
 })

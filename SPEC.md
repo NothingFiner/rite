@@ -130,6 +130,13 @@ component's lifetime and returns:
 - `apply(replacement)` — writes the replacement into the document and closes.
 - `close()` — closes without touching the document.
 
+`placePopover({ x, y, width, height, viewportWidth, viewportHeight, gap })`
+returns `{ left, top }`: it opens at the click point, flips to the left of it
+when the popover would cross the window's right edge, lifts above the bottom
+edge the same way, and never leaves the window at all. The popover measures
+itself after render and passes the numbers in, so the rule is a pure function
+the unit layer can drive without layout.
+
 `state.word` is the document word **including its punctuation** ("Happy,"):
 that is what the popover displays and what the replacement is shaped from. The
 lookup query is `splitAffixes(state.word).core`, because WordNet has "Happy",
@@ -147,6 +154,7 @@ Markup contract the tests query (class names matter):
 |---|---|
 | `.thesaurus-popover` | root; `position: fixed` with `left` / `top` from `x` / `y` |
 | `.thesaurus-word` | the document word as it appeared |
+| `hr.thesaurus-separator` | one below the word, one above the actions — they hold the scrolling sense list between them |
 | `.thesaurus-sense` | one per sense, in dataset order |
 | `.thesaurus-pos` / `.thesaurus-gloss` | that sense's part of speech / gloss |
 | `button.thesaurus-synonym` | one per synonym; `aria-pressed="true"` when marked |
@@ -205,6 +213,8 @@ component itself is untouched (the listener is on `document`).
 - **S-028** (unit): with no senses it should show "No synonyms found" and no OK button.
 - **S-029** (unit): a failed lookup should show the error line and keep the popover open.
 - **S-030** (unit): a lookup in flight should show a loading state with no sense groups.
+- **S-036** (unit): it should separate the word from the sense list, and the sense list from the OK/Cancel row, with a rule — the two rules hold the scrolling area between them.
+- **S-037** (unit): it should place itself to the left of the click point when it would cross the window's right edge, lift itself above the bottom edge the same way, and never leave the window at all.
 
 ### E2E
 
@@ -213,6 +223,7 @@ component itself is untouched (the listener is on `document`).
 - **S-033** (e2e): the `thesaurus` menu event should open the popover with the sense groups returned by the lookup command.
 - **S-034** (e2e): marking a synonym and pressing OK should replace the word in the document with capitalisation and punctuation preserved, and mark the document modified.
 - **S-035** (e2e): Escape should close the popover and leave the document unchanged.
+- **S-038** (e2e): opening it on a word near the right edge should keep the whole popover inside the window.
 
 ## Expected red state before implementation
 

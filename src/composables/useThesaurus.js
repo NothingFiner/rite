@@ -110,6 +110,45 @@ export function shapeReplacement(replacement, affixes) {
   return capitalised + suffix
 }
 
+/** Breathing room between the popover and the window edges. */
+const POPOVER_GAP = 8
+
+/**
+ * Where the popover should sit for a click at `(x, y)`.
+ *
+ * The popover opens at the click point, but never at the window's expense: it
+ * flips to the left of the click when it would cross the right edge, lifts
+ * above the bottom edge the same way, and clamps into the window with `gap`
+ * to spare at every edge. The component measures itself after render and
+ * passes the numbers in, so this stays a pure function.
+ */
+export function placePopover({
+  x,
+  y,
+  width,
+  height,
+  viewportWidth,
+  viewportHeight,
+  gap = POPOVER_GAP,
+}) {
+  // A window smaller than the popover cannot be satisfied by moving it, so
+  // shrink the box we reason about to what the window can hold. The stylesheet
+  // caps the real element at the same size (`max-width` / `max-height`).
+  const boxWidth = Math.min(width, Math.max(0, viewportWidth - 2 * gap))
+  const boxHeight = Math.min(height, Math.max(0, viewportHeight - 2 * gap))
+
+  // Right edge: prefer flipping to the left of the click point (the popover
+  // then grows towards the text the writer just clicked) over sliding away
+  // from it. Either way it ends up inside the window.
+  let left = x + boxWidth + gap > viewportWidth ? x - boxWidth : x
+  left = Math.min(Math.max(left, gap), Math.max(gap, viewportWidth - boxWidth - gap))
+
+  let top = y + boxHeight + gap > viewportHeight ? viewportHeight - boxHeight - gap : y
+  top = Math.min(Math.max(top, gap), Math.max(gap, viewportHeight - boxHeight - gap))
+
+  return { left, top }
+}
+
 /**
  * Owns the popover's state and the document-level contextmenu listener.
  *

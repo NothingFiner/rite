@@ -244,3 +244,47 @@ test('S-035: Escape closes the popover and leaves the document alone', async ({ 
   await expect(popover).toBeHidden()
   expect(await page.locator('.editor-sheet').innerText()).toBe(before)
 })
+
+test('S-038: a word near the right edge keeps the whole popover inside the window', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 480, height: 400 })
+  await open(page)
+  const point = await wordPoint(page, 'writer')
+  await page.mouse.click(point.x, point.y, { button: 'right' })
+  await expect
+    .poll(async () => wordMenuCalls(await ipcCalls(page)).length, { timeout: 5000 })
+    .toBe(1)
+  await emitMenu(page, 'thesaurus')
+
+  const popover = page.locator('.thesaurus-popover')
+  await expect(popover).toBeVisible()
+
+  const box = await popover.boundingBox()
+  const window = await page.evaluate(() => ({
+    width: window.innerWidth,
+    height: window.innerHeight,
+  }))
+  expect(box.x).toBeGreaterThanOrEqual(0)
+  expect(box.y).toBeGreaterThanOrEqual(0)
+  expect(box.x + box.width).toBeLessThanOrEqual(window.width)
+  expect(box.y + box.height).toBeLessThanOrEqual(window.height)
+  // Control: this click really was near the edge, so the assertion above is
+  // not vacuous — placing the popover at the click point would have overflowed.
+  expect(point.x + box.width).toBeGreaterThan(window.width)
+
+  // Shrinking the window behind an open popover must not push it out either.
+  await page.setViewportSize({ width: 380, height: 260 })
+  await expect
+    .poll(async () => {
+      const shrunk = await popover.boundingBox()
+      const inner = await page.evaluate(() => ({
+        width: window.innerWidth,
+        height: window.innerHeight,
+      }))
+      return shrunk.x >= 0 && shrunk.y >= 0 &&
+        shrunk.x + shrunk.width <= inner.width &&
+        shrunk.y + shrunk.height <= inner.height
+    }, { timeout: 5000 })
+    .toBe(true)
+})

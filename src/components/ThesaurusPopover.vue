@@ -3,9 +3,13 @@
     v-if="visible"
     ref="rootRef"
     class="thesaurus-popover"
-    :style="{ position: 'fixed', left: `${x}px`, top: `${y}px` }"
+    :style="{ position: 'fixed', left: `${position.left}px`, top: `${position.top}px` }"
   >
     <div class="thesaurus-word">{{ word }}</div>
+
+    <!-- The rules hold the scrolling sense list between the word above and the
+         actions below, so the chrome never scrolls out of view. -->
+    <hr class="thesaurus-separator" />
 
     <!-- Mutually exclusive states: in flight, failed, nothing found, then the
          senses. Only the last shows the sense groups and the OK button. -->
@@ -35,6 +39,8 @@
       </div>
     </div>
 
+    <hr class="thesaurus-separator" />
+
     <div class="thesaurus-actions">
       <button type="button" class="btn-ghost thesaurus-cancel" @click="emit('cancel')">
         Cancel
@@ -53,8 +59,12 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { splitAffixes, shapeReplacement } from '../composables/useThesaurus.js'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import {
+  placePopover,
+  shapeReplacement,
+  splitAffixes,
+} from '../composables/useThesaurus.js'
 
 const props = defineProps({
   visible: { type: Boolean, default: false },
@@ -113,6 +123,36 @@ watch(
 // including a mount that starts visible — and an emit here is never a hide:
 // only a visible=false prop or unmount takes them down again.
 const rootRef = ref(null)
+// Where the popover actually sits: the click point until it has been measured,
+// then wherever `placePopover` says, which keeps it inside the window.
+const position = ref({ left: props.x, top: props.y })
+
+function place() {
+  const element = rootRef.value
+  if (element === null) {
+    position.value = { left: props.x, top: props.y }
+    return
+  }
+  const rect = element.getBoundingClientRect()
+  position.value = placePopover({
+    x: props.x,
+    y: props.y,
+    width: rect.width,
+    height: rect.height,
+    viewportWidth: window.innerWidth,
+    viewportHeight: window.innerHeight,
+  })
+}
+
+// Re-measure on every change that can resize the popover (a different word,
+// the senses arriving, the loading line turning into the sense list).
+watch(
+  () => [props.visible, props.x, props.y, props.loading, props.error, props.senses],
+  () => {
+    nextTick(place)
+  },
+  { immediate: true },
+)
 
 function onDocumentKeydown(event) {
   if (!props.visible || event.key !== 'Escape') return
@@ -125,14 +165,22 @@ function onDocumentMousedown(event) {
   if (root !== null && !root.contains(event.target)) emit('cancel')
 }
 
+// Shrinking the window can put the popover behind an edge it cleared when it
+// opened, so it re-places itself on resize while it is on screen.
+function onWindowResize() {
+  if (props.visible) place()
+}
+
 function installDismissal() {
   document.addEventListener('keydown', onDocumentKeydown)
   document.addEventListener('mousedown', onDocumentMousedown)
+  window.addEventListener('resize', onWindowResize)
 }
 
 function removeDismissal() {
   document.removeEventListener('keydown', onDocumentKeydown)
   document.removeEventListener('mousedown', onDocumentMousedown)
+  window.removeEventListener('resize', onWindowResize)
 }
 
 watch(
@@ -161,6 +209,12 @@ onBeforeUnmount(removeDismissal)
   border-radius: 10px;
   background: var(--popup-bg, var(--glass-bg));
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+}
+
+.thesaurus-separator {
+  margin: 0;
+  border: 0;
+  border-top: 1px solid var(--bg-glass-border);
 }
 
 .thesaurus-word {

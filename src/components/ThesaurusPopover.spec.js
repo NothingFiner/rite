@@ -170,6 +170,29 @@ describe('the thesaurus popover', () => {
     expect(wrapper.find('.thesaurus-popover').exists()).toBe(true)
   })
 
+  it('S-036: two rules separate the word and the actions from the scrolling list', () => {
+    mountPopover()
+
+    const root = wrapper.find('.thesaurus-popover')
+    const separators = root.findAll('hr.thesaurus-separator')
+    expect(separators).toHaveLength(2)
+
+    const order = Array.from(root.element.children).map((child) =>
+      child.classList.contains('thesaurus-word')
+        ? 'word'
+        : child.tagName === 'HR'
+          ? 'rule'
+          : child.classList.contains('thesaurus-senses')
+            ? 'senses'
+            : child.classList.contains('thesaurus-actions')
+              ? 'actions'
+              : 'other'
+    )
+    // word, rule, senses, rule, actions — the rules hold the scroll area in.
+    expect(order.filter((item) => item === 'other')).toEqual([])
+    expect(order).toEqual(['word', 'rule', 'senses', 'rule', 'actions'])
+  })
+
   it('S-030: a lookup in flight shows loading and no sense groups', () => {
     mountPopover({ loading: true, senses: [] })
 
