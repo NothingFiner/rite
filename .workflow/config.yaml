@@ -5,6 +5,18 @@
 
 base_branch: development
 
+# The platform the app is shipped on, and therefore the only one a green verdict
+# may be claimed for. Rite is macOS-only (WKWebView, `macos-private-api`, an
+# `objc` NSUserDefaults flip for continuous spellcheck), so a Linux run compiles
+# the `#[cfg(not(target_os = "macos"))]` stand-ins and never sees the macOS half
+# of the crate. That is not hypothetical: 5.15 came back green from the Linux
+# container while its macOS spell-check module did not compile at all.
+#
+# A run that reaches green on any other platform exits 6 (`wrong_platform`) with
+# the reason rather than reporting a green build nobody ships. Set
+# `allow_offplatform_green: true` only for a deliberate smoke test.
+target_platform: macos
+
 # Runs once at the start of a headless run (inside the container).
 setup: npm ci && npx playwright install chromium
 

@@ -3,7 +3,7 @@
 Two stages, with a deterministic script (not an LLM) judging the results.
 
 ```
-Stage 1 (interactive, your machine)      Stage 2 (headless, Docker)
+Stage 1 (interactive, your machine)      Stage 2 (headless, native on macOS)
 goose recipe: spec-to-tests              run-headless.sh -> orchestrator.py
   mempalace + repomix                      loop: goose plans + coders -> run tests -> judge
   approve "it should..." sentences         tests locked (read-only mounts + diff check)
@@ -15,12 +15,23 @@ goose recipe: spec-to-tests              run-headless.sh -> orchestrator.py
 1. Copy `.workflow/` into your repo root and commit it to your base branch.
 2. Stage 1: `goose run --recipe .workflow/recipes/spec-to-tests.yaml --interactive`
 3. Stage 2: `.workflow/run-headless.sh feature/<branch> <draft-pr-number>`
-   Needs on the host: docker, git, gh (authenticated), python3 with pyyaml, and
+   Needs on the host: git, gh (authenticated), python3 with pyyaml, and
    ANTHROPIC_API_KEY (or your provider's key) plus GOOSE_PROVIDER / GOOSE_MODEL exported.
-   The work tree is created under `~/.cache/goose-workflow` and must stay on a
-   host path your Docker VM shares (Colima shares `$HOME` only). Override with
-   `WORKFLOW_WORKDIR=<path>`. The launcher preflights the mount and exits 3 if
-   the container cannot see the repo.
+   The work tree is created under `~/.cache/goose-workflow`; override with
+   `WORKFLOW_WORKDIR=<path>`.
+
+   **Which platform the run measures matters.** The default runner is
+   `WORKFLOW_RUNNER=native`: the orchestrator runs on this machine, so a macOS
+   project's `#[cfg(target_os = "macos")]` code is actually compiled. The
+   container (`WORKFLOW_RUNNER=docker`) is Linux, so it compiles the
+   non-macOS stand-ins and can vouch for nothing macOS-only — 5.15 came back
+   "green" from it while its macOS spell-check module did not compile. Because
+   of that, `config.yaml` names the platform the app ships for
+   (`target_platform`), and a run that reaches green on any other platform
+   exits 6 (`wrong_platform`) instead of reporting a green build nobody ships.
+   `allow_offplatform_green: true` exists for a deliberate smoke test, and
+   `result.json` always records the platform the verdict was measured on.
+
    The newest 3 work dirs are kept as failure evidence; older ones are pruned
    (`WORKFLOW_KEEP_WORK=0` disables, `N` keeps N).
 

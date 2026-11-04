@@ -210,10 +210,17 @@ export function useThesaurus() {
     captured = { node: textNode, start: extended.start, end: extended.end }
     state.x = event.clientX
     state.y = event.clientY
-    // Exactly the two keys the Rust side reads. A rejected menu request is
-    // unmodelled (unit mocks resolve null) and leaves the document untouched,
-    // so per the brief it is ignored on purpose.
-    invoke('show_word_menu', { x: event.clientX, y: event.clientY }).catch(() => {})
+    // The slice keeps the word's punctuation for `apply` to rewrite in place,
+    // but Rust spell-checks the core (the same value `openCurrent` looks up),
+    // so it gets `splitAffixes(...).core` of the captured slice. A rejected
+    // menu request is unmodelled (unit mocks resolve null) and leaves the
+    // document untouched, so per the brief it is ignored on purpose.
+    const clicked = captured.node.textContent.slice(captured.start, captured.end)
+    invoke('show_word_menu', {
+      x: event.clientX,
+      y: event.clientY,
+      word: splitAffixes(clicked).core,
+    }).catch(() => {})
   }
 
   function openCurrent() {

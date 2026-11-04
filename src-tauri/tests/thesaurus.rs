@@ -7,10 +7,13 @@
 //! The menu sentences read `word_menu_definition()` — plain data — because a
 //! built Tauri menu needs a `Manager`, and on macOS `muda` panics unless the
 //! menu is created on the main thread, which a test worker thread is not.
+//!
+//! 5.15 grew that menu from one item to a full one; the sentence below now
+//! checks the thesaurus item is *present*, which is the part 5.11 owns.
 
 use rite_lib::menu::{
-    definition, menu_event, word_menu_definition, MenuEvent, MenuNode, MENU_EVENT_NAME,
-    THESAURUS_ITEM_ID,
+    definition, menu_event, word_menu_definition, MenuEvent, MenuNode, SpellingState,
+    MENU_EVENT_NAME, THESAURUS_ITEM_ID,
 };
 use rite_lib::thesaurus::{bundled, parse_dataset, parse_irregulars, thesaurus_lookup};
 
@@ -175,19 +178,22 @@ fn s_010_the_dataset_ships_with_its_attribution() {
 
 #[test]
 fn s_011_the_word_menu_is_one_thesaurus_item() {
-    let items = word_menu_definition();
-    assert_eq!(
-        items.len(),
-        1,
-        "the right-click menu is one item, got {items:?}"
-    );
-    assert_eq!(
-        items[0],
-        MenuNode::Item {
-            id: THESAURUS_ITEM_ID,
-            label: "Thesaurus…",
-            accelerator: None,
-        }
+    // A word the spell checker accepts: the smallest menu 5.15 builds.
+    let menu = word_menu_definition(SpellingState {
+        flagged: false,
+        learned: false,
+        can_ignore: true,
+    });
+    assert!(
+        menu.iter().any(|node| matches!(
+            node,
+            MenuNode::Item {
+                id: THESAURUS_ITEM_ID,
+                label: "Thesaurus…",
+                ..
+            }
+        )),
+        "the right-click menu offers Thesaurus…, got {menu:?}"
     );
 }
 

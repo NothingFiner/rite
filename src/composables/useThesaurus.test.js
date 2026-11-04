@@ -108,7 +108,56 @@ describe('taking over the context menu', () => {
     await flushPromises()
 
     expect(event.defaultPrevented).toBe(true)
-    expect(invoke).toHaveBeenCalledWith('show_word_menu', { x: 120, y: 80 })
+    // The payload gained the word in 5.15, so the menu can offer spelling
+    // actions for the word the writer actually right-clicked.
+    expect(invoke).toHaveBeenCalledWith('show_word_menu', { x: 120, y: 80, word: 'happy' })
+  })
+})
+
+// The restored word menu (SPEC.md S-011, S-012). Rust decides what the menu
+// holds; the frontend's whole job is to hand it the right word — or to keep out
+// of the way when there is no single word to act on.
+describe('the restored word menu', () => {
+  it('S-011: hands Rust the click point and the word without its punctuation', async () => {
+    const { sheet, node } = mountSheet('Happy, said the writer.')
+    caretAt(node, 2)
+
+    rightClick(sheet, { x: 210, y: 44 })
+    await flushPromises()
+
+    expect(invoke).toHaveBeenCalledWith('show_word_menu', {
+      x: 210,
+      y: 44,
+      // The comma is the sentence's, not the word's: same core the lookup uses.
+      word: 'Happy',
+    })
+  })
+
+  it('S-012: sends no word menu and leaves the native menu alone otherwise', async () => {
+    const { sheet, node } = mountSheet('Happy, said the writer.')
+
+    // A phrase is the writer's selection, and the native menu owns it.
+    // Explicit range: jsdom's `selectAllChildren` on a text node reports "".
+    const phrase = document.createRange()
+    phrase.setStart(node, 0)
+    phrase.setEnd(node, node.textContent.length)
+    window.getSelection().removeAllRanges()
+    window.getSelection().addRange(phrase)
+    caretAt(node, 2)
+    const overPhrase = rightClick(sheet)
+    await flushPromises()
+
+    expect(overPhrase.defaultPrevented).toBe(false)
+    expect(invoke).not.toHaveBeenCalledWith('show_word_menu', expect.anything())
+
+    // Whitespace has no word under it at all: offset 6 is the space after "Happy,".
+    window.getSelection().removeAllRanges()
+    caretAt(node, 6)
+    const overSpace = rightClick(sheet)
+    await flushPromises()
+
+    expect(overSpace.defaultPrevented).toBe(false)
+    expect(invoke).not.toHaveBeenCalledWith('show_word_menu', expect.anything())
   })
 })
 

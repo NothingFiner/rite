@@ -311,3 +311,28 @@ test('S-036: the rules run the popover edge to edge', async ({ page }) => {
     expect(Math.abs(line.x + line.width - (box.x + box.width))).toBeLessThanOrEqual(2)
   }
 })
+
+// The restored word menu (SPEC.md S-013). Rust owns what the menu contains and
+// the spelling actions live in Rust, so the browser can only prove the payload:
+// the click point and the word, stripped the way the lookup strips it. "Happy,"
+// is the discriminating case — the comma belongs to the sentence, not the word.
+test('S-013: right-clicking a word sends the click point and the stripped word', async ({
+  page,
+}) => {
+  await open(page)
+  const before = await page.locator('.editor-sheet').innerText()
+  const point = await wordPoint(page, 'Happy')
+
+  await page.mouse.click(point.x, point.y, { button: 'right' })
+
+  await expect
+    .poll(async () => wordMenuCalls(await ipcCalls(page)).length, { timeout: 5000 })
+    .toBe(1)
+
+  const [call] = wordMenuCalls(await ipcCalls(page))
+  expect(typeof call.args.x).toBe('number')
+  expect(typeof call.args.y).toBe('number')
+  expect(call.args.word).toBe('Happy')
+
+  expect(await page.locator('.editor-sheet').innerText()).toBe(before)
+})

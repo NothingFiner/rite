@@ -24,9 +24,24 @@ The last feature phase. When this is done, Rite is feature-complete for a first 
 | 5.8 / 5.8a | Spellcheck (native squiggles + context menu) | done |
 | 5.9 | Subtitle-less chapters | done |
 | 5.10 | Hidden sections replace epigrams | done |
-| **5.11** | **Thesaurus** | **open — next spec** |
+| 5.11 | Thesaurus | done (#16) |
 | **5.12** | **History diff next/previous change navigation** | **open — moved from 6.1** |
 | **5.13** | **Move the colour/theme picker into Text Options (with font, zoom, margins)** | **open — new, 2026-11-03** |
+| 5.14 | `NSSpellChecker` spelling actions | absorbed into 5.15 |
+| **5.15** | **Restored word menu: Cut / Copy / Paste / Select All + Learn / Ignore Spelling** | **open — next spec** |
+
+### 5.15 — Restored word menu
+
+5.11 replaced WKWebView's right-click menu over a single word with a one-item
+`Thesaurus…` menu, which removed the standard editing items and the spell-check
+actions from the place writers use them most. This restores them on the same
+menu: `Thesaurus…`, a rule, native Cut / Copy / Paste / Select All, a rule, then
+Learn (or Unlearn) and Ignore Spelling. Cut/Copy/Paste must stay *native* items —
+`onPaste` only runs because the browser raises the paste event, and JS cannot
+synthesise a paste with clipboard contents. Spelling is app-owned via
+`NSSpellChecker`: learn is global, ignore is per spell-document tag and uses
+WKWebView's own `_spellCheckerDocumentTag`. Look Up and Change Spelling are
+WebKit's own and have no API, so they stay lost; this item absorbs 5.14.
 
 ### 5.4 — Writing stats (was "word-count goals / session target")
 

@@ -47,7 +47,7 @@ use export_text::export_text;
 use llm::{
     delete_role, list_roles, llm_cancel, llm_chat, llm_chat_stream, llm_list_models, save_role,
 };
-use menu::{app_menu, menu_event, show_word_menu, MENU_EVENT_NAME};
+use menu::{app_menu, menu_event, prime_spell_document_tag, show_word_menu, MENU_EVENT_NAME};
 use retrieval::{embed_texts, reembed_document, retrieve_passages};
 use state::AppState;
 use structure::structural_signals;
@@ -55,8 +55,7 @@ use thesaurus::thesaurus_lookup;
 use summary::{
     retrieve_stale_summary_section_ids, retrieve_summaries, summarize_and_store_section,
 };
-#[allow(unused_imports)]
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 /// Turn on continuous spell checking in the WKWebView before it is created.
 ///
@@ -143,6 +142,16 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState::new())
         .menu(|app| app_menu(app))
+        .setup(|app| {
+            // The spell-checker's document tag is read through `with_webview`,
+            // which is delivered on the event loop rather than inline, so it is
+            // primed here (once, before any right-click) instead of inside the
+            // command that builds the word menu.
+            if let Some(window) = app.get_webview_window("main") {
+                prime_spell_document_tag(&window);
+            }
+            Ok(())
+        })
         .on_menu_event(|app, event| {
             // Only app-owned items reach the frontend; native items (quit,
             // hide, clipboard, window actions) and separators act outside it.
