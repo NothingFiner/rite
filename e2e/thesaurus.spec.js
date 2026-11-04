@@ -288,3 +288,26 @@ test('S-038: a word near the right edge keeps the whole popover inside the windo
     }, { timeout: 5000 })
     .toBe(true)
 })
+
+test('S-036: the rules run the popover edge to edge', async ({ page }) => {
+  await open(page)
+  const point = await wordPoint(page, 'Happy')
+  await page.mouse.click(point.x, point.y, { button: 'right' })
+  await expect
+    .poll(async () => wordMenuCalls(await ipcCalls(page)).length, { timeout: 5000 })
+    .toBe(1)
+  await emitMenu(page, 'thesaurus')
+
+  const popover = page.locator('.thesaurus-popover')
+  await expect(popover).toBeVisible()
+  await expect(popover.locator('hr.thesaurus-separator')).toHaveCount(2)
+
+  const box = await popover.boundingBox()
+  for (const rule of await popover.locator('hr.thesaurus-separator').all()) {
+    const line = await rule.boundingBox()
+    // Within the popover's 1px border: the rule crosses the padding rather than
+    // stopping inside it.
+    expect(Math.abs(line.x - box.x)).toBeLessThanOrEqual(2)
+    expect(Math.abs(line.x + line.width - (box.x + box.width))).toBeLessThanOrEqual(2)
+  }
+})

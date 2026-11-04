@@ -50,6 +50,17 @@ only marks it; text changes only on OK. Any other dismissal — Cancel, Escape,
 click outside — leaves the document byte-identical. This is the user's rule:
 "otherwise the whole operation should be a no-op".
 
+**WordNet holds lemmas, not inflections.** The dataset has `thread` and
+`encampment`, never `threading` or `encampments`, so a lookup of what the writer
+actually typed used to come back empty. Lookup therefore tries the word itself
+first and then a short, ordered list of English inflection candidates
+(plural `-s`/`-es`/`-ies`/`-ves`, verb `-ing`/`-ed`/`-ied`, a doubled final
+consonant, a possessive `'s`), accepting the **first candidate that exists in
+the index**. It never invents a lemma: a candidate that is not in the dataset is
+not a match, so an unknown word stays unknown. An exact entry always beats an
+inflection of another word, which is why `stopped` (a WordNet adjective) reports
+its own senses rather than `stop`'s.
+
 **Word shape is preserved on apply.** WordNet lemmas are mostly lowercase and
 carry no punctuation, so replacing "Happy," with "glad" verbatim would damage
 the sentence. The document word is split into leading non-letters, the core
@@ -213,7 +224,7 @@ component itself is untouched (the listener is on `document`).
 - **S-028** (unit): with no senses it should show "No synonyms found" and no OK button.
 - **S-029** (unit): a failed lookup should show the error line and keep the popover open.
 - **S-030** (unit): a lookup in flight should show a loading state with no sense groups.
-- **S-036** (unit): it should separate the word from the sense list, and the sense list from the OK/Cancel row, with a rule — the two rules hold the scrolling area between them.
+- **S-036** (unit + e2e): it should separate the word from the sense list, and the sense list from the OK/Cancel row, with a rule — the two rules hold the scrolling area between them and run the popover's full width, edge to edge.
 - **S-037** (unit): it should place itself to the left of the click point when it would cross the window's right edge, lift itself above the bottom edge the same way, and never leave the window at all.
 
 ### E2E
@@ -233,3 +244,10 @@ and `menu_event` ignores the thesaurus id, so the menu sentences fail on their
 assertions. The Vue stubs (an empty popover template, a composable whose
 handlers do nothing) keep the app mounting cleanly, so the unit and e2e
 sentences fail on their assertions and every pre-existing test still passes.
+
+### Rust — inflected forms
+
+- **S-039** (rust): it should find a plural noun's lemma — "encampments" finds "encampment", "stories" finds "story", "boxes" finds "box".
+- **S-040** (rust): it should find an inflected verb's lemma — "threading" and "threaded" find "thread", "makes" finds "make".
+- **S-041** (rust): it should prefer a word's own entry to any inflection of it, so "stopped" reports "stopped", and a word with no lemma at all still has no entry.
+- **S-042** (rust): it should strip a possessive ending before looking up, so "writer's" finds "writer".

@@ -227,3 +227,92 @@ fn s_013_the_static_application_menu_gains_no_thesaurus_item() {
     );
     assert!(ids.contains(&"save"), "sanity: the known ids are present");
 }
+
+// --- Inflected forms (S-039 … S-042) -----------------------------------------
+//
+// WordNet holds lemmas, not inflections: the dataset has `thread` and
+// `encampment`, never `threading` or `encampments`. A writer right-clicks what
+// they typed, so lookup has to walk back to a lemma — but only to a lemma the
+// dataset actually has, which is what keeps an unknown word unknown.
+
+/// A dataset with exactly the lemmas the inflection rules need, so the rules are
+/// tested independently of whatever WordNet happens to contain.
+const LEMMAS: &str = "\
+thread\tn\t1\ta fine cord of spun fibre\t\t
+encampment\tn\t1\ta site where troops are camped\t\t
+story\tn\t1\tan account of imaginary events\t\t
+box\tn\t1\ta container with a flat base\t\t
+make\tv\t1\tto create or produce\t\t
+stop\tv\t1\tto halt\t\t
+stopped\ta\t1\t(of a nose) blocked\t\t
+writer\tn\t1\ta person who writes\t\t
+";
+
+fn lemmas() -> rite_lib::thesaurus::Thesaurus {
+    parse_dataset(LEMMAS)
+}
+
+#[test]
+fn s_039_a_plural_noun_finds_its_singular_lemma() {
+    let thesaurus = lemmas();
+    for (typed, lemma) in [
+        ("encampments", "encampment"),
+        ("stories", "story"),
+        ("boxes", "box"),
+    ] {
+        let entry = thesaurus
+            .lookup(typed)
+            .unwrap_or_else(|| panic!("{typed} should find {lemma}"));
+        assert_eq!(entry.word, lemma, "{typed} must resolve to {lemma}");
+    }
+
+    // The writer's own words, against the real bundled dataset.
+    assert_eq!(
+        bundled().lookup("encampments").map(|entry| entry.word.as_str()),
+        Some("encampment")
+    );
+    assert_eq!(
+        bundled().lookup("stories").map(|entry| entry.word.as_str()),
+        Some("story")
+    );
+}
+
+#[test]
+fn s_040_an_inflected_verb_finds_its_lemma() {
+    let thesaurus = lemmas();
+    for (typed, lemma) in [("threading", "thread"), ("threaded", "thread"), ("makes", "make")] {
+        let entry = thesaurus
+            .lookup(typed)
+            .unwrap_or_else(|| panic!("{typed} should find {lemma}"));
+        assert_eq!(entry.word, lemma, "{typed} must resolve to {lemma}");
+    }
+
+    // The gerund that started this: against the real bundled dataset.
+    assert_eq!(
+        bundled().lookup("threading").map(|entry| entry.word.as_str()),
+        Some("thread")
+    );
+}
+
+#[test]
+fn s_041_a_word_with_its_own_entry_beats_an_inflection_of_another() {
+    // "stopped" is a WordNet adjective in its own right; the writer asked for
+    // that word, not for "stop".
+    assert_eq!(lemmas().lookup("stopped").map(|entry| entry.word.as_str()), Some("stopped"));
+    assert_eq!(
+        bundled().lookup("stopped").map(|entry| entry.word.as_str()),
+        Some("stopped")
+    );
+
+    // And no candidate may conjure a lemma the dataset does not have.
+    assert!(lemmas().lookup("zzzznotaword").is_none());
+    assert!(lemmas().lookup("encampmentish").is_none());
+}
+
+#[test]
+fn s_042_a_possessive_finds_its_lemma() {
+    let thesaurus = lemmas();
+    assert_eq!(thesaurus.lookup("writer's").map(|entry| entry.word.as_str()), Some("writer"));
+    // A typographic apostrophe is what macOS smart punctuation produces.
+    assert_eq!(thesaurus.lookup("writer’s").map(|entry| entry.word.as_str()), Some("writer"));
+}

@@ -56,10 +56,23 @@ pub struct Thesaurus {
 }
 
 impl Thesaurus {
-    /// The entry for `word`, ignoring case. `None` means WordNet has no such
-    /// word — a normal answer, not a failure.
+    /// The entry for `word`, ignoring case and English inflection.
+    ///
+    /// WordNet holds lemmas, not inflections, so a writer who right-clicks
+    /// "threading" or "encampments" would otherwise be told there are no
+    /// synonyms. The word itself is tried first — an entry in its own right
+    /// always wins — and then the ordered candidates from
+    /// [`lemma_candidates`], each accepted only if the dataset actually has it,
+    /// so an unknown word stays unknown. `None` means WordNet has no such word
+    /// — a normal answer, not a failure.
     pub fn lookup(&self, word: &str) -> Option<&WordEntry> {
-        self.entries.get(&word.to_lowercase())
+        let key = word.to_lowercase();
+        if let Some(entry) = self.entries.get(&key) {
+            return Some(entry);
+        }
+        lemma_candidates(&key)
+            .iter()
+            .find_map(|candidate| self.entries.get(candidate))
     }
 
     /// How many headwords the dataset holds.
@@ -112,6 +125,87 @@ pub fn parse_dataset(tsv: &str) -> Thesaurus {
         });
     }
     Thesaurus { entries }
+}
+
+/// Lemma candidates for an inflected word, in the order they should be tried.
+///
+/// `word` is expected already lowercased. The rules are the regular English
+/// inflections a writer actually types — plural `-s` / `-es` / `-ies` / `-ves`,
+/// verb `-ing` / `-ed` / `-ied` (with the `-e` restored or a doubled final
+/// consonant undone), and the possessive `'s` — not a stemmer: every candidate
+/// is a whole word that a lookup then has to find in the dataset. Irregular
+/// forms (`ran`, `mice`) are out of scope; they are not lemmas either.
+pub fn lemma_candidates(word: &str) -> Vec<String> {
+    fn add(candidates: &mut Vec<String>, word: &str, stem: &str) {
+        // A stem shorter than two letters is not a word, and a candidate equal
+        // to the word itself would send the lookup back where it started.
+        if stem.chars().count() >= 2 && stem != word && !candidates.iter().any(|kept| kept == stem)
+        {
+            candidates.push(stem.to_string());
+        }
+    }
+
+    /// "stopp" is not a word but "stop" is: undo a doubled final consonant.
+    fn undouble(stem: &str) -> Option<String> {
+        let mut chars = stem.chars();
+        let last = chars.next_back()?;
+        let previous = chars.next_back()?;
+        if last == previous && !"aeiou".contains(last) {
+            Some(stem[..stem.len() - last.len_utf8()].to_string())
+        } else {
+            None
+        }
+    }
+
+    let mut out: Vec<String> = Vec::new();
+
+    // Possessive first: "writer's" is "writer" whatever else the tail looks like.
+    for suffix in ["'s", "\u{2019}s", "s'", "s\u{2019}"] {
+        if let Some(stem) = word.strip_suffix(suffix) {
+            add(&mut out, word, stem);
+        }
+    }
+
+    // Plurals.
+    if let Some(stem) = word.strip_suffix("ies") {
+        add(&mut out, word, &format!("{stem}y")); // stories -> story
+        add(&mut out, word, &format!("{stem}ie")); // movies -> movie
+    }
+    if let Some(stem) = word.strip_suffix("ves") {
+        add(&mut out, word, &format!("{stem}f")); // leaves -> leaf
+        add(&mut out, word, &format!("{stem}fe")); // knives -> knife
+    }
+    if let Some(stem) = word.strip_suffix("es") {
+        add(&mut out, word, stem); // boxes -> box
+        add(&mut out, word, &format!("{stem}e"));
+    }
+    if let Some(stem) = word.strip_suffix('s') {
+        // "ss", "us" and "is" endings are words of their own, not plurals.
+        if !word.ends_with("ss") && !word.ends_with("us") && !word.ends_with("is") {
+            add(&mut out, word, stem); // threads -> thread
+        }
+    }
+
+    // Verb forms.
+    if let Some(stem) = word.strip_suffix("ing") {
+        add(&mut out, word, stem); // threading -> thread
+        add(&mut out, word, &format!("{stem}e")); // making -> make
+        if let Some(undoubled) = undouble(stem) {
+            add(&mut out, word, &undoubled); // stopping -> stop
+        }
+    }
+    if let Some(stem) = word.strip_suffix("ied") {
+        add(&mut out, word, &format!("{stem}y")); // tried -> try
+    }
+    if let Some(stem) = word.strip_suffix("ed") {
+        add(&mut out, word, stem); // threaded -> thread
+        add(&mut out, word, &format!("{stem}e")); // created -> create
+        if let Some(undoubled) = undouble(stem) {
+            add(&mut out, word, &undoubled);
+        }
+    }
+
+    out
 }
 
 /// Comma-separated relation list: trim the items, drop empty segments,

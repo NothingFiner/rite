@@ -212,7 +212,9 @@ onBeforeUnmount(removeDismissal)
 }
 
 .thesaurus-separator {
-  margin: 0;
+  /* Full bleed: the rules run to the popover's sides, so the only inset is the
+     1px border. The 12px is the popover's own horizontal padding. */
+  margin: 0 -12px;
   border: 0;
   border-top: 1px solid var(--bg-glass-border);
 }
