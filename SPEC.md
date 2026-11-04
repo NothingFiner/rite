@@ -164,7 +164,7 @@ component itself is untouched (the listener is on `document`).
 ### Rust — dataset and lookup
 
 - **S-001** (rust): it should decode the bundled brotli dataset at first use and index at least 80,000 single-word headwords.
-- **S-002** (rust): it should find a word regardless of the query's case — "The" finds the entry for "the".
+- **S-002** (rust): it should find a word regardless of the query's case — "HAPPY" finds the entry for "happy".
 - **S-003** (rust): it should return one group per sense, each carrying its part of speech, sense number and gloss.
 - **S-004** (rust): it should name parts of speech as noun, verb, adjective or adverb, with satellite adjectives ("s") reported as adjective.
 - **S-005** (rust): it should list a sense's synonyms without repeating the headword itself.

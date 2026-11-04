@@ -40,10 +40,14 @@ fn s_001_bundled_dataset_indexes_more_than_eighty_thousand_headwords() {
 #[test]
 fn s_002_lookup_ignores_the_query_case() {
     let thesaurus = bundled();
-    let lower = thesaurus.lookup("the").expect("WordNet has the word `the`");
+    // WordNet has no determiners, so the example word has to be a real lemma:
+    // "happy" has four sense rows in the bundled asset.
+    let lower = thesaurus
+        .lookup("happy")
+        .expect("WordNet has the word `happy`");
     let shouted = thesaurus
-        .lookup("THE")
-        .expect("`THE` must find the same entry as `the`");
+        .lookup("HAPPY")
+        .expect("`HAPPY` must find the same entry as `happy`");
     assert_eq!(shouted.word, lower.word);
     assert_eq!(shouted.senses.len(), lower.senses.len());
 }

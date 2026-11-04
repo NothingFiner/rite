@@ -32,9 +32,10 @@ let wrapper = null
  */
 function mountSheet(text = 'a happy day') {
   const Host = defineComponent({
+    // No returned render function: a `setup()` that returns one makes Vue
+    // ignore `template`, and the host would mount as a comment node.
     setup() {
       useThesaurus()
-      return () => null
     },
     template: `<div class="editor-sheet"><p>${text}</p></div>`,
   })
