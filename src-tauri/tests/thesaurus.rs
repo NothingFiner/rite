@@ -12,7 +12,7 @@ use rite_lib::menu::{
     definition, menu_event, word_menu_definition, MenuEvent, MenuNode, MENU_EVENT_NAME,
     THESAURUS_ITEM_ID,
 };
-use rite_lib::thesaurus::{bundled, parse_dataset, thesaurus_lookup};
+use rite_lib::thesaurus::{bundled, parse_dataset, parse_irregulars, thesaurus_lookup};
 
 /// Four rows of the real format: two senses of "light" as an adjective, one as
 /// a noun with no antonyms, and one for "sad". Tabs separate the six fields.
@@ -315,4 +315,95 @@ fn s_042_a_possessive_finds_its_lemma() {
     assert_eq!(thesaurus.lookup("writer's").map(|entry| entry.word.as_str()), Some("writer"));
     // A typographic apostrophe is what macOS smart punctuation produces.
     assert_eq!(thesaurus.lookup("writer’s").map(|entry| entry.word.as_str()), Some("writer"));
+}
+
+// --- Irregular forms (S-043, S-044) ------------------------------------------
+//
+// Regular rules cannot reach "ran", "mice" or "written": they are not lemmas and
+// no suffix rule produces the lemma. English WordNet records them as non-lemma
+// Form entries, so the generator ships a 4,322-pair surface → lemma table beside
+// the dataset. Lookup tries the word itself, then the table, then the rules.
+
+const IRREGULAR: &str = "\
+ran\trun
+mice\tmouse
+children\tchild
+went\tgo
+written\twrite
+xyzzy\tabsent
+";
+
+fn lemmas_with_irregulars() -> rite_lib::thesaurus::Thesaurus {
+    let mut thesaurus = parse_dataset(
+        "run\tv\t1\tto move quickly\t\t\n\
+         mouse\tn\t1\ta small rodent\t\t\n\
+         child\tn\t1\ta young person\t\t\n\
+         go\tv\t1\tto move from one place to another\t\t\n\
+         write\tv\t1\tto set down in writing\t\t\n\
+         better\ta\t1\tof superior quality\t\t\n",
+    );
+    thesaurus.set_irregulars(parse_irregulars(IRREGULAR));
+    thesaurus
+}
+
+#[test]
+fn s_043_an_irregular_form_finds_its_lemma() {
+    let thesaurus = lemmas_with_irregulars();
+    for (typed, lemma) in [
+        ("ran", "run"),
+        ("mice", "mouse"),
+        ("children", "child"),
+        ("went", "go"),
+        ("written", "write"),
+    ] {
+        let entry = thesaurus
+            .lookup(typed)
+            .unwrap_or_else(|| panic!("{typed} should find {lemma}"));
+        assert_eq!(entry.word, lemma, "{typed} must resolve to {lemma}");
+    }
+
+    // And against the real bundled dataset. "written" is left out on purpose:
+    // WordNet carries it as a lemma of its own, so S-041's exact-entry rule
+    // wins there, and S-044 pins that.
+    for (typed, lemma) in [
+        ("ran", "run"),
+        ("mice", "mouse"),
+        ("children", "child"),
+        ("went", "go"),
+    ] {
+        assert_eq!(
+            bundled().lookup(typed).map(|entry| entry.word.as_str()),
+            Some(lemma),
+            "{typed} must resolve to {lemma} in the shipped dataset"
+        );
+    }
+}
+
+#[test]
+fn s_044_an_exact_entry_beats_an_irregular_pair_that_the_dataset_cannot_honour() {
+    let thesaurus = lemmas_with_irregulars();
+
+    // "better" is a lemma in its own right; WordNet also pairs it with "well",
+    // but the writer asked for the adjective they typed.
+    assert_eq!(
+        thesaurus.lookup("better").map(|entry| entry.word.as_str()),
+        Some("better")
+    );
+
+    // The fixture maps "xyzzy" to "absent", which the dataset does not contain:
+    // a dangling pair must not invent an entry.
+    assert!(thesaurus.lookup("xyzzy").is_none());
+
+    // The shipped table carries no pair whose lemma is missing.
+    assert_eq!(
+        bundled().lookup("better").map(|entry| entry.word.as_str()),
+        Some("better")
+    );
+
+    // "written" is both an irregular form of "write" and a lemma of its own:
+    // the writer asked for the word they typed, so the exact entry wins.
+    assert_eq!(
+        bundled().lookup("written").map(|entry| entry.word.as_str()),
+        Some("written")
+    );
 }

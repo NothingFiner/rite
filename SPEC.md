@@ -61,6 +61,15 @@ not a match, so an unknown word stays unknown. An exact entry always beats an
 inflection of another word, which is why `stopped` (a WordNet adjective) reports
 its own senses rather than `stop`'s.
 
+**Irregular forms come from the lexicon, not from rules.** English WordNet
+records 4,322 irregular form → lemma pairs ("ran"→"run", "mice"→"mouse",
+"written"→"write") as non-lemma `Form` entries. They ship as a second, tiny
+asset, `thesaurus-irregulars.tsv.br` (67 KB raw, 19 KB brotli, `surface <TAB>
+lemma`), generated from the same lexicon by the same script, and only for pairs
+whose lemma the shipped dataset actually contains. Lookup order is therefore:
+**the word itself, then the irregular table, then the regular rules** — a
+curated exception should win over a guess, and an exact entry wins over both.
+
 **Word shape is preserved on apply.** WordNet lemmas are mostly lowercase and
 carry no punctuation, so replacing "Happy," with "glad" verbatim would damage
 the sentence. The document word is split into leading non-letters, the core
@@ -251,3 +260,5 @@ sentences fail on their assertions and every pre-existing test still passes.
 - **S-040** (rust): it should find an inflected verb's lemma — "threading" and "threaded" find "thread", "makes" finds "make".
 - **S-041** (rust): it should prefer a word's own entry to any inflection of it, so "stopped" reports "stopped", and a word with no lemma at all still has no entry.
 - **S-042** (rust): it should strip a possessive ending before looking up, so "writer's" finds "writer".
+- **S-043** (rust): it should resolve an irregular form to its lemma — "ran" finds "run", "mice" finds "mouse", "children" finds "child", "went" finds "go".
+- **S-044** (rust): it should prefer a word's own entry to an irregular form of another word ("better" reports "better", not "well"; "written" reports "written", not "write"), and ignore an irregular pair whose lemma the dataset does not have.

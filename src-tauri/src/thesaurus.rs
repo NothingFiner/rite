@@ -53,6 +53,9 @@ pub struct Thesaurus {
     /// One entry per headword, keyed by its lowercase form so lookups ignore
     /// the query's case; `WordEntry.word` keeps the dataset's own spelling.
     entries: HashMap<String, WordEntry>,
+    /// Irregular surface form → the lemmas it can be. Consulted after the exact
+    /// word and before the regular rules, so a curated exception beats a guess.
+    irregular: HashMap<String, Vec<String>>,
 }
 
 impl Thesaurus {
@@ -70,9 +73,33 @@ impl Thesaurus {
         if let Some(entry) = self.entries.get(&key) {
             return Some(entry);
         }
+        if let Some(lemmas) = self.irregular.get(&key) {
+            if let Some(entry) = lemmas.iter().find_map(|lemma| self.entries.get(lemma)) {
+                return Some(entry);
+            }
+        }
         lemma_candidates(&key)
             .iter()
             .find_map(|candidate| self.entries.get(candidate))
+    }
+
+    /// Attach the irregular form → lemma table
+    /// (`assets/thesaurus-irregulars.tsv.br`). Consulted after the exact word
+    /// and before the regular rules.
+    pub fn set_irregulars(&mut self, pairs: Vec<(String, String)>) {
+        let mut irregular: HashMap<String, Vec<String>> = HashMap::new();
+        for (surface, lemma) in pairs {
+            // A pair whose lemma is not in this dataset can only produce a dead
+            // end, so it is dropped here rather than chased per lookup.
+            if !self.entries.contains_key(&lemma) {
+                continue;
+            }
+            let lemmas = irregular.entry(surface).or_default();
+            if !lemmas.contains(&lemma) {
+                lemmas.push(lemma);
+            }
+        }
+        self.irregular = irregular;
     }
 
     /// How many headwords the dataset holds.
@@ -124,7 +151,25 @@ pub fn parse_dataset(tsv: &str) -> Thesaurus {
             antonyms: related_items(antonyms, lemma, &key),
         });
     }
-    Thesaurus { entries }
+    Thesaurus {
+        entries,
+        irregular: HashMap::new(),
+    }
+}
+
+/// Parse the irregular table: `surface <TAB> lemma` per line, lowercased.
+pub fn parse_irregulars(tsv: &str) -> Vec<(String, String)> {
+    tsv.lines()
+        .filter_map(|row| {
+            let (surface, lemma) = row.split_once('\t')?;
+            let (surface, lemma) = (surface.trim().to_lowercase(), lemma.trim().to_lowercase());
+            // A self-pair would shadow nothing and a blank line is not a pair.
+            if surface.is_empty() || lemma.is_empty() || surface == lemma {
+                return None;
+            }
+            Some((surface, lemma))
+        })
+        .collect()
 }
 
 /// Lemma candidates for an inflected word, in the order they should be tried.
@@ -231,20 +276,28 @@ fn related_items(raw: &str, lemma: &str, key: &str) -> Vec<String> {
 /// decompressor rounds; 64 KiB trades a small allocation for those rounds.
 const DECODE_BUFFER_BYTES: usize = 64 * 1024;
 
+/// Decompress one bundled brotli asset into its UTF-8 text. A corrupt asset is a
+/// build problem, not a runtime one, so it panics with the asset's own name.
+fn decode(compressed: &[u8]) -> String {
+    let mut decompressed = Vec::new();
+    Decompressor::new(Cursor::new(compressed), DECODE_BUFFER_BYTES)
+        .read_to_end(&mut decompressed)
+        .expect("bundled thesaurus asset does not decode");
+    String::from_utf8(decompressed).expect("bundled thesaurus asset is not UTF-8")
+}
+
 /// The dataset bundled with the app: `src-tauri/assets/thesaurus.tsv.br`,
 /// decoded and indexed once for the process lifetime.
 pub fn bundled() -> &'static Thesaurus {
     static BUNDLED: OnceLock<Thesaurus> = OnceLock::new();
     BUNDLED.get_or_init(|| {
-        let mut decompressed = Vec::new();
-        Decompressor::new(Cursor::new(include_bytes!(
+        let mut thesaurus = parse_dataset(&decode(include_bytes!(
             "../assets/thesaurus.tsv.br"
-        )), DECODE_BUFFER_BYTES)
-        .read_to_end(&mut decompressed)
-        .expect("bundled thesaurus asset does not decode");
-        let tsv = String::from_utf8(decompressed)
-            .expect("bundled thesaurus asset is not UTF-8");
-        parse_dataset(&tsv)
+        )));
+        thesaurus.set_irregulars(parse_irregulars(&decode(include_bytes!(
+            "../assets/thesaurus-irregulars.tsv.br"
+        ))));
+        thesaurus
     })
 }
 
