@@ -2,8 +2,9 @@
 //
 // The Rust side emits one window event named `menu` whose payload is the item
 // id (`new`, `open`, `save`, `save_as`, `import`, `export_plain_text`,
-// `export_markdown`, `export_docx`, `export_epub`, `undo`, `redo`). This
-// module maps those ids to the app's existing actions.
+// `export_markdown`, `export_docx`, `export_epub`, `undo`, `redo`, plus the
+// word menu's `thesaurus` — documented in its own seam, `useThesaurus.js`).
+// This module maps those ids to the app's existing actions.
 
 import { listen } from '@tauri-apps/api/event'
 import { onMounted, onUnmounted } from 'vue'
@@ -44,6 +45,11 @@ export function createMenuActions(deps) {
     export_epub: deps.exports.exportEpub,
     undo: deps.store.undo,
     redo: deps.store.redo,
+    // The word menu's `thesaurus` item rides the same `menu` window event, but
+    // the deps may lack it (the unit tests build deps without a thesaurus), so
+    // this entry stays a lazy arrow: `deps.thesaurus` is only touched when the
+    // action actually runs.
+    thesaurus: () => deps.thesaurus.openCurrent(),
   }
 }
 
