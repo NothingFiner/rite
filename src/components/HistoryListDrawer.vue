@@ -17,11 +17,20 @@
         <p v-if="history.error" class="history-error">{{ history.error }}</p>
 
         <ul class="history-list" v-if="hasLastPath">
+          <!-- Each entry li IS the control (role=button, tabbable): the accessible
+               name spells the kind out ("Snapshot"/"Delta") rather than leaving the
+               S/Δ glyph to be read, and aria-current marks exactly the selected
+               version (SPEC 5.7). Keyboard activation itself is wired in a later
+               iteration, so there is deliberately no keydown handler here. -->
           <li
             v-for="entry in history.entries"
             :key="entry.timestamp"
             class="history-row"
             :class="{ active: history.selectedTimestamp === entry.timestamp }"
+            role="button"
+            tabindex="0"
+            :aria-label="`${entryKindName(entry.kind)} ${formatHistoryTimestamp(entry.timestamp)}`"
+            :aria-current="history.selectedTimestamp === entry.timestamp ? 'true' : undefined"
             @click="onSelect(entry.timestamp)"
           >
             <span class="history-kind" :class="entry.kind" :title="entry.kind === 'snapshot' ? 'Snapshot (full save)' : 'Delta (autosave)'">
@@ -78,6 +87,12 @@ const props = defineProps({
   // location). When false, the list is replaced with a "save first" prompt.
   hasLastPath: { type: Boolean, default: false },
 })
+
+// The accessible name must spell the kind ("Snapshot"/"Delta"); the on-screen
+// S/Δ glyph is not something a screen reader can announce as a kind.
+function entryKindName(kind) {
+  return kind === 'snapshot' ? 'Snapshot' : 'Delta'
+}
 
 function onSelect(timestamp) {
   // If a diff is open for this same version, just drop the diff back to preview

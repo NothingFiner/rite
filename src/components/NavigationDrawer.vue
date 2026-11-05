@@ -30,20 +30,35 @@
               />
               <button class="nav-confirm" @click.stop="confirmRename(item)">&#10003;</button>
             </span>
-            <span v-else class="nav-title">
-              {{ item.displayTitle }}
-              <button
-                v-if="props.activeId === item.id"
-                class="nav-edit"
-                @click.stop="startRename(item)"
-                :title="item.sectionType === 'chapter' ? 'Rename subtitle' : 'Rename section'"
-              >&#9998;</button>
-              <button
-                v-if="props.activeId === item.id"
-                class="nav-delete"
-                @click.stop="onDelete(item.id)"
-              >&#10005;</button>
-            </span>
+            <!-- The row control (S-001): a native <button> named by the display
+                 title via aria-label (SPEC decision 8), carrying the list's
+                 single roving tab stop (SPEC decision 2). No click handler
+                 here: Enter/Space on a button fires a click that bubbles to
+                 the row, which selects exactly once as a pointer click does. -->
+            <button
+              v-else
+              class="nav-row-control"
+              type="button"
+              :aria-label="item.displayTitle"
+              :tabindex="rowTabindex(item)"
+            >
+              <span class="nav-title">{{ item.displayTitle }}</span>
+            </button>
+            <!-- Rename/delete sit AFTER the row control, not inside it: a
+                 button inside a button is invalid HTML and Enter would fire
+                 both (SPEC decision 5). @click.stop keeps them from also
+                 selecting the section. -->
+            <button
+              v-if="!editingIds.has(item.id) && props.activeId === item.id"
+              class="nav-edit"
+              @click.stop="startRename(item)"
+              :title="item.sectionType === 'chapter' ? 'Rename subtitle' : 'Rename section'"
+            >&#9998;</button>
+            <button
+              v-if="!editingIds.has(item.id) && props.activeId === item.id"
+              class="nav-delete"
+              @click.stop="onDelete(item.id)"
+            >&#10005;</button>
             <button
               class="nav-type-toggle"
               :class="{ chapter: item.sectionType === 'chapter' }"
@@ -123,6 +138,17 @@ function addSection() {
 
 function onDelete(id) {
   emit('deleteItem', id)
+}
+
+// Roving tabindex (SPEC decision 2): the section list is ONE tab stop — the
+// active row is in the tab order; with no active section the first row
+// carries it. The other rows stay reachable via focus movement inside the
+// list, not Tab.
+function rowTabindex(item) {
+  if (props.activeId === null) {
+    return item.id === sections.value[0]?.id ? 0 : -1
+  }
+  return item.id === props.activeId ? 0 : -1
 }
 
 // --- drag-to-reorder (roadmap 5.5) --------------------------------------------
@@ -232,9 +258,12 @@ function onPointerDown(e, item) {
   // app, so mouse/pen only.
   if (e.pointerType === 'touch') return
   // A pointerdown on interactive row controls is their gesture, not a drag
-  // start — the rename input, the type toggle, and the edit/delete buttons
-  // keep their clicks. And a row being renamed is never draggable.
-  if (e.target.closest('button, input')) return
+  // start — the rename input, the confirm, and the four action buttons keep
+  // their clicks. The row control itself is NOT excluded: it covers the
+  // title, and a real-mouse press there must still arm a drag
+  // (e2e/outline-drag.spec.js presses the row at its centre). A row being
+  // renamed is never draggable.
+  if (e.target.closest('button, input') && !e.target.closest('.nav-row-control')) return
   if (editingIds.value.has(item.id)) return
   dragCandidate.value = { id: item.id, startX: e.clientX, startY: e.clientY }
   suppressNextClick = false
@@ -476,6 +505,25 @@ watch(sections, () => {
 
 .nav-section.drop-below {
   box-shadow: inset 0 -2px 0 0 var(--accent);
+}
+
+/* The row control (S-001): a native <button> is the keyboard contract, but the
+   row must look and behave exactly like the bare title span it replaces — so
+   the default button chrome is reset and the title span's flex slot moves up
+   onto the button. The .nav-title ellipsis still applies inside it, and the
+   row's user-select: none still holds (the button inherits from the row). */
+.nav-row-control {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
 }
 
 .nav-title {
