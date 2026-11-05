@@ -38,6 +38,7 @@ import {
   useEditorReadback,
   blockPlainText, adjustOffsetForReplace, isNonContentBlock, readSectionTitleText,
 } from '../../composables/useEditorReadback.js'
+import { resolveTabAction } from '../../composables/useEditorTabKey.js'
 import { THEMES } from '../../constants/themes.js'
 import { generateParagraphId, createSection } from '../../constants/DocumentModel.js'
 import { useSectionFormat } from '../../composables/useSectionFormat.js'
@@ -569,6 +570,100 @@ function onKeydown(e) {
         syncFromDOM()
       }
       e.preventDefault()
+      return
+    }
+  }
+
+  if (e.key === 'Tab') {
+    const sel = window.getSelection()
+    if (!sel.rangeCount) return
+    const range = sel.getRangeAt(0)
+    const para = getParagraphAtCursor()
+    // SPEC decision 6: the caret is not in a body paragraph (section title or
+    // outside one) — Tab is not an editing surface there, so the browser keeps
+    // its focus movement.
+    if (!para) return
+
+    const hasSelection = !sel.isCollapsed
+
+    // The text (if any) between the paragraph's start and a collapsed caret.
+    // A boundary-level compare (isCaretAtStart) can miss a caret the browser
+    // expresses as (text-node, 0) instead of (paragraph, 0) — strict DOM
+    // ordering puts those positions apart — so the empty prefix is the real
+    // "offset 0 of the paragraph" test (SPEC decision 1). The same range also
+    // answers whether a literal tab sits left of the caret (Shift+Tab).
+    let prefixBeforeCaret = null
+    if (sel.isCollapsed) {
+      prefixBeforeCaret = range.cloneRange()
+      prefixBeforeCaret.selectNodeContents(para)
+      prefixBeforeCaret.setEnd(range.startContainer, range.startOffset)
+    }
+    const atParagraphStart = sel.isCollapsed &&
+      (isCaretAtStart(range, para) || prefixBeforeCaret.toString() === '')
+
+    // This paragraph's effective first-line indent in inches, the automatic rule
+    // already resolved. The retained baseline carries the baked numbers the live
+    // DOM was rendered from; a paragraph missing from it was created by the
+    // browser without going through render, so derive the rule from its
+    // live-DOM neighbours: 0 for a section's first paragraph, 0.5 otherwise.
+    const baseline = lastRenderedBlocks.value
+    const baselineIdx = baseline
+      ? baseline.findIndex(b => b.kind === 'paragraph' && b.paragraph.id === para.dataset.paraId)
+      : -1
+    let indent = 0
+    if (baselineIdx !== -1) {
+      const bakedIndent = baseline[baselineIdx].paragraph.firstLineIndent
+      indent = typeof bakedIndent === 'number'
+        ? bakedIndent
+        : computeFirstLineIndent(baseline, baselineIdx)
+    } else {
+      let prev = para.previousElementSibling
+      while (prev && isNonContentBlock(prev)) prev = prev.previousElementSibling
+      indent = (!prev || prev.classList?.contains('section-title') ||
+        (prev.classList?.contains('paragraph') && !prev.textContent?.trim()))
+        ? 0
+        : 0.5
+    }
+
+    // Shift+Tab only: a literal tab immediately left of the caret is deleted, so
+    // ask the prefix text whether one sits at its end.
+    let tabBeforeCaret = false
+    if (sel.isCollapsed && e.shiftKey && prefixBeforeCaret.toString().endsWith('\t')) {
+      tabBeforeCaret = true
+    }
+
+    const action = resolveTabAction({
+      key: e.key,
+      ctrlKey: e.ctrlKey,
+      shiftKey: e.shiftKey,
+      hasSelection,
+      atParagraphStart,
+      indent,
+      tabBeforeCaret,
+    })
+    // 'none' hands the key back to the browser (e.g. Shift+Tab with nothing to
+    // remove) — focus movement, no DOM change.
+    if (action.type === 'none') return
+    e.preventDefault()
+
+    if (action.type === 'set-indent') {
+      // The value is the writer's now: write it on the live paragraph in the
+      // exact form the readback parses back (96 px per inch, no-indent class for
+      // 0, automatic marker dropped so no sync re-derives it).
+      para.style.textIndent = action.indent > 0 ? `${Math.round(action.indent * 96)}px` : '0px'
+      para.classList.toggle('no-indent', action.indent === 0)
+      delete para.dataset.autoIndent
+      syncFromDOM()
+      return
+    }
+    if (action.type === 'insert-tab') {
+      document.execCommand('insertText', false, '\t')
+      syncFromDOM()
+      return
+    }
+    if (action.type === 'delete-tab') {
+      document.execCommand('delete')
+      syncFromDOM()
       return
     }
   }
