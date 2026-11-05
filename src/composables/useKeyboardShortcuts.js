@@ -128,13 +128,27 @@ export function useKeyboardShortcuts({
         leftDrawerOpen.value = false
         return
       }
-      // Focus mode is the LAST fall-through of the chain (S-007 order):
-      // a search panel Escape closes only the search, an open drawer Escape
-      // closes only the drawer, and focus mode exits only once nothing else
-      // wants the key — closing chrome first, the mode last.
+      // Focus mode exits once chrome is closed (S-007 refusal position):
+      // search → drawer → focus mode → editor. An editor-view Escape with no
+      // panel wanting the key moves focus out of the editor sheet — the final
+      // fall-through (SPEC decision 4, S-022). editorRef is `ref(null)` in the
+      // unit-test mocks, hence the optional chaining.
       if (focusMode?.active?.value) {
         e.preventDefault()
         focusMode.exit()
+      }
+      if (viewMode.value === 'editor') {
+        e.preventDefault()
+        const editor = editorRef.value
+        editor?.leaveEditor?.()
+        // Belt and braces: the move must land. If focus is still inside the
+        // editor wrapper's root element (the .editor-sheet div itself — the
+        // normal path already placed it on an outside control), drop it so the
+        // page cannot trap the keyboard.
+        const sheetEl = editor?.$el
+        if (sheetEl && (document.activeElement === sheetEl || sheetEl.contains(document.activeElement))) {
+          sheetEl.blur()
+        }
       }
     }
     if (cmd && e.key === 'Enter') {

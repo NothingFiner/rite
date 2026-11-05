@@ -657,7 +657,27 @@ function onKeydown(e) {
       return
     }
     if (action.type === 'insert-tab') {
-      document.execCommand('insertText', false, '\t')
+      // A selection is replaced by direct range surgery: execCommand(
+      // 'insertText') over a non-collapsed selection makes Chromium wrap the
+      // tab in a white-space:pre span and re-balance the following space into
+      // U+00A0. Only safe when the range lives entirely inside this paragraph
+      // (the common ancestor must be the paragraph or a node in it); a
+      // cross-block selection falls back to the execCommand path. The
+      // collapsed-caret case keeps execCommand — its replace pipeline never
+      // mangles anything.
+      const cac = range.commonAncestorContainer
+      if (hasSelection && (para === cac || para.contains(cac))) {
+        range.deleteContents()
+        const tabNode = document.createTextNode('\t')
+        range.insertNode(tabNode)
+        // Caret lands immediately after the inserted tab, ready to type.
+        range.setStartAfter(tabNode)
+        range.collapse(true)
+        sel.removeAllRanges()
+        sel.addRange(range)
+      } else {
+        document.execCommand('insertText', false, '\t')
+      }
       syncFromDOM()
       return
     }
@@ -707,6 +727,33 @@ function onMousedown(e) {
     lockFreshSection()
     syncFromDOM()
   }
+}
+
+// --- Escape fall-through (SPEC decision 4, S-022) ----------------------------
+// Nothing above the editor claimed Escape (search panel, drawer, fresh-title,
+// focus mode), so the editor is the chain's last fall-through: hand keyboard
+// ownership to the next focusable control outside the sheet. Lives here (not as
+// a component-local key listener) because the chain is decideable in
+// useKeyboardShortcuts.js; this method only performs the move it orders.
+function leaveEditor() {
+  const sheet = sheetRef.value
+  if (!sheet) return
+  const tabbables = Array.from(document.querySelectorAll(
+    'a[href], button:not([disabled]), input:not([disabled]), ' +
+    'select:not([disabled]), textarea:not([disabled]), ' +
+    '[tabindex]:not([tabindex="-1"])'
+  )).filter(el => !sheet.contains(el))
+  // First candidate after the sheet in document order; wrap to the document
+  // start when the sheet is the last focusable thing on the page.
+  const following = tabbables.filter(el =>
+    sheet.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)
+  for (const el of following.length ? following : tabbables) {
+    el.focus()
+    // focus() silently no-ops on hidden candidates — verify it took, or keep
+    // walking (universal rules: no silent failure of the intent).
+    if (document.activeElement === el) return
+  }
+  sheet.blur()
 }
 
 // --- Section insert ----------------------------------------------------------
@@ -835,6 +882,9 @@ defineExpose({
   // Reactive boolean: true while the sheet has a non-empty selection. The
   // Assistant panel uses it to auto-scope to the selection (roadmap 3.2).
   hasSelection,
+  // Moves focus to the next focusable control outside the sheet; the Escape
+  // chain's fall-through calls it (useKeyboardShortcuts.js, S-022).
+  leaveEditor,
 })
 </script>
 
@@ -851,6 +901,10 @@ defineExpose({
 .editor-sheet :deep(.paragraph) {
   margin-bottom: 0.6em;
   text-indent: 48px;
+  /* Preserve the writer's literal whitespace; a tab is 0.5 in at 96 dpi
+     (48 px), the same unit the indent model uses. */
+  white-space: pre-wrap;
+  tab-size: 48px;
 }
 
 .editor-sheet :deep(.paragraph.no-indent) {
