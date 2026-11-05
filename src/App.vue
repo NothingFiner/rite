@@ -55,6 +55,19 @@
       :format="format"
       :manuscript-format="manuscriptFormat"
     />
+    <!-- Stats drawer (5.4): App.vue owns the chrome because the StatsDrawer
+         component is the bare view (its props/emit are pinned by
+         StatsDrawer.spec.js). Shares the .drawer / .drawer-content base styles
+         already in this file. -->
+    <div class="drawer stats" :class="{ open: leftDrawerOpen && leftDrawerMode === 'stats' }">
+      <div class="drawer-content">
+        <StatsDrawer
+          :written="stats.writtenToday"
+          :target="stats.target"
+          @set-target="stats.setTarget($event)"
+        />
+      </div>
+    </div>
     <HistoryListDrawer
       :open="leftDrawerOpen && leftDrawerMode === 'history'"
       :history="history"
@@ -195,6 +208,7 @@ import { useChatManager } from './composables/useChat.js'
 import { useRetrieval } from './composables/useRetrieval.js'
 import { useSummaries } from './composables/useSummaries.js'
 import { useWordCount } from './composables/useWordCount.js'
+import { useWritingStats } from './composables/useWritingStats.js'
 import { usePagination } from './composables/usePagination.js'
 import { useManuscriptFormat } from './composables/useManuscriptFormat.js'
 import { isDrawerModeAllowedIn } from './constants/drawerVisibility.js'
@@ -205,6 +219,7 @@ import SearchPanel from './components/SearchPanel.vue'
 import NavigationDrawer from './components/NavigationDrawer.vue'
 import GeneralOptionsDrawer from './components/GeneralOptionsDrawer.vue'
 import TextOptionsDrawer from './components/TextOptionsDrawer.vue'
+import StatsDrawer from './components/StatsDrawer.vue'
 import HistoryListDrawer from './components/HistoryListDrawer.vue'
 import HistoryView from './components/HistoryView.vue'
 import ActivityBar from './components/ActivityBar.vue'
@@ -321,6 +336,16 @@ const retrieval = reactive(useRetrieval(store, llmSettingsRaw))
 // RAW llm-settings composable (reads `settings.value.*`, like useChat/
 // useRetrieval). Wrapped in `reactive()` so the drawer readout auto-unwraps.
 const summaries = reactive(useSummaries(store, llmSettingsRaw))
+
+// 5.4 writing stats: one instance at the app root. The drawer is a bare view
+// over today's progress: numbers flow down as props, 'set-target' back up.
+// docRef is the SAME store doc ref useWordCount reads below (the status bar
+// and the Stats item cannot disagree — S-011); docKey follows the saved path
+// so each manuscript owns its day-start baseline (S-008).
+const stats = reactive(useWritingStats({
+  docRef: doc,
+  docKey: computed(() => store.lastPath),
+}))
 
 // Whole-document word count. THE single instance (mirrors the shared-
 // pagination lift): the status bar reads it here, and the manuscript title
@@ -621,6 +646,19 @@ onUnmounted(() => {
 
 .drawer.right.open {
   right: 0;
+}
+
+/* Stats drawer (5.4): a left drawer like Sections/General/Text, but with an
+   exclusive class so the chrome here stays App-scoped (the four sibling left
+   drawers each own a scoped copy of their styles). */
+.drawer.stats {
+  left: 48px;
+  transform: translateX(-100%);
+  width: 260px;
+}
+
+.drawer.stats.open {
+  transform: translateX(0);
 }
 
 .drawer-content {

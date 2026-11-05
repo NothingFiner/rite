@@ -1,4 +1,4 @@
-import { ref, computed, watch, onUnmounted } from 'vue'
+import { ref, computed, watch, onUnmounted, isRef } from 'vue'
 import { useWordCount } from './useWordCount.js'
 
 /// A daily word target and today's progress against it.
@@ -97,16 +97,20 @@ export function useWritingStats(options = {}) {
   // counted synchronously at setup, so it is real, not 0 — and stores it
   // once. Any baseline already stored for today always wins, which is what
   // keeps later typing and a same-day remount from moving it.
+  // docKey arrives as a plain string (unit tests) or a Vue ref (App.vue tracks
+  // the document's saved path); resolve it per call so a ref is not
+  // stringified to "[object Object]" inside the storage key.
   function ensureBaseline() {
+    const key = isRef(docKey) ? docKey.value : (docKey ?? '')
     const day = dayKey(now())
-    const stored = readBaseline(docKey)
+    const stored = readBaseline(key)
     if (stored && stored.date === day) {
       baseline.value = stored.count
       return
     }
     baseline.value = wordCount.value
     try {
-      window.localStorage.setItem(baselineStorageKey(docKey), JSON.stringify({ date: day, count: baseline.value }))
+      window.localStorage.setItem(baselineStorageKey(key), JSON.stringify({ date: day, count: baseline.value }))
     } catch (error) {
       // Today's progress still tracks in memory after a failed write, so log
       // with context and carry on rather than throwing out of setup.
