@@ -35,12 +35,14 @@
                  single roving tab stop (SPEC decision 2). No click handler
                  here: Enter/Space on a button fires a click that bubbles to
                  the row, which selects exactly once as a pointer click does. -->
+            <!-- aria-current (S-002): only the active section is the current item — SPEC decision 7. -->
             <button
               v-else
               class="nav-row-control"
               type="button"
               :aria-label="item.displayTitle"
               :tabindex="rowTabindex(item)"
+              :aria-current="props.activeId === item.id ? 'true' : undefined"
             >
               <span class="nav-title">{{ item.displayTitle }}</span>
             </button>

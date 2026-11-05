@@ -11,20 +11,27 @@
     </div>
     <div class="status-right">
       <div class="theme-picker">
-        <div
+        <!-- A div with a click handler is unnamed and keyboard-unreachable; the
+             trigger is a real button that reports the picker state (S-010). -->
+        <button
+          type="button"
           class="theme-swatch current"
           :style="{ background: currentTheme.bg, borderColor: swatchBorder(currentTheme.bg) }"
+          :aria-expanded="showThemePicker"
+          :aria-label="triggerAriaLabel"
           @click="$emit('toggleThemePicker')"
-        ></div>
+        ></button>
         <div v-if="showThemePicker" class="theme-tooltip">
-          <div
+          <button
             v-for="(t, i) in themes"
             :key="i"
+            type="button"
             class="theme-swatch"
             :class="{ active: theme === i }"
             :style="{ background: t.bg, borderColor: swatchBorder(t.bg) }"
+            :aria-label="swatchAriaLabel(t, i)"
             @click="$emit('selectTheme', i)"
-          ></div>
+          ></button>
         </div>
       </div>
       <span class="word-count">{{ wordCount }} words ({{ selectedWordCount }} Selected)</span>
@@ -50,6 +57,24 @@ const props = defineProps({
 })
 
 const currentTheme = computed(() => props.themes[props.theme] || props.themes[0] || { bg: '#333333' })
+
+// The trigger's accessible name: state that the current theme when it has one.
+// Legacy spec mounts feed nameless themes (and one an empty list), so the
+// plain label is the fallback — never "undefined".
+const triggerAriaLabel = computed(() => {
+  const name = currentTheme.value.name
+  if (typeof name === 'string' && name.trim()) {
+    return `Change colour theme (current: ${name.trim()})`
+  }
+  return 'Change colour theme'
+})
+
+// The swatch's accessible name is its theme's `name`; position-based fallback
+// for entries without a usable name, so legacy mounts never read "undefined".
+function swatchAriaLabel(t, i) {
+  const name = t && typeof t.name === 'string' ? t.name : ''
+  return name.trim() ? name : `Theme ${i + 1}`
+}
 
 function isLightColor(hex) {
   if (!hex) return false
@@ -145,6 +170,10 @@ defineEmits(['toggleThemePicker', 'selectTheme'])
   border-radius: 4px;
   cursor: pointer;
   border: 1px solid;
+  /* The swatches are real buttons now: drop the UA button chrome so the
+     16×16 box keeps its size and its inline colours. */
+  padding: 0;
+  appearance: none;
 }
 
 .theme-swatch.active {
