@@ -31,6 +31,7 @@ The last feature phase. When this is done, Rite is feature-complete for a first 
 | 5.15 | Restored word menu: Cut / Copy / Paste / Select All + Learn / Ignore Spelling | done (#17) |
 | **5.16** | **Word cloud of frequently used words, excluding articles and pronouns** | **open — idea, not scoped** |
 | **5.17** | **Summary / outline view: per-section synopses in a navigable overview** | **open — data layer already built, needs presentation** |
+| **5.18** | **Tab characters + fixed 0.5-inch tab stops, with a Tab-set first-line indent** | **open — spec + failing tests, `feature/5.18-tab-characters`** |
 
 ### 5.15 — Restored word menu (done, #17)
 

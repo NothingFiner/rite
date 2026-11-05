@@ -1,135 +1,172 @@
-# 5.4 — Writing stats: a daily word target and today's progress
+# 5.18 — Indent and tab characters
 
-Approved sentence list for the spec-to-tests stage. Tests are already written and
-red; they define what "done" means. This file is the implementer's whole context —
-nothing here refers to any conversation.
+Approved sentence list for the spec-to-tests stage. The tests are already written
+and red; they define what "done" means. This file is the implementer's whole
+context — nothing here refers to any conversation.
 
 ## Context
 
-### The shape of the feature
+### What the writer gets
 
-A `Stats` item in the left navigation drawer. The writer sets a daily word target;
-the drawer shows a bar of **today's** progress against it, plus the number in words.
+Word's keyboard model for a manuscript, with the two concepts kept distinct:
 
-### Decisions, and why
+- **Indent** stays a *paragraph property*. A first-line indent is a number of
+  inches stored beside the text, not characters in it. It applies to the first
+  line of the paragraph, is invisible to word count and search, and is removed by
+  a formatting action, not by Backspace.
+- **Tab** is a *text character* (U+0009). It sits in a run's `content`, is one
+  character long, can be selected and deleted, and advances the pen to the next
+  tab stop wherever the caret is.
 
-1. **"Session" means calendar day.** Not launch → quit (macOS apps are not quit, so
-   the number would be unbounded and a crash would reset it) and not an idle-delimited
-   stretch (a per-session target is farmable: stop for lunch, target met twice).
-   Everything below measures *today*, and the UI says so.
+A paragraph may have both. A 0.5-inch first-line indent plus a leading tab puts
+the first word one inch in: the indent shifts the line start, then the tab
+advances to the next 48 px stop after it. This was measured in the app's real
+engine (system WebKit / WKWebView 20621, Safari 26.3, macOS 15.7.4):
+`text-indent: 48px` + leading tab → 96 px; `text-indent: 96px` + leading tab →
+144 px; no indent + leading tab → 48 px. `tab-size: 48px` with
+`white-space: pre-wrap` is honoured exactly; without `pre-wrap` the tab collapses
+to a space (WebKit's default tab is 35.56 px).
 
-2. **The target lives in `localStorage` under `rite-word-target`.** Consistent with
-   every other preference in the app (`rite-theme`, `rite-zoom`, `rite-margin`,
-   `rite-section-format`, `rite-manuscript-format`). It is therefore app-global, not
-   per-manuscript — one target for every document. That is accepted for this version;
-   a per-document target in the `.rite` file is a later change if it is ever wanted.
+### How indent works today — and what has to change
 
-3. **Progress is "words written today", not "words in the manuscript".** Open a
-   20,000-word novel, write 100 words, and the bar reads 100 / 1,000. That is why a
-   day-start baseline exists, and it is the only reason the baseline exists.
+`Paragraph` (`src-tauri/src/document.rs`) already carries `left_indent`,
+`right_indent` and `first_line_indent` as `Option<f32>` in inches. But
+`first_line_indent` is not user data today: it is **derived on every render and
+every readback** from `computeFirstLineIndent(blocks, i)` in
+`src/composables/useSectionBlocks.js` (0 for the first paragraph after a section
+title and after an empty paragraph, 0.5 otherwise), and the derived number is
+written into the model by `fullSyncFromDOM` and the localized `syncFromDOM`. A
+stored value cannot survive, and no UI sets one — `Ruler.vue`, the only component
+that could, is not mounted anywhere in the app.
 
-4. **The bar is hand-rolled CSS.** No charting dependency is added (`vue`, `pinia`,
-   `marked`, `mammoth`, `jszip`, `dompurify` are the whole list).
+Exports ignore all three indent fields today: DOCX writes `<w:p>` with no
+`<w:ind>`, EPUB writes a bare `<p>`. That gap becomes visible the moment a
+writer can set an indent, so this feature closes it.
 
-### The composable contract
+### The model chosen for "automatic unless overridden"
 
-`src/composables/useWritingStats.js` — the tests fix this shape, so implement it:
+`first_line_indent` gets three meanings, using the existing field only (no new
+field on `Paragraph` — protected Rust tests construct it with every field
+spelled out, and a new field would break their compilation):
 
-```js
-useWritingStats({ docRef, docKey, now = () => new Date() })
-// → {
-//   target,       Ref<number|null>   null when no target is set
-//   setTarget,    (value) => void    validates, persists, never throws
-//   baseline,     Ref<number>        this document's word count when the day began
-//   writtenToday, Ref<number>        max(0, wordCount - baseline)
-//   hasTarget,    Ref<boolean>       a finite target > 0
-//   ratio,        Ref<number>        0..1, capped when progress exceeds the target
-// }
-export function resetWritingStatsForTests()   // clear cached module state
-export const TARGET_KEY = 'rite-word-target'
-export const BASELINE_KEY = 'rite-word-baseline'
-```
+- `null` → **automatic**: `computeFirstLineIndent` decides, as today.
+- a number → **explicit**: that value wins, including `0` (flush).
 
-- `docRef` is the same reactive document ref the app already passes to
-  `useWordCount`. Take the count from `useWordCount` — do not recount. The status bar
-  and the Stats item must never disagree, and `useWordCount` is the single source.
-- `docKey` identifies the document (its path). The day-start baseline is stored per
-  document, because `localStorage` is shared by every manuscript: without this,
-  switching documents would either zero the progress or inflate it by the other
-  document's word count.
-- `now` exists so the calendar-day boundary is testable without waiting for midnight.
-  Default to the real clock. The composable must notice a day change while the app is
-  open — no reload — so drive it from a timer as well as from document changes.
-- `setTarget` accepts an integer ≥ 1. Reject negatives, fractions and non-numbers by
-  leaving the stored value unchanged. `0` and a non-numeric stored value mean "no
-  target set", not an error.
+To survive a DOM→model readback, the two cases are marked in the DOM:
 
-### Component contract
+- A paragraph following the automatic rule renders `data-auto-indent="true"` and
+  the computed inline `text-indent` as today.
+- An explicit paragraph renders no marker; its value lives in the existing inline
+  `style="text-indent:Npx"`, and an explicit 0 keeps the existing
+  `class="paragraph no-indent"`.
 
-`src/components/StatsDrawer.vue`
+Readback (`parseParagraphElement`) therefore returns `null` when the marker is
+present, and otherwise parses the inline indent (`no-indent` → 0). The two sync
+paths must stop overwriting `firstLineIndent` with the computed value; they keep
+what the parser returned.
 
-```js
-props:  { written: Number, target: [Number, null] }
-emits:  ['set-target']
-```
+The baked block list passed to the renderer is unchanged in spirit: automatic
+paragraphs are baked to their computed number **on the shallow copy only**
+(`buildEditorHTML`, `manuscriptDisplay.vue`), and the copy carries
+`autoIndent: true` so `paragraphToHTML` emits the marker. The model itself keeps
+`null`. This keeps the existing protected rendering contracts intact: a block
+with a numeric `firstLineIndent` and no `autoIndent` flag must render byte-identical
+HTML to today.
 
-DOM the tests rely on:
+### Migration note
 
-- the bar is an element with `role="img"` and `aria-label="N written of M"` — the
-  number has to be available without reading a drawing
-- the filled portion is `.stats-bar-fill`, with an inline `width: <pct>%` equal to
-  `written / target`, capped at 100%
-- the target is entered in an `<input>` inside the drawer; `Enter` commits it and
-  emits `set-target` with the number
-- with no target (`target` null or 0) there is no `role="img"` element at all, the
-  input is still offered, and the drawer shows a prompt matching
-  /set a daily word target/i
+Documents saved before this feature carry derived numbers (0/0.5) in every
+paragraph. Under the new rule those read as explicit, so their indents freeze
+where they were saved. That is acceptable: the rendering is identical until the
+document structure changes. A load-time normalisation is out of scope.
 
-### The one existing test this changes
+## Decisions
 
-`src/components/ActivityBar.spec.js` asserts the exact drawer-button list
-(`['Sections', 'General Options', 'Text Options']`) and "all three". Adding `Stats`
-makes that four, so three assertions in that file were amended as part of this spec:
-the editor list, the history list, and the "defaults to the editor view" count. That
-amendment is deliberate, not a weaken; no assertion was removed or relaxed, only the
-expected set updated to match the sentence below.
+1. **Tab at the start of a paragraph indents; elsewhere it tabs.** "Start" means
+   the caret sits at offset 0 of the paragraph with no selection.
+2. **Ctrl+Tab inserts a literal tab anywhere**, including at a paragraph start —
+   the only way to get a real tab where plain Tab means indent.
+3. **Shift+Tab removes, it does not leave.** With a tab immediately before the
+   caret it deletes that tab; at a paragraph start it lowers the indent one
+   0.5-inch step (to a floor of 0, where an automatic 0.5 becomes an explicit 0);
+   otherwise it does nothing.
+4. **Escape leaves the editor** when no search panel, drawer or focus mode wants
+   the key. The existing Escape chain in `useKeyboardShortcuts.js` keeps first
+   refusal; the editor is the last fall-through. Focus moves to the next
+   focusable control outside the sheet — the page must never trap the keyboard
+   now that Tab is captured.
+5. **Tab stops are fixed at 0.5 in (48 px) from the paragraph's left content
+   edge** and are not user-settable. A tab advances to the next stop past the
+   current pen position.
+6. **Section titles are not an editing surface for tabs.** The key handler runs
+   only for body paragraphs; a Tab in a title keeps the browser's focus
+   movement.
+7. **The key decision lives in a pure helper.** `resolveTabAction` in
+   `src/composables/useEditorTabKey.js` maps a key event plus the editor context
+   to `insert-tab` / `set-indent` / `delete-tab` / `none`; `editorDisplay.vue`
+   performs the action. This is the unit-test seam for the key rules.
+8. **The tab-stop styling belongs in CSS, not in the paragraph's HTML.** The
+   protected reconcile test pins the exact paragraph HTML string
+   (`style="text-indent:48px"`), so `white-space: pre-wrap` and
+   `tab-size: 48px` go on `.editor-sheet :deep(.paragraph)` and on the
+   manuscript's `.ms-para` rule.
+9. **Exports carry both.** DOCX: `<w:tab/>` for each tab and
+   `<w:ind w:firstLine="…"/>` (twips) for an explicit indent. EPUB: the tab
+   character survives and the package carries whitespace/tab-stop/indent rules
+   (inline or a stylesheet — either satisfies the tests). Plain text and Markdown
+   keep the tab character and cannot express indent.
+10. **Undo already journals indent changes.** `compute_paragraph_ops` compares
+    whole paragraphs (`old[i] != new[j]`), so an indent-only change is an
+    `UpdateParagraph` and inverts correctly.
 
-`Stats` is allowed in the `editor` and `manuscript` views (like `chapters`) and not in
-`history`, where a writing target has no meaning.
+## Sentences
 
-### Edge cases the tests pin down
+### Indent — a paragraph property
 
-- no target set, target `0`, and a non-numeric stored value
-- deleting more words than written today (progress clamps at zero, never negative)
-- progress past the target (fill caps at 100%, the number keeps climbing)
-- the calendar day changing while the app is open
-- two documents, one day, one target
-- the very first word of a document (baseline equals the starting count)
+- **S-001** (e2e) — Tab at the start of a section's first paragraph (automatic indent 0) sets an explicit 0.5-inch first-line indent and inserts no character.
+- **S-002** (e2e) — Tab at the start of a paragraph already at the automatic 0.5 inches raises the indent to 1 inch, the next 0.5-inch step.
+- **S-003** (e2e) — A Tab-set indent survives further typing in the document and the `sync_document` that follows it.
+- **S-004** (unit) — After a readback, a paragraph whose indent was never set keeps a `null` indent and still follows the automatic rule.
+- **S-005** (unit) — After a readback, a paragraph with an explicit indent keeps that exact value, including 0, which stays flush.
+- **S-006** (unit) — Shift+Tab at the start of a paragraph lowers the indent by one 0.5-inch step and stops at 0; an automatic 0.5 becomes an explicit 0.
 
-### Test locations
+### Literal tab — a text character
 
-Per `.workflow/TESTING.md`: unit tests colocated (`src/**/*.test.js`,
-`src/components/*.spec.js`), e2e in `e2e/**/*.spec.js` with the shared IPC mock from
-`e2e/helpers/tauri-ipc.js`. No Rust layer: nothing in this feature crosses the IPC
-boundary.
+- **S-007** (e2e) — Tab in the middle of a paragraph inserts exactly one U+0009 at the caret and keeps focus in the editor.
+- **S-008** (e2e) — The inserted tab reaches the model: the paragraph in the synced document contains U+0009 at that position.
+- **S-009** (e2e) — Tab with text selected replaces the selection with one tab character.
+- **S-010** (e2e) — Ctrl+Tab at the start of a paragraph inserts a literal tab and leaves the first-line indent unchanged.
+- **S-011** (unit) — Shift+Tab immediately after a literal tab deletes that tab and nothing else; with no tab before the caret and the caret not at the paragraph start it changes nothing.
+- **S-012** (e2e) — Tab with the caret in a section title inserts no character and moves focus out of the title.
 
-## Approved sentences
+### Leaving the editor
 
-| ID | Layer | Sentence |
-|---|---|---|
-| S-001 | unit | it should show a Stats item in the left navigation drawer |
-| S-002 | unit | it should let the writer set a daily word target and persist it under `rite-word-target` in localStorage |
-| S-003 | unit | it should load the saved target on startup |
-| S-004 | unit | it should treat a missing target, a zero target and a non-numeric stored value as "no target set" |
-| S-005 | unit | it should refuse a negative or fractional target and leave the stored value unchanged |
-| S-006 | unit | it should count today's words as the current document count minus the count recorded when the writing day began |
-| S-007 | unit | it should record that day-start count once per calendar day and not overwrite it on later reads the same day |
-| S-008 | unit | it should keep the day-start count per document, so opening a different manuscript neither zeroes nor inflates progress |
-| S-009 | unit | it should start a new day at zero progress when the calendar day changes, without requiring a reload |
-| S-010 | unit | it should clamp displayed progress at zero when the writer deletes more words than they wrote today |
-| S-011 | unit | it should take the word count from `useWordCount` rather than recounting, so the Stats item and the status bar cannot disagree |
-| S-012 | unit | it should cap the bar fill at 100% when progress exceeds the target |
-| S-013 | unit | it should label the graph "N written of M" so the number is available without reading the drawing |
-| S-014 | unit | it should hide the graph and prompt for a target when none is set |
-| S-015 | e2e | it should open the Stats item, accept a target and show progress that increases after typing |
-| S-016 | e2e | it should still show the target and today's progress after a reload |
+- **S-022** (e2e) — Escape with the caret in the editor, when no search panel, drawer or focus mode is open, moves focus out of the editor; typing afterwards does not change the document.
+
+### The two stay distinct
+
+- **S-013** (e2e) — Indent and tab are independent: after a Tab-set 0.5-inch indent, a literal tab inserted mid-line, then Backspace, the paragraph's text loses only the tab and the indent is still 0.5 inch.
+
+### Rendering
+
+- **S-014** (e2e) — Editor body paragraphs compute to `white-space: pre-wrap` and `tab-size: 48px`, so a tab is preserved rather than collapsed.
+- **S-015** (e2e) — A literal tab advances to the next 48 px stop from the paragraph's left content edge: 48 px with no indent, 96 px under a 0.5-inch indent.
+- **S-016** (e2e) — The manuscript view preserves whitespace with the same 48 px stops and renders a leading tab at the same offset as the editor.
+
+### Exports
+
+- **S-017** (rust) — DOCX export writes a tab as `<w:tab/>` and leaves no literal U+0009 inside `<w:t>`.
+- **S-018** (rust) — DOCX export writes a first-line indent as `w:ind w:firstLine` in twips (0.5 in = 720).
+- **S-019** (rust) — EPUB export preserves the tab character and applies the first-line indent in its XHTML and stylesheet.
+
+### Undo
+
+- **S-020** (e2e) — One undo after a Tab-set indent restores the previous indent.
+- **S-021** (e2e) — One undo after a literal tab removes the tab and restores the text.
+
+## Out of scope
+
+No custom tab stops, no ruler markers, no leader dots, no "show formatting marks".
+No indent controls besides these keys (the Ruler stays unmounted). No tab in
+section titles. No multi-paragraph indent when Tab is pressed over a selection —
+the selection is replaced by one tab character (S-009).
