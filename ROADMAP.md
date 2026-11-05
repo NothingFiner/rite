@@ -88,39 +88,54 @@ single source of the count. No charting dependency was added.
 
 ### 5.7 — Accessibility pass
 
-**Platform constraint, answered up front:** Rite renders in WKWebView, so the
-accessibility tree is WebKit's own and VoiceOver reads the app to exactly the
-depth the markup allows — Tauri itself adds nothing and blocks nothing
-(tauri-apps/tauri#207: "as accessible as the underlying web view"). One caveat
-is worth writing down: native `<select>` popups stop being exposed to VoiceOver
-when the app creates a tray icon (tauri-apps/tauri#15221). Rite has no tray icon
-today and six `<select>` elements, so adding one later would silently break
-those for screen-reader users.
+**Non-mouse navigation is the pass.** Two reasons it comes before anything else.
+First, every screen-reader user on macOS drives VoiceOver from the keyboard, so a
+keyboard gap *is* a screen-reader gap — reachability is the shared floor, and
+naming only matters once you can get to the thing. Second, it is the only half of
+accessibility this repo's test layers can hold: Playwright can Tab, Enter and
+Escape and assert what happened; it cannot hear what VoiceOver says. Fix
+reachability first, then naming and roles, then polish.
 
-The app-side gaps, in rough priority order:
+**Platform.** Tauri adds no accessibility layer of its own: the tree is
+WKWebView's, so VoiceOver reads the app to exactly the depth the markup allows
+(tauri-apps/tauri#207). One caveat to keep: creating a tray icon breaks VoiceOver
+for native `<select>` popups (tauri-apps/tauri#15221) — Rite has six `<select>`
+elements and no tray icon today, so adding one later would silently break them.
 
-1. **The editor has no accessible identity.** `editorDisplay.vue` is a bare
-   `contenteditable="true"` div: no `role="textbox"`, no `aria-multiline`, no
-   label. It should announce as a multi-line field named after the document,
-   and the manuscript's sections should be reachable as headings.
-2. **Formatting buttons are keyboard-unreachable.** Bold/Italic/Underline carry
-   `tabindex="-1"` to keep the caret in the editor. Cmd+B/I/U mitigate this, but
-   they still need a name and an announced state (`aria-pressed`).
-3. **Clickable non-buttons.** Navigation rows, history rows and the settings
-   section headers are `div`/`li` with `@click` — no role, no tab stop, no
-   Enter/Space. Each needs to be a real `button`, or gain role + tabindex + key
-   handlers.
-4. **Names.** 59 `<button>` elements against 24 `aria-*` attributes in six of
-   roughly fifteen components. `ActivityBar`'s icons rely on `title` alone; a
-   tooltip is not an accessible name.
-5. **No landmarks, no skip link, no `prefers-reduced-motion`.** The app is one
-   scrolling column of divs, so the VoiceOver rotor has nothing to jump between,
-   and the drawer and format animations ignore the reduced-motion setting.
-6. **Focus visibility.** Eight `outline: none` rules; those inputs re-style their
-   border on `:focus`, but nothing uses `:focus-visible`, so mouse and keyboard
-   get the same ring. Audit while in there.
+**Already keyboard-operable — do not regress.** The global shortcut layer is in
+good shape: Cmd+B/I/U, Cmd+F, the Escape chain in `useKeyboardShortcuts.js`
+(search → open drawer → focus mode, in that order), Enter/Shift+Enter in the
+search panel, `PromptModal` focusing and selecting its input, Escape in the
+thesaurus popover, and all four settings accordion headers being real `<button>`s.
 
-Scope note: this is a markup and CSS pass, not a redesign. No new dependency.
+**Mouse-only surfaces.** These carry `@click` on a `div` or `li`, so they have no
+role, no tab stop, and no Enter/Space:
+
+- `NavigationDrawer.vue` — every section row (`.nav-section`), plus the rename,
+  delete, type and hidden controls nested inside it.
+- `HistoryListDrawer.vue` — every history entry is an `li` with `@click`.
+- `StatusBar.vue` — the theme-picker trigger and each colour swatch.
+- `Ruler.vue` — the strip that sets an indent from the click position.
+
+**Focus management.** The format buttons carry `tabindex="-1"` to keep the caret
+in the editor; Cmd+B/I/U mitigate that, but they still need a name and an
+`aria-pressed` state. No drawer or modal traps or restores focus, so tabbing out
+of an open drawer walks into the page behind it. `Toolbar.vue` declares
+`role="tablist"` with three `role="tab"` buttons but no arrow-key navigation and
+no roving tabindex.
+
+**Then, naming and structure.** The editor (`editorDisplay.vue`) is a bare
+`contenteditable="true"` div: no `role="textbox"`, no `aria-multiline`, no label,
+and no headings, so the manuscript cannot be navigated by section. 59 `<button>`
+elements against 24 `aria-*` attributes in six of roughly fifteen components;
+`ActivityBar`'s icons rely on `title` alone, and a tooltip is not an accessible
+name.
+
+**Last, polish.** No landmarks or skip link. No `prefers-reduced-motion`, so the
+drawer and format animations ignore the setting. Eight `outline: none` rules
+re-style a border on `:focus` but nothing uses `:focus-visible`.
+
+Scope note: a markup, focus and CSS pass — not a redesign, and no new dependency.
 
 ### 5.13 — Colour picker consolidation
 
