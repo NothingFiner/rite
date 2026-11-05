@@ -55,6 +55,10 @@ and that is its own pass, 5.7b), and screen-reader naming elsewhere in the app
 8. **Names come from `aria-label`** for rows, history entries and swatches.
    Text-content naming is not usable here: a row's text includes its page number
    and its action glyphs.
+9. **The theme picker is removed from the DOM when closed** (`v-if`, as it is
+   today), not merely hidden. S-015 asserts it is gone after Escape, and a
+   `v-show` restyle would leave the swatches in the tab order — reachable while
+   invisible. Same reasoning for every other conditional surface here.
 
 ### What already works — do not regress
 
