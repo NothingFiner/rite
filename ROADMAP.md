@@ -1,6 +1,6 @@
 # Rite — Roadmap
 
-Status as of **2026-11-04**, `development` at `c57b4c9` (word menu #17 and iteration scoping #18 merged).
+Status as of **2026-11-04**, `development` at `2f43055` (word menu #17, iteration scoping #18 and writing stats #19 merged).
 
 Tauri v1 → v2 migration landed as PR #15 — a prerequisite for 5.11's context menu, not a roadmap item of its own.
 
@@ -17,7 +17,7 @@ The last feature phase. When this is done, Rite is feature-complete for a first 
 | 5.1 | View-aware navigation / page preservation | done |
 | 5.2 | Drawer / view IA restructure | done |
 | 5.3 | Focus / typewriter mode | done (#1) |
-| **5.4** | **Writing stats: per-session word target + progress graph in a sidebar item** | **open — spec in progress, `feature/5.4-writing-stats`** |
+| 5.4 | Writing stats: daily word target + progress graph in a sidebar item | done (#19) |
 | 5.5 | Outline drag-reorder + `MoveSection` | done |
 | 5.6 | Editor extraction (cursor → page-nav → readback → render) | done (PR1–4) |
 | **5.7** | **Accessibility pass** | **open** |
@@ -72,15 +72,55 @@ title in document order, so the outline becomes a readable overview of the manus
 rather than a list of headings. That pairs naturally with the drag-reorderable outline
 from 5.5. Scope it around the existing data: no new generation, no new storage.
 
-### 5.4 — Writing stats (was "word-count goals / session target")
+### 5.4 — Writing stats (done, #19)
 
-A left-drawer "Stats" item: the writer sets a words-per-session target, and sees
-a simple progress graph of how the current session is going against it.
-`useWordCount` already exists but is pure counting; the session axis is new.
+A left-drawer "Stats" item: the writer sets a daily word target and sees a
+hand-rolled CSS bar of today's progress against it, plus the number in words.
 
-Open questions before its spec: what counts as a *session* (launch → quit?
-calendar day?), where the target persists (localStorage vs the `.rite` file),
-and what the graph plots (cumulative words over the session, vs per-day bars).
+The open questions above were resolved in the spec. A *session* is a **calendar
+day**, not launch → quit (macOS apps are not quit, so the number would be
+unbounded) and not an idle-delimited stretch (a per-session target is farmable:
+stop for lunch, meet the target twice). The target lives in `localStorage`
+(`rite-word-target`), app-global like every other preference, not per-manuscript.
+Progress is "words written today", not "words in the manuscript", so a per-document
+day-start baseline is stored (`rite-word-baseline`) and `useWordCount` stays the
+single source of the count. No charting dependency was added.
+
+### 5.7 — Accessibility pass
+
+**Platform constraint, answered up front:** Rite renders in WKWebView, so the
+accessibility tree is WebKit's own and VoiceOver reads the app to exactly the
+depth the markup allows — Tauri itself adds nothing and blocks nothing
+(tauri-apps/tauri#207: "as accessible as the underlying web view"). One caveat
+is worth writing down: native `<select>` popups stop being exposed to VoiceOver
+when the app creates a tray icon (tauri-apps/tauri#15221). Rite has no tray icon
+today and six `<select>` elements, so adding one later would silently break
+those for screen-reader users.
+
+The app-side gaps, in rough priority order:
+
+1. **The editor has no accessible identity.** `editorDisplay.vue` is a bare
+   `contenteditable="true"` div: no `role="textbox"`, no `aria-multiline`, no
+   label. It should announce as a multi-line field named after the document,
+   and the manuscript's sections should be reachable as headings.
+2. **Formatting buttons are keyboard-unreachable.** Bold/Italic/Underline carry
+   `tabindex="-1"` to keep the caret in the editor. Cmd+B/I/U mitigate this, but
+   they still need a name and an announced state (`aria-pressed`).
+3. **Clickable non-buttons.** Navigation rows, history rows and the settings
+   section headers are `div`/`li` with `@click` — no role, no tab stop, no
+   Enter/Space. Each needs to be a real `button`, or gain role + tabindex + key
+   handlers.
+4. **Names.** 59 `<button>` elements against 24 `aria-*` attributes in six of
+   roughly fifteen components. `ActivityBar`'s icons rely on `title` alone; a
+   tooltip is not an accessible name.
+5. **No landmarks, no skip link, no `prefers-reduced-motion`.** The app is one
+   scrolling column of divs, so the VoiceOver rotor has nothing to jump between,
+   and the drawer and format animations ignore the reduced-motion setting.
+6. **Focus visibility.** Eight `outline: none` rules; those inputs re-style their
+   border on `:focus`, but nothing uses `:focus-visible`, so mouse and keyboard
+   get the same ring. Audit while in there.
+
+Scope note: this is a markup and CSS pass, not a redesign. No new dependency.
 
 ### 5.13 — Colour picker consolidation
 
