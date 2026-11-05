@@ -29,6 +29,8 @@ The last feature phase. When this is done, Rite is feature-complete for a first 
 | **5.13** | **Move the colour/theme picker into Text Options (with font, zoom, margins)** | **open — new, 2026-11-03** |
 | 5.14 | `NSSpellChecker` spelling actions | absorbed into 5.15 |
 | 5.15 | Restored word menu: Cut / Copy / Paste / Select All + Learn / Ignore Spelling | done (#17) |
+| **5.16** | **Word cloud of frequently used words, excluding articles and pronouns** | **open — idea, not scoped** |
+| **5.17** | **Summary / outline view: per-section synopses in a navigable overview** | **open — data layer already built, needs presentation** |
 
 ### 5.15 — Restored word menu (done, #17)
 
@@ -42,6 +44,33 @@ synthesise a paste with clipboard contents. Spelling is app-owned via
 `NSSpellChecker`: learn is global, ignore is per spell-document tag and uses
 WKWebView's own `_spellCheckerDocumentTag`. Look Up and Change Spelling are
 WebKit's own and have no API, so they stay lost; this item absorbs 5.14.
+
+### 5.16 — Word cloud
+
+A word cloud of the words a manuscript uses most, minus the ones every manuscript
+uses most: articles, conjunctions, pronouns, the usual stopword set. Two open
+questions before a spec: does the frequency count stay in the renderer (a tokenizer
+over the current document) or move to Rust (where it survives a large file without
+blocking the main thread), and does the stopword list need to follow the document
+language. Needs a tokenizer and a curated list — a real feature, not a garnish on
+5.4's graph.
+
+### 5.17 — Summary / outline view
+
+The hard half of this is already built and is not in the UI where a writer would
+reach for it:
+
+- `src-tauri/src/summary.rs` — `build_summary_request`, `plan_resummarize`,
+  `retrieve_summaries`, `retrieve_stale_summary_section_ids`. Summaries are
+  generated per section, stored in the 4.7 sidecar, and staleness is tracked.
+- `src/composables/useSummaries.js` — `refreshSummaryStatus`, `summarizeOne`,
+  `generateSummaries`, `refreshStaleSummaries`.
+- `LlmPanel.vue` renders them as a flat list inside the LLM panel's "Summaries" mode.
+
+What is missing is presentation: a view that puts each section's synopsis beside its
+title in document order, so the outline becomes a readable overview of the manuscript
+rather than a list of headings. That pairs naturally with the drag-reorderable outline
+from 5.5. Scope it around the existing data: no new generation, no new storage.
 
 ### 5.4 — Writing stats (was "word-count goals / session target")
 

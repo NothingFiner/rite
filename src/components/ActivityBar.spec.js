@@ -25,10 +25,24 @@ describe('ActivityBar', () => {
     expect(wrapper.find('.activity-bar').exists()).toBe(true)
   })
 
-  it('shows all three drawer buttons in the editor', () => {
+  it('S-001: should show a Stats item in the left navigation drawer', () => {
     const wrapper = mount(ActivityBar, { props: { viewMode: 'editor' } })
     const titles = drawerItems(wrapper).map((b) => b.attributes('title'))
-    expect(titles).toEqual(['Sections', 'General Options', 'Text Options'])
+    expect(titles).toContain('Stats')
+  })
+
+  it('S-001: should emit select with the stats id when the Stats item is clicked', async () => {
+    const wrapper = mount(ActivityBar, { props: { viewMode: 'editor' } })
+    const stats = drawerItems(wrapper).find((b) => b.attributes('title') === 'Stats')
+    expect(stats).toBeTruthy()
+    await stats.trigger('click')
+    expect(wrapper.emitted('select').at(-1)).toEqual(['stats'])
+  })
+
+  it('shows every drawer button in the editor', () => {
+    const wrapper = mount(ActivityBar, { props: { viewMode: 'editor' } })
+    const titles = drawerItems(wrapper).map((b) => b.attributes('title'))
+    expect(titles).toEqual(['Sections', 'General Options', 'Text Options', 'Stats'])
   })
 
   it('shows the B/I/U format buttons only in the editor', () => {
@@ -42,10 +56,10 @@ describe('ActivityBar', () => {
     expect(formatButtons(history)).toHaveLength(0)
   })
 
-  it('hides Text Options in the manuscript view', () => {
+  it('hides Text Options in the manuscript view, keeping Stats', () => {
     const wrapper = mount(ActivityBar, { props: { viewMode: 'manuscript' } })
     const titles = drawerItems(wrapper).map((b) => b.attributes('title'))
-    expect(titles).toEqual(['Sections', 'General Options'])
+    expect(titles).toEqual(['Sections', 'General Options', 'Stats'])
   })
 
   it('shows only General Options in the history view', () => {
@@ -85,8 +99,8 @@ describe('ActivityBar', () => {
     expect(wrapper.emitted('select')[0]).toEqual(['general-options'])
   })
 
-  it('defaults to the editor view (all three drawer buttons)', () => {
+  it('defaults to the editor view (every drawer button)', () => {
     const wrapper = mount(ActivityBar)
-    expect(drawerItems(wrapper)).toHaveLength(3)
+    expect(drawerItems(wrapper)).toHaveLength(4)
   })
 })

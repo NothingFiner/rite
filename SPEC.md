@@ -1,158 +1,135 @@
-# SPEC — Restored word menu (roadmap 5.15): standard items and spelling actions
+# 5.4 — Writing stats: a daily word target and today's progress
 
-Approved sentences, one per behaviour, each with the layer that proves it. Every
-sentence is observable and testable on its own, and every test name in the repo
-starts with its ID (see `.workflow/TESTING.md`).
-
-Supersedes the 5.11 thesaurus spec, which is preserved in git history at
-`17ba6d3` (PR #16).
+Approved sentence list for the spec-to-tests stage. Tests are already written and
+red; they define what "done" means. This file is the implementer's whole context —
+nothing here refers to any conversation.
 
 ## Context
 
-### Why this exists
+### The shape of the feature
 
-Roadmap 5.11 took over the right-click menu over a single word in the editor:
-`useThesaurus` calls `preventDefault()` and asks Rust to pop a native menu. That
-menu contains **one** item, `Thesaurus…`. The menu it replaced was **WKWebView's
-own**, which offered Cut, Copy, Paste, Select All, Look Up and — on a flagged
-word — Learn/Ignore/Unlearn Spelling. So on any single word (that is, almost
-everywhere in the editor) the standard editing items and the spelling actions
-disappeared.
+A `Stats` item in the left navigation drawer. The writer sets a daily word target;
+the drawer shows a bar of **today's** progress against it, plus the number in words.
 
-This item restores them. It is not a new menu system: it adds items to the word
-menu the thesaurus already pops.
+### Decisions, and why
 
-### What can and cannot be restored
+1. **"Session" means calendar day.** Not launch → quit (macOS apps are not quit, so
+   the number would be unbounded and a crash would reset it) and not an idle-delimited
+   stretch (a per-session target is farmable: stop for lunch, target met twice).
+   Everything below measures *today*, and the UI says so.
 
-- **Cut, Copy, Paste, Select All** must be Tauri `PredefinedMenuItem`s, i.e. the
-  OS/native items the application Edit menu already uses (`menu.rs`
-  `native_item()`). This is not a preference: `editorDisplay.vue`'s `onPaste`
-  handler strips pasted content to plain text, and it runs because the *browser*
-  raises a `paste` event. JavaScript cannot synthesise a paste with clipboard
-  contents, so an app-owned Paste would paste nothing or stale data. Cut and
-  Copy have the same character — they act on the focused webview's selection.
-- **Look Up** (the system dictionary) has no Tauri equivalent and no API. Out of
-  scope.
-- **Change Spelling…** (the suggestions list) is likewise WebKit's own. Out of
-  scope.
-- **Learn / Unlearn / Ignore Spelling** are not exposed as predefined items
-  either, so they must be app-owned. They are reachable through `NSSpellChecker`
-  (the `objc` crate is already a macOS-only dependency of this crate).
+2. **The target lives in `localStorage` under `rite-word-target`.** Consistent with
+   every other preference in the app (`rite-theme`, `rite-zoom`, `rite-margin`,
+   `rite-section-format`, `rite-manuscript-format`). It is therefore app-global, not
+   per-manuscript — one target for every document. That is accepted for this version;
+   a per-document target in the `.rite` file is a later change if it is ever wanted.
 
-### How the spell-checker state actually works
+3. **Progress is "words written today", not "words in the manuscript".** Open a
+   20,000-word novel, write 100 words, and the bar reads 100 / 1,000. That is why a
+   day-start baseline exists, and it is the only reason the baseline exists.
 
-Two different scopes, which is why both actions are needed:
+4. **The bar is hand-rolled CSS.** No charting dependency is added (`vue`, `pinia`,
+   `marked`, `mammoth`, `jszip`, `dompurify` are the whole list).
 
-- `NSSpellChecker.learnWord(_:)` writes the user's **global** learned-words list
-  for the language. WebKit consults it, so learning clears the squiggle
-  everywhere, in every document and application.
-- `ignoreWord(_:inSpellDocumentWithTag:)` is keyed on a **spell-document tag** —
-  a handle identifying one spell-checking session. WebKit owns that session, so
-  an ignore must be recorded under *WebKit's* tag or the marker will not clear.
+### The composable contract
 
-Verified on this machine (2026-11-03, swift probe against the live
-`NSSpellChecker` and `WKWebView` classes):
+`src/composables/useWritingStats.js` — the tests fix this shape, so implement it:
 
-```
-ignore the word under tag 4242 -> flagged under 4242: false, under 9999: true, under 0: true
-learnWord                      -> flagged under 0: false, under 7777: false
-unlearnWord                    -> flagged again
-WKWebView selectors            -> "ignoreSpelling:", "changeSpelling:", "checkSpelling:",
-                                  "_spellCheckerDocumentTag"
-WKWebView spell document tag   -> 1
+```js
+useWritingStats({ docRef, docKey, now = () => new Date() })
+// → {
+//   target,       Ref<number|null>   null when no target is set
+//   setTarget,    (value) => void    validates, persists, never throws
+//   baseline,     Ref<number>        this document's word count when the day began
+//   writtenToday, Ref<number>        max(0, wordCount - baseline)
+//   hasTarget,    Ref<boolean>       a finite target > 0
+//   ratio,        Ref<number>        0..1, capped when progress exceeds the target
+// }
+export function resetWritingStatsForTests()   // clear cached module state
+export const TARGET_KEY = 'rite-word-target'
+export const BASELINE_KEY = 'rite-word-baseline'
 ```
 
-So `_spellCheckerDocumentTag` **is** readable at runtime and Ignore **can** clear
-the marker. It is a private, underscored accessor — a single property read with
-no side effects. If a future WebKit stops publishing it, the fallback is to omit
-the Ignore item (S-014): never ship a menu item that cannot take effect.
+- `docRef` is the same reactive document ref the app already passes to
+  `useWordCount`. Take the count from `useWordCount` — do not recount. The status bar
+  and the Stats item must never disagree, and `useWordCount` is the single source.
+- `docKey` identifies the document (its path). The day-start baseline is stored per
+  document, because `localStorage` is shared by every manuscript: without this,
+  switching documents would either zero the progress or inflate it by the other
+  document's word count.
+- `now` exists so the calendar-day boundary is testable without waiting for midnight.
+  Default to the real clock. The composable must notice a day change while the app is
+  open — no reload — so drive it from a timer as well as from document changes.
+- `setTarget` accepts an integer ≥ 1. Reject negatives, fractions and non-numbers by
+  leaving the stored value unchanged. `0` and a non-numeric stored value mean "no
+  target set", not an error.
 
-### Testability seams (no test layer has a live WKWebView)
+### Component contract
 
-1. **The menu is plain data.** `word_menu_definition(spelling)` returns
-   `Vec<MenuNode>` — the same node type the static application menu uses, so
-   order and item kinds are assertable without building a real menu (which in
-   Tauri v2 needs a `Manager` and, for `muda` popups, the macOS main thread).
-2. **The menu takes state, it does not query.** `spelling_state(&dyn
-   SpellingCheck, word)` performs the queries; the definition is a pure function
-   of the resulting `SpellingState`. Tests drive the state directly.
-3. **The spell checker is a trait.** `SpellingCheck` is implemented for real by
-   the macOS `NSSpellChecker` path and by a fake in tests. **Tests must never
-   touch the real checker**: `learnWord` mutates the user's system dictionary,
-   and a test that learns "zzqqxwv" would dirty a real person's machine.
-4. `apply_spelling_action(check, id, word)` is the single place that turns a menu
-   id into a checker call, so S-009/S-010 are testable through the seam.
+`src/components/StatsDrawer.vue`
 
-The command itself gains the word: `show_word_menu(window, x, y, word)`.
+```js
+props:  { written: Number, target: [Number, null] }
+emits:  ['set-target']
+```
 
-### How the real checker is covered (added 2026-11-04, after two defects)
+DOM the tests rely on:
 
-Every menu test drives the `SpellingCheck` **fake**, so for a while not one line
-of the macOS implementation was ever executed. That let two defects through: the
-module did not compile (the headless harness builds Linux, where the non-macOS
-stand-in is what gets compiled), and it sent
-`isWordInUserDictionaries:caseSensitive:` — a name no `NSSpellChecker` answers,
-which raises `NSInvalidArgumentException` and terminates the app on the first
-right-click of a word.
+- the bar is an element with `role="img"` and `aria-label="N written of M"` — the
+  number has to be available without reading a drawing
+- the filled portion is `.stats-bar-fill`, with an inline `width: <pct>%` equal to
+  `written / target`, capped at 100%
+- the target is entered in an `<input>` inside the drawer; `Enter` commits it and
+  emits `set-target` with the number
+- with no target (`target` null or 0) there is no `role="img"` element at all, the
+  input is still offered, and the drawer shows a prompt matching
+  /set a daily word target/i
 
-`src-tauri/tests/spell_checker.rs` closes both:
+### The one existing test this changes
 
-- **Execute the read-only calls** against the real checker —
-  `is_flagged("zzqqxwv")` (a nonsense fixture word: true), `is_flagged("the")`
-  (false), `has_learned("zzqqxwv")` (false). A wrong selector here aborts the
-  test process, which is the signal we want.
-- **Ask about the mutating ones.** `learn`, `unlearn` and `ignore` write to the
-  running user's system dictionary, so a test must never send them.
-  `missing_spell_checker_selectors()` asks
-  `instancesRespondToSelector:` instead, driven by `SPELL_CHECKER_SELECTORS`.
-  **A new `msg_send!` in `spelling_impl` belongs in that list.**
+`src/components/ActivityBar.spec.js` asserts the exact drawer-button list
+(`['Sections', 'General Options', 'Text Options']`) and "all three". Adding `Stats`
+makes that four, so three assertions in that file were amended as part of this spec:
+the editor list, the history list, and the "defaults to the editor view" count. That
+amendment is deliberate, not a weaken; no assertion was removed or relaxed, only the
+expected set updated to match the sentence below.
 
-Rules: a test never calls `learn`, `unlearn` or `ignore`, and the read-only
-checker (`system_spell_check_readonly`) reports `can_ignore() == false` so this
-path is structurally incapable of ignoring.
+`Stats` is allowed in the `editor` and `manuscript` views (like `chapters`) and not in
+`history`, where a writing target has no meaning.
 
-### Amendments to existing tests (made by the spec author)
+### Edge cases the tests pin down
 
-- `src-tauri/tests/thesaurus.rs` `s_011_the_word_menu_is_one_thesaurus_item`
-  asserted the word menu was **exactly one item**. It is no longer, so it now
-  asserts the thesaurus item is *present* with that id and label. Its intent —
-  the popover is reachable from the word menu — is unchanged.
-- `src/composables/useThesaurus.test.js` S-018 asserted the exact payload
-  `{ x, y }`. The payload gains `word`, so the assertion gains it too.
-- `src/composables/useThesaurus.js` passes the **core** word (leading and
-  trailing punctuation stripped — the same value the lookup uses), not the raw
-  slice including a trailing comma.
+- no target set, target `0`, and a non-numeric stored value
+- deleting more words than written today (progress clamps at zero, never negative)
+- progress past the target (fill caps at 100%, the number keeps climbing)
+- the calendar day changing while the app is open
+- two documents, one day, one target
+- the very first word of a document (baseline equals the starting count)
 
-### Manual QA (not automatable)
+### Test locations
 
-- Cut / Copy / Paste / Select All from the word menu act on the editor exactly as
-  the keyboard does; Paste still arrives as a browser `paste` event, so
-  `onPaste` strips it to plain text.
-- Learn clears the squiggle immediately; Unlearn restores it.
-- Ignore clears the squiggle and leaves the word unlearned.
-- A flagged word with no suggestions still gets the spelling items.
+Per `.workflow/TESTING.md`: unit tests colocated (`src/**/*.test.js`,
+`src/components/*.spec.js`), e2e in `e2e/**/*.spec.js` with the shared IPC mock from
+`e2e/helpers/tauri-ipc.js`. No Rust layer: nothing in this feature crosses the IPC
+boundary.
 
-## Sentences
+## Approved sentences
 
-### Rust — the menu's shape (plain data, no runtime needed)
-
-- **S-001** (rust): over a word the spell checker flags and the user has not learned, the word menu should be, in order: `Thesaurus…`, a separator, `Cut`, `Copy`, `Paste`, `Select All`, a separator, `Learn Spelling`, `Ignore Spelling`.
-- **S-002** (rust): over a word the spell checker flags and the user has learned, the spelling section should be `Unlearn Spelling` and `Ignore Spelling`.
-- **S-003** (rust): over a word the spell checker does not flag, the menu should end at `Select All` — no trailing separator, no spelling item.
-- **S-004** (rust): `Cut`, `Copy`, `Paste` and `Select All` should be native predefined items, so activating any of them raises no `menu` event; only `thesaurus`, `learn_spelling`, `unlearn_spelling` and `ignore_spelling` are app-owned.
-- **S-005** (rust): `Thesaurus…` should keep id `thesaurus` and still route through `menu_event`, and the static application menu should still not contain it.
-- **S-006** (rust): the menu should be built from the same plain-data node types as the static application menu, with every app-owned item carrying a non-empty id and label and separators used only where the order says they are.
-- **S-007** (rust): the definition should be a pure function of the word's spelling state — misspelled or not, learned or not — so no test needs a live webview, and asking for the same state twice yields the same menu.
-
-### Rust — the spell-checker seam
-
-- **S-008** (rust): the word menu should ask the spell checker about the right-clicked word through one seam — `spelling_state(check, word)`, which records what it asked and returns flagged/learned/ignorable — and hand that answer to the definition, rather than the definition querying anything itself.
-- **S-009** (rust): activating `Learn Spelling` should add the word to the spell checker's learned words, and `Unlearn Spelling` should remove it.
-- **S-010** (rust): activating `Ignore Spelling` should ignore the word for the webview's own spell-check document, leaving it unlearned.
-- **S-014** (rust): when the spell checker cannot be pointed at the webview's spell-check document, the menu should omit `Ignore Spelling` rather than offer an item that cannot take effect, and still offer `Learn Spelling`.
-
-### Frontend
-
-- **S-011** (unit): the takeover should pass the click point's word — the same core the lookup uses, with leading and trailing punctuation stripped — to `show_word_menu` alongside the pointer position.
-- **S-012** (unit): a right-click that is not a single word in the editor should still send no word-menu command and leave the native menu alone.
-- **S-013** (e2e): right-clicking a word should call `show_word_menu` with `x`, `y` and the stripped word, and leave the document text unchanged.
+| ID | Layer | Sentence |
+|---|---|---|
+| S-001 | unit | it should show a Stats item in the left navigation drawer |
+| S-002 | unit | it should let the writer set a daily word target and persist it under `rite-word-target` in localStorage |
+| S-003 | unit | it should load the saved target on startup |
+| S-004 | unit | it should treat a missing target, a zero target and a non-numeric stored value as "no target set" |
+| S-005 | unit | it should refuse a negative or fractional target and leave the stored value unchanged |
+| S-006 | unit | it should count today's words as the current document count minus the count recorded when the writing day began |
+| S-007 | unit | it should record that day-start count once per calendar day and not overwrite it on later reads the same day |
+| S-008 | unit | it should keep the day-start count per document, so opening a different manuscript neither zeroes nor inflates progress |
+| S-009 | unit | it should start a new day at zero progress when the calendar day changes, without requiring a reload |
+| S-010 | unit | it should clamp displayed progress at zero when the writer deletes more words than they wrote today |
+| S-011 | unit | it should take the word count from `useWordCount` rather than recounting, so the Stats item and the status bar cannot disagree |
+| S-012 | unit | it should cap the bar fill at 100% when progress exceeds the target |
+| S-013 | unit | it should label the graph "N written of M" so the number is available without reading the drawing |
+| S-014 | unit | it should hide the graph and prompt for a target when none is set |
+| S-015 | e2e | it should open the Stats item, accept a target and show progress that increases after typing |
+| S-016 | e2e | it should still show the target and today's progress after a reload |
