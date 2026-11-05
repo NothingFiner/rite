@@ -15,15 +15,19 @@
 // manuscript; it is dropped in history (you browse versions there, not the live
 // document's sections). 'general-options' is always available — its settings
 // (AI, roles, export, format, retrieval, summaries) are global, not
-// editor-specific. 'text-options' is editor-only. 'history' (the version list)
+// editor-specific. 'text-options' is editor-only. 'stats' (the StatsDrawer
+// word-target and today's progress) is allowed in editor + manuscript like
+// 'chapters' and dropped in history for the same reason: progress against the
+// writing target is about the live document, which a history session doesn't
+// edit. 'history' (the version list)
 // is reached via the History view's in-header Versions toggle, NOT an
 // ActivityBar button, so it is intentionally absent from this map — the map
 // governs ActivityBar button visibility, and there is no ActivityBar button for
 // history.
 
 export const DRAWER_MODES_ALLOWED_IN_VIEW = {
-  editor: ['chapters', 'general-options', 'text-options'],
-  manuscript: ['chapters', 'general-options'],
+  editor: ['chapters', 'general-options', 'text-options', 'stats'],
+  manuscript: ['chapters', 'general-options', 'stats'],
   history: ['general-options'],
 }
 

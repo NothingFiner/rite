@@ -115,6 +115,22 @@ const ListIcon = () => h('svg', {
         })
 ])
 
+const StatsIcon = () => h('svg', {
+  width: 24,
+  height: 24,
+  viewBox: '0 0 256 256',
+  fill: 'none',
+  stroke: 'currentColor',
+  'stroke-width': 1.5,
+  'stroke-linecap': 'round',
+  'stroke-linejoin': 'round',
+}, [
+  h('path', {
+    fill: 'currentColor',
+    d: 'M56 142a6 6 0 0 1 6-6h28a6 6 0 0 1 6 6v66H56Zm52-56a6 6 0 0 1 6-6h28a6 6 0 0 1 6 6v122h-40Zm52 32a6 6 0 0 1 6-6h28a6 6 0 0 1 6 6v90h-40Z'
+  })
+])
+
 // Every drawer button, in rail order. Visibility per view is governed by
 // `isDrawerModeAllowedIn` (constants/drawerVisibility.js) — the single source
 // of truth shared with App.vue's close-on-switch — so a button that doesn't
@@ -128,6 +144,7 @@ const ALL_ITEMS = [
   { id: 'chapters', label: 'Sections', icon: BookIcon },
   { id: 'general-options', label: 'General Options', icon: ListIcon },
   { id: 'text-options', label: 'Text Options', icon: CogIcon },
+  { id: 'stats', label: 'Stats', icon: StatsIcon },
 ]
 const items = computed(() =>
   ALL_ITEMS.filter((item) => isDrawerModeAllowedIn(item.id, props.viewMode)),
