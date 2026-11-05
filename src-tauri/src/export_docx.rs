@@ -179,13 +179,30 @@ fn heading_paragraph_xml(style_id: &str, text: &str) -> String {
 
 /// One body paragraph (Normal style): its runs concatenated, each carrying its
 /// own `TextStyle` as run properties. An empty paragraph still emits an empty
-/// `<w:p>` so paragraph breaks the author inserted are preserved.
+/// `<w:p>` so paragraph breaks the author inserted are preserved. A paragraph
+/// with a first-line indent writes it in the `<w:pPr>` OOXML expects: inches
+/// converted to twips (`w:firstLine`), the twentieths-of-a-point unit the rest
+/// of the package geometry uses.
+///
+/// A paragraph without a first-line indent emits no `<w:pPr>` at all.
 fn body_paragraph_xml(paragraph: &crate::document::Paragraph) -> String {
-    let mut runs = String::new();
-    for element in &paragraph.elements {
-        runs.push_str(&run_xml(&element.text_run.content, &element.text_run.text_style));
+    let mut content = String::new();
+    if let Some(inches) = paragraph.first_line_indent {
+        content.push_str(&format!(
+            "<w:pPr><w:ind w:firstLine=\"{}\"/></w:pPr>",
+            inches_to_twips(inches)
+        ));
     }
-    format!("<w:p>{}</w:p>", runs)
+    for element in &paragraph.elements {
+        content.push_str(&run_xml(&element.text_run.content, &element.text_run.text_style));
+    }
+    format!("<w:p>{}</w:p>", content)
+}
+
+/// Scale an indent from inches to twips, the WordprocessingML unit: an inch is
+/// 1440 twips, so a half-inch indent writes `w:firstLine="720"`.
+fn inches_to_twips(inches: f32) -> i64 {
+    (inches * 1440.0).round() as i64
 }
 
 /// One run: the text content wrapped in `<w:r>`, preceded by run properties
@@ -214,7 +231,32 @@ fn run_xml(text: &str, style: &TextStyle) -> String {
         }
         rpr.push_str("</w:rPr>");
     }
-    format!("<w:r>{}<w:t xml:space=\"preserve\">{}</w:t></w:r>", rpr, xml_escape(text))
+    format!("<w:r>{}{}</w:r>", rpr, run_content_xml(text))
+}
+
+/// The content of one `<w:r>`: the text wrapped in `<w:t
+/// xml:space="preserve">`, with every tab character replaced by the `<w:tab/>`
+/// element — a literal U+0009 inside `<w:t>` would not be a tab to Word, so no
+/// tab may survive into `word/document.xml`. A run without tabs keeps the
+/// single unwrapped `<w:t>` it always emitted; empty segments around tabs are
+/// skipped, so consecutive tabs still get one `<w:tab/>` each.
+fn run_content_xml(text: &str) -> String {
+    if !text.contains('\t') {
+        return format!("<w:t xml:space=\"preserve\">{}</w:t>", xml_escape(text));
+    }
+    let mut out = String::new();
+    for (i, segment) in text.split('\t').enumerate() {
+        if i > 0 {
+            out.push_str("<w:tab/>");
+        }
+        if !segment.is_empty() {
+            out.push_str(&format!(
+                "<w:t xml:space=\"preserve\">{}</w:t>",
+                xml_escape(segment)
+            ));
+        }
+    }
+    out
 }
 
 /// Escape the five XML metacharacters for text content / attribute values.

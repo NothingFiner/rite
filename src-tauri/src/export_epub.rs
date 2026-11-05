@@ -26,6 +26,10 @@
 //! - The title page and `nav.xhtml` are manifest items but NOT spine items, so
 //!   a document with zero visible sections yields an empty (but valid) spine
 //!   (S-016).
+//! - Tab characters in body text survive: a shared stylesheet
+//!   (`OEBPS/style.css`, manifest item `style`) sets `white-space: pre-wrap`
+//!   on paragraphs, is linked from every XHTML document, and a paragraph's
+//!   first-line indent is inlined as `style="text-indent: …px"` (S-019).
 //!
 //! Rendering is deterministic — a pure function of the document, with pinned
 //! zip metadata and a content-derived identifier — because the command test
@@ -54,6 +58,15 @@ const CONTAINER_XML: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
 <rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/>\n\
 </rootfiles>\n\
 </container>\n";
+
+/// The one shared stylesheet, written as `OEBPS/style.css` and linked from
+/// every XHTML document. `white-space: pre-wrap` exists so body text keeps its
+/// literal tab characters — a collapsing `white-space` would turn them into
+/// plain spaces before a reader ever sees them; `tab-size: 48px` gives a tab
+/// the width of the half-inch first-line indent (0.5 in at the 96 px/in CSS
+/// reference resolution). A constant string on purpose: the package must
+/// render byte-identically twice, so nothing document-derived may shape it.
+const STYLE_CSS: &str = "p { white-space: pre-wrap; tab-size: 48px; }\n";
 
 /// Zip entry options pinned to a fixed timestamp.
 ///
@@ -108,10 +121,10 @@ fn xml_escape(s: &str) -> String {
 /// render the same document twice into identical bytes.
 ///
 /// The package carries: `mimetype`, `META-INF/container.xml`, the OPF,
-/// `OEBPS/nav.xhtml`, a title page, and one XHTML document per *visible*
-/// section. Manifest and spine are emitted from the same list of section files
-/// the archive is built from, so manifest ↔ archive ↔ spine agree by
-/// construction (S-003/S-004).
+/// `OEBPS/style.css`, `OEBPS/nav.xhtml`, a title page, and one XHTML document
+/// per *visible* section. Manifest and spine are emitted from the same list of
+/// section files the archive is built from, so manifest ↔ archive ↔ spine
+/// agree by construction (S-003/S-004).
 pub fn document_to_epub(doc: &Document) -> Vec<u8> {
     let title = metadata_value(&doc.title, "Untitled");
     let author = metadata_value(&doc.author, "Author Name");
@@ -166,6 +179,10 @@ pub fn document_to_epub(doc: &Document) -> Vec<u8> {
     zip.start_file("OEBPS/content.opf", zip_options(CompressionMethod::Deflated))
         .expect("start opf entry");
     zip.write_all(opf_xml.as_bytes()).expect("write opf entry");
+    zip.start_file("OEBPS/style.css", zip_options(CompressionMethod::Deflated))
+        .expect("start stylesheet entry");
+    zip.write_all(STYLE_CSS.as_bytes())
+        .expect("write stylesheet entry");
     zip.start_file("OEBPS/nav.xhtml", zip_options(CompressionMethod::Deflated))
         .expect("start nav entry");
     zip.write_all(nav_xml.as_bytes()).expect("write nav entry");
@@ -229,6 +246,9 @@ fn run_html(content: &str, style: &TextStyle) -> String {
 /// `<p>` per paragraph, the paragraph's runs concatenated in order so the text
 /// is preserved verbatim (S-006). An empty paragraph still emits an empty
 /// `<p>` so the paragraph breaks the author inserted survive the round trip.
+/// A paragraph with a first-line indent carries it inline as
+/// `style="text-indent: …px"` (inches at the 96 px/in reference resolution);
+/// a paragraph without one keeps the bare `<p>`.
 fn section_body(section: &Section, heading: &str) -> String {
     let mut body = String::new();
     if !heading.is_empty() {
@@ -237,7 +257,11 @@ fn section_body(section: &Section, heading: &str) -> String {
         body.push_str("</h1>\n");
     }
     for paragraph in &section.paragraphs {
-        body.push_str("<p>");
+        let style = paragraph
+            .first_line_indent
+            .map(|inches| format!(" style=\"text-indent: {}px\"", inches_to_px(inches)))
+            .unwrap_or_default();
+        body.push_str(&format!("<p{style}>"));
         for element in &paragraph.elements {
             body.push_str(&run_html(
                 &element.text_run.content,
@@ -247,6 +271,12 @@ fn section_body(section: &Section, heading: &str) -> String {
         body.push_str("</p>\n");
     }
     body
+}
+
+/// Scale an indent from inches to whole CSS pixels at the 96 px/in reference
+/// resolution EPUB readers assume: a half-inch indent becomes `48px`.
+fn inches_to_px(inches: f32) -> i64 {
+    (inches * 96.0).round() as i64
 }
 
 /// The EPUB 3 navigation document: exactly one link per visible section, in
@@ -293,9 +323,12 @@ fn xhtml_document(head_title: &str, body: &str, epub_namespaced: bool) -> String
         out.push_str(" xmlns:epub=\"http://www.idpf.org/2007/ops\"");
     }
     out.push_str(" xml:lang=\"en\" lang=\"en\">\n");
+    // Every wrapped document — sections, nav, titlepage — loads the same
+    // shared stylesheet; it is the package's source of `pre-wrap` (tab
+    // preservation).
     out.push_str("<head><title>");
     out.push_str(&xml_escape(head_title));
-    out.push_str("</title></head>\n");
+    out.push_str("</title><link rel=\"stylesheet\" type=\"text/css\" href=\"style.css\"/></head>\n");
     out.push_str("<body>\n");
     out.push_str(body);
     out.push_str("</body>\n</html>\n");
@@ -305,9 +338,9 @@ fn xhtml_document(head_title: &str, body: &str, epub_namespaced: bool) -> String
 /// The OPF package document (S-002 rootfile; S-003 version + manifest): EPUB 3
 /// metadata (`dc:title`/`dc:creator` with the blank-fallbacks already applied
 /// by the caller, a `dc:identifier`, language `en`), a manifest item for every
-/// XHTML part the package carries, and a spine of the section documents in
-/// document order. The title page and nav.xhtml have no spine itemref on
-/// purpose (S-016, decision 7).
+/// XHTML part the package carries plus the shared stylesheet, and a spine of
+/// the section documents in document order. The title page, nav.xhtml and the
+/// stylesheet have no spine itemref on purpose (S-016, decision 7).
 fn build_opf(identifier: &str, title: &str, author: &str, sections: &[(String, String)]) -> String {
     let mut opf = String::new();
     opf.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
@@ -333,6 +366,10 @@ fn build_opf(identifier: &str, title: &str, author: &str, sections: &[(String, S
     opf.push_str(
         "<item id=\"nav\" href=\"nav.xhtml\" media-type=\"application/xhtml+xml\" properties=\"nav\"/>\n",
     );
+    // The shared stylesheet every XHTML document links (see `xhtml_document`).
+    // Manifest-only, like the title page and nav: it is not reading content,
+    // so it belongs to no spine position.
+    opf.push_str("<item id=\"style\" href=\"style.css\" media-type=\"text/css\"/>\n");
     for (id, href) in sections {
         opf.push_str("<item id=\"");
         opf.push_str(id);
