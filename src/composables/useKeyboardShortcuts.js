@@ -21,6 +21,11 @@ export function useKeyboardShortcuts({
   store,
   format,
   search,
+  // Theme picker (SPEC 5.7). Optional-chained at every use (`themePicker?.`)
+  // because App.vue wires it, but unit-test mocks and any pre-wiring host
+  // don't pass it — an absent picker must simply mean the Escape chain skips
+  // it with no change to the existing behaviour.
+  themePicker,
   viewMode,
   leftDrawerOpen,
   leftDrawerMode,
@@ -32,6 +37,11 @@ export function useKeyboardShortcuts({
   // mocks may omit pieces (e.g. no `recentre` key): an absent focusMode must
   // simply mean none of the focus-mode behaviour applies.
   focusMode,
+  // S-017: Escape that closes a drawer returns focus to the drawer's opener
+  // button. Optional-chained, like themePicker/focusMode, because the
+  // unit-test mocks don't pass it — an absent callback must simply mean the
+  // close happens with no focus return.
+  focusDrawerOpener,
 }) {
   function onKeydown(e) {
     const cmd = e.metaKey || e.ctrlKey
@@ -123,15 +133,31 @@ export function useKeyboardShortcuts({
         search.closeSearch()
         return
       }
+      // Theme picker closes before any drawer (SPEC 5.7 chain order:
+      // search → theme picker → drawer → focus mode): the most recently
+      // opened popup wins, so Escape over an open picker tooltip never
+      // reaches the drawer. Optional-chained for callers without a picker.
+      if (themePicker?.open?.value) {
+        e.preventDefault()
+        themePicker.close()
+        return
+      }
       if (leftDrawerOpen.value) {
         e.preventDefault()
+        // S-017: read where focus sits BEFORE the close — the gate decides
+        // whether "return focus" applies at all. Escape pressed elsewhere
+        // (e.g. the editor) closes the drawer without stealing focus; the
+        // call itself is a no-op when no opener is wired.
+        const focusInDrawer = document.activeElement?.closest?.('.drawer') != null
         leftDrawerOpen.value = false
+        if (focusInDrawer) focusDrawerOpener?.()
         return
       }
       // Focus mode is the LAST fall-through of the chain (S-007 order):
-      // a search panel Escape closes only the search, an open drawer Escape
-      // closes only the drawer, and focus mode exits only once nothing else
-      // wants the key — closing chrome first, the mode last.
+      // a search panel Escape closes only the search, a theme-picker Escape
+      // closes only the picker, an open drawer Escape closes only the
+      // drawer, and focus mode exits only once nothing else wants the key —
+      // closing chrome first, the mode last.
       if (focusMode?.active?.value) {
         e.preventDefault()
         focusMode.exit()

@@ -1,135 +1,110 @@
-# 5.4 — Writing stats: a daily word target and today's progress
+# 5.7 — Keyboard navigation (accessibility pass, part 1)
 
-Approved sentence list for the spec-to-tests stage. Tests are already written and
-red; they define what "done" means. This file is the implementer's whole context —
-nothing here refers to any conversation.
+Approved sentence list for the spec-to-tests stage. The tests are already written
+and red; they define what "done" means. This file is the implementer's whole
+context — nothing here refers to any conversation.
 
 ## Context
 
-### The shape of the feature
+### Why keyboard first
 
-A `Stats` item in the left navigation drawer. The writer sets a daily word target;
-the drawer shows a bar of **today's** progress against it, plus the number in words.
+Non-mouse navigation is the accessibility pass, not a subset of it. Every
+VoiceOver user on macOS drives the screen reader from the keyboard, so a keyboard
+gap is also a screen-reader gap: reachability is the shared floor, and naming
+only matters once a control can be reached. It is also the only half of
+accessibility the test layers can hold to account — Playwright can Tab, Enter and
+Escape and assert what happened; it cannot hear what VoiceOver says.
 
-### Decisions, and why
+### Scope of this spec
 
-1. **"Session" means calendar day.** Not launch → quit (macOS apps are not quit, so
-   the number would be unbounded and a crash would reset it) and not an idle-delimited
-   stretch (a per-session target is farmable: stop for lunch, target met twice).
-   Everything below measures *today*, and the UI says so.
+Four surfaces that are currently mouse-only because the click lives on a `div` or
+`li`, plus the focus movement that makes keyboard use coherent:
 
-2. **The target lives in `localStorage` under `rite-word-target`.** Consistent with
-   every other preference in the app (`rite-theme`, `rite-zoom`, `rite-margin`,
-   `rite-section-format`, `rite-manuscript-format`). It is therefore app-global, not
-   per-manuscript — one target for every document. That is accepted for this version;
-   a per-document target in the `.rite` file is a later change if it is ever wanted.
+- `src/components/NavigationDrawer.vue` — section rows
+- `src/components/HistoryListDrawer.vue` — history entries
+- `src/components/StatusBar.vue` — the theme picker
+- cross-cutting focus movement (drawer open/close, Tab, focus visibility)
 
-3. **Progress is "words written today", not "words in the manuscript".** Open a
-   20,000-word novel, write 100 words, and the bar reads 100 / 1,000. That is why a
-   day-start baseline exists, and it is the only reason the baseline exists.
+Out of scope, deliberately: the Ruler (its markers are drag-only, so a keyboard
+equivalent needs a slider value model — `role="slider"`, a unit, an arrow step —
+and that is its own pass, 5.7b), and screen-reader naming elsewhere in the app
+(ActivityBar icons, the editor's missing `role="textbox"`).
 
-4. **The bar is hand-rolled CSS.** No charting dependency is added (`vue`, `pinia`,
-   `marked`, `mammoth`, `jszip`, `dompurify` are the whole list).
+### Decisions
 
-### The composable contract
+1. **No focus trap.** A drawer is a non-modal side panel. Tab must be able to walk
+   out of it (S-018). Do not add a trap.
+2. **Roving tabindex for the section list.** The list is one tab stop; Arrow
+   Up/Down move between rows. This is the ARIA list pattern and it is right for a
+   novel with fifty sections — plain Tab through every row would be unusable.
+3. **Rows do not select on focus.** Arrows move focus only; Enter or Space
+   selects (S-004, S-005, S-006).
+4. **Theme names are added to `THEMES`.** `src/constants/themes.js` currently has
+   only `bg` / `text` / `accent`, so a swatch has nothing to be called. Add a
+   `name` to each entry (a short human name: "Sand", "Sepia", …). The names must
+   be unique.
+5. **The row's action buttons become siblings of the row control.** A `button`
+   inside a `button` is invalid HTML and Enter would fire both. Inside the `li`,
+   the row control covers the title, and rename / delete / type / hidden are
+   separate siblings (S-003).
+6. **Existing class hooks stay.** The tests use `.nav-section`, `.history-row`,
+   `.theme-swatch`, `.theme-swatch.current` (the trigger) and `.theme-tooltip`
+   (the popup). Restructure freely inside them, but do not rename them.
+7. **"Marked as the current item" means `aria-current="true"`** on exactly the
+   one matching element, and absent (not `"false"`) on the others.
+8. **Names come from `aria-label`** for rows, history entries and swatches.
+   Text-content naming is not usable here: a row's text includes its page number
+   and its action glyphs.
+9. **The theme picker is removed from the DOM when closed** (`v-if`, as it is
+   today), not merely hidden. S-015 asserts it is gone after Escape, and a
+   `v-show` restyle would leave the swatches in the tab order — reachable while
+   invisible. Same reasoning for every other conditional surface here.
 
-`src/composables/useWritingStats.js` — the tests fix this shape, so implement it:
+### What already works — do not regress
 
-```js
-useWritingStats({ docRef, docKey, now = () => new Date() })
-// → {
-//   target,       Ref<number|null>   null when no target is set
-//   setTarget,    (value) => void    validates, persists, never throws
-//   baseline,     Ref<number>        this document's word count when the day began
-//   writtenToday, Ref<number>        max(0, wordCount - baseline)
-//   hasTarget,    Ref<boolean>       a finite target > 0
-//   ratio,        Ref<number>        0..1, capped when progress exceeds the target
-// }
-export function resetWritingStatsForTests()   // clear cached module state
-export const TARGET_KEY = 'rite-word-target'
-export const BASELINE_KEY = 'rite-word-baseline'
-```
+The global shortcut layer (`src/composables/useKeyboardShortcuts.js`) owns
+Cmd+B/I/U, Cmd+F, and the Escape chain (search → open drawer → focus mode, in
+that order). Escape already closes a drawer; these sentences only add where focus
+lands afterwards. `PromptModal` already focuses its input on open.
 
-- `docRef` is the same reactive document ref the app already passes to
-  `useWordCount`. Take the count from `useWordCount` — do not recount. The status bar
-  and the Stats item must never disagree, and `useWordCount` is the single source.
-- `docKey` identifies the document (its path). The day-start baseline is stored per
-  document, because `localStorage` is shared by every manuscript: without this,
-  switching documents would either zero the progress or inflate it by the other
-  document's word count.
-- `now` exists so the calendar-day boundary is testable without waiting for midnight.
-  Default to the real clock. The composable must notice a day change while the app is
-  open — no reload — so drive it from a timer as well as from document changes.
-- `setTarget` accepts an integer ≥ 1. Reject negatives, fractions and non-numbers by
-  leaving the stored value unchanged. `0` and a non-numeric stored value mean "no
-  target set", not an error.
+### Layers
 
-### Component contract
+Unit for roles, names and current-item marking (jsdom can see the DOM).
+E2E for real key presses and focus movement (jsdom has no focus or layout).
+No Rust: nothing here crosses the IPC boundary.
 
-`src/components/StatsDrawer.vue`
+## Sentences
 
-```js
-props:  { written: Number, target: [Number, null] }
-emits:  ['set-target']
-```
+### Section rows — `NavigationDrawer.vue`
 
-DOM the tests rely on:
+- **S-001** (unit) — Each section row is a focusable control named by the section's display title.
+- **S-002** (unit) — Only the row for the active section is marked as the current item.
+- **S-003** (unit) — The rename, delete, type and hidden controls are not descendants of the row control, so activating one cannot also select the section.
+- **S-004** (e2e) — Enter on a focused row selects that section, exactly as clicking does.
+- **S-005** (e2e) — Space on a focused row selects it and does not scroll the page.
+- **S-006** (e2e) — Arrow Down/Up move focus to the next/previous row without selecting it; focus stops at the first and last row.
 
-- the bar is an element with `role="img"` and `aria-label="N written of M"` — the
-  number has to be available without reading a drawing
-- the filled portion is `.stats-bar-fill`, with an inline `width: <pct>%` equal to
-  `written / target`, capped at 100%
-- the target is entered in an `<input>` inside the drawer; `Enter` commits it and
-  emits `set-target` with the number
-- with no target (`target` null or 0) there is no `role="img"` element at all, the
-  input is still offered, and the drawer shows a prompt matching
-  /set a daily word target/i
+### History rows — `HistoryListDrawer.vue`
 
-### The one existing test this changes
+- **S-007** (unit) — Each history entry is a control whose accessible name contains its formatted timestamp and its kind (snapshot or delta).
+- **S-008** (unit) — Only the selected entry is marked as the current item.
+- **S-009** (e2e) — Enter on a focused entry loads that version into the preview, exactly as clicking does.
 
-`src/components/ActivityBar.spec.js` asserts the exact drawer-button list
-(`['Sections', 'General Options', 'Text Options']`) and "all three". Adding `Stats`
-makes that four, so three assertions in that file were amended as part of this spec:
-the editor list, the history list, and the "defaults to the editor view" count. That
-amendment is deliberate, not a weaken; no assertion was removed or relaxed, only the
-expected set updated to match the sentence below.
+### Theme picker — `StatusBar.vue`
 
-`Stats` is allowed in the `editor` and `manuscript` views (like `chapters`) and not in
-`history`, where a writing target has no meaning.
+- **S-010** (unit) — The theme trigger is a control with an accessible name that reports whether the picker is open.
+- **S-011** (unit) — Every swatch is a control named by its theme's name, and no two swatches share a name.
+- **S-012** (unit) — Only the swatch matching the current theme is marked as the current item.
+- **S-013** (e2e) — Enter on the focused trigger opens the picker and Tab reaches the first swatch.
+- **S-014** (e2e) — Enter on a focused swatch applies that theme (the editor sheet's background becomes that theme's `bg`).
+- **S-015** (e2e) — Escape closes the picker and leaves focus on the trigger.
 
-### Edge cases the tests pin down
+### Focus movement
 
-- no target set, target `0`, and a non-numeric stored value
-- deleting more words than written today (progress clamps at zero, never negative)
-- progress past the target (fill caps at 100%, the number keeps climbing)
-- the calendar day changing while the app is open
-- two documents, one day, one target
-- the very first word of a document (baseline equals the starting count)
+- **S-016** (e2e) — Opening the sections drawer focuses its active row, or the first row when no section is active.
+- **S-017** (e2e) — Escape that closes a drawer returns focus to the ActivityBar button that opened it.
+- **S-018** (e2e) — Tab from the last control in an open drawer moves to the next control in the page; the drawer does not trap focus.
 
-### Test locations
+### Focus visibility
 
-Per `.workflow/TESTING.md`: unit tests colocated (`src/**/*.test.js`,
-`src/components/*.spec.js`), e2e in `e2e/**/*.spec.js` with the shared IPC mock from
-`e2e/helpers/tauri-ipc.js`. No Rust layer: nothing in this feature crosses the IPC
-boundary.
-
-## Approved sentences
-
-| ID | Layer | Sentence |
-|---|---|---|
-| S-001 | unit | it should show a Stats item in the left navigation drawer |
-| S-002 | unit | it should let the writer set a daily word target and persist it under `rite-word-target` in localStorage |
-| S-003 | unit | it should load the saved target on startup |
-| S-004 | unit | it should treat a missing target, a zero target and a non-numeric stored value as "no target set" |
-| S-005 | unit | it should refuse a negative or fractional target and leave the stored value unchanged |
-| S-006 | unit | it should count today's words as the current document count minus the count recorded when the writing day began |
-| S-007 | unit | it should record that day-start count once per calendar day and not overwrite it on later reads the same day |
-| S-008 | unit | it should keep the day-start count per document, so opening a different manuscript neither zeroes nor inflates progress |
-| S-009 | unit | it should start a new day at zero progress when the calendar day changes, without requiring a reload |
-| S-010 | unit | it should clamp displayed progress at zero when the writer deletes more words than they wrote today |
-| S-011 | unit | it should take the word count from `useWordCount` rather than recounting, so the Stats item and the status bar cannot disagree |
-| S-012 | unit | it should cap the bar fill at 100% when progress exceeds the target |
-| S-013 | unit | it should label the graph "N written of M" so the number is available without reading the drawing |
-| S-014 | unit | it should hide the graph and prompt for a target when none is set |
-| S-015 | e2e | it should open the Stats item, accept a target and show progress that increases after typing |
-| S-016 | e2e | it should still show the target and today's progress after a reload |
+- **S-019** (e2e) — A control reached with Tab shows a visible focus indicator (its computed `outline-style` or `box-shadow` differs from the unfocused control).
