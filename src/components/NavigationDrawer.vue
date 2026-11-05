@@ -32,9 +32,13 @@
             </span>
             <!-- The row control (S-001): a native <button> named by the display
                  title via aria-label (SPEC decision 8), carrying the list's
-                 single roving tab stop (SPEC decision 2). No click handler
-                 here: Enter/Space on a button fires a click that bubbles to
-                 the row, which selects exactly once as a pointer click does. -->
+                 single roving tab stop (SPEC decision 2) and the row id, so the
+                 control itself answers [data-nav-id][aria-current="true"] for
+                 focus/current lookups (the li keeps its own data-nav-id for
+                 drag targeting). Enter activates the button and the click
+                 bubbles to the row, selecting exactly once as a pointer click
+                 does; Space is intercepted in onRowKeydown so it selects
+                 without the row-click scroll. -->
             <!-- aria-current (S-002): only the active section is the current item — SPEC decision 7. -->
             <button
               v-else
@@ -43,6 +47,8 @@
               :aria-label="item.displayTitle"
               :tabindex="rowTabindex(item)"
               :aria-current="props.activeId === item.id ? 'true' : undefined"
+              :data-nav-id="item.id"
+              @keydown="onRowKeydown($event, item)"
             >
               <span class="nav-title">{{ item.displayTitle }}</span>
             </button>
@@ -151,6 +157,38 @@ function rowTabindex(item) {
     return item.id === sections.value[0]?.id ? 0 : -1
   }
   return item.id === props.activeId ? 0 : -1
+}
+
+// Row keyboard handling (S-004/S-005/S-006): one handler that reads e.key —
+// no template .prevent modifiers, no Vue key-alias trust.
+// - Space (S-005): keydown preventDefault cancels the native button
+//   activation, so no bubbled click reaches the row and onRowClick's scrollTo
+//   (scrollIntoView on the editor) never runs — page and .scroll-layer stay
+//   put. The select is emitted from here instead.
+// - Enter (S-004): deliberately NOT handled — the native activation bubbles a
+//   click to the row, so Enter selects and scrolls exactly as a pointer click
+//   does.
+// - ArrowDown/ArrowUp (S-006): focus moves one .nav-row-control forward or
+//   back in DOM order, CLAMPED at the first/last row (no wrap), with
+//   preventDefault so the arrow does not also scroll the drawer content
+//   mid-gesture. Arrows never select (SPEC decision 3) and never touch the
+//   roving tabindex — it stays anchored on the active row (rowTabindex).
+function onRowKeydown(e, item) {
+  if (e.key === ' ') {
+    e.preventDefault()
+    emit('select', item.id)
+    return
+  }
+  const delta = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0
+  if (delta === 0) return
+  e.preventDefault()
+  const controls = navTreeRef.value
+    ? Array.from(navTreeRef.value.querySelectorAll('.nav-row-control'))
+    : []
+  const index = controls.indexOf(e.currentTarget)
+  if (index === -1) return
+  const next = controls[Math.min(controls.length - 1, Math.max(0, index + delta))]
+  next?.focus({ preventScroll: true })
 }
 
 // --- drag-to-reorder (roadmap 5.5) --------------------------------------------
@@ -395,13 +433,42 @@ function confirmRename(item) {
   delete draftTitles.value[item.id]
 }
 
+// Opening the drawer is the keyboard entry point (S-006): until something moves
+// focus into the list, the single roving tab stop is unreachable by keyboard —
+// no e2e arrow press can land on a row while focus stays on the button that
+// opened the drawer. On open, after the DOM settles, focus lands on the active
+// row's control, falling back to the FIRST row's control when there is no
+// active row or the active row has no control (mid-rename rows render an
+// input, not a control). preventScroll so entering the drawer never yanks the
+// page or the .scroll-layer. Bail when the component is unmounted or has no
+// row controls. No wrap-around, no select. The closing branch is untouched —
+// its emits are depended on by the HistoryView and close flows.
 watch(() => props.open, (v) => {
-  if (!v) {
+  if (v) {
+    nextTick(focusEntryRow)
+  } else {
     emit('update:expanded', false)
     emit('select', null)
     editingIds.value.clear()
   }
 })
+
+function focusEntryRow() {
+  const list = navTreeRef.value
+  if (!list) return
+  const controls = list.querySelectorAll('.nav-row-control')
+  if (controls.length === 0) return
+  // The active row is matched by its data-nav-id in the DOM (equivalent to the
+  // ".nav-section[data-nav-id=…] .nav-row-control" selector) — dataset
+  // comparison avoids building an interpolated attribute selector from a
+  // store-supplied id.
+  const activeRow = props.activeId
+    ? Array.from(list.querySelectorAll('.nav-section')).find(
+        (row) => row.dataset.navId === props.activeId
+      )
+    : null
+  ;(activeRow?.querySelector('.nav-row-control') ?? controls[0]).focus({ preventScroll: true })
+}
 
 watch(sections, () => {
   nextTick(() => {
