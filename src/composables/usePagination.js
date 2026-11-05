@@ -102,6 +102,10 @@ export function usePagination(docRef) {
         margin: 0;
         text-align: left;
         text-indent: ${fmt.textIndent}px;
+        /* Same tab handling as the visible page (manuscriptPage.vue) so lines
+           wrap identically in the measurer. */
+        white-space: pre-wrap;
+        tab-size: 48px;
         color: ${fmt.textColor};
       }
       .ms-measure .ms-para.scene-break {

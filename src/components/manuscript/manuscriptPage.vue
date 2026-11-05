@@ -84,6 +84,10 @@ const pageStyle = computed(() => {
   margin: 0;
   text-align: left;
   text-indent: var(--ms-text-indent);
+  /* A literal tab is one U+0009 character worth 0.5 in — 48 px at 96 dpi;
+     pre-wrap preserves it and tab-size advances it to the next 48 px stop. */
+  white-space: pre-wrap;
+  tab-size: 48px;
   color: var(--ms-text-color);
 }
 
