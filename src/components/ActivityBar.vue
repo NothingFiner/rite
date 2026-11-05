@@ -4,6 +4,7 @@
       <button
         v-for="item in items"
         :key="item.id"
+        :ref="el => setIconRef(item.id, el)"
         class="activity-icon"
         :class="{ active: activeId === item.id && drawerOpen }"
         :title="item.label"
@@ -153,6 +154,27 @@ const items = computed(() =>
 function onClick(id) {
   emit('select', id)
 }
+
+// S-017: focus-return targets keyed by drawer id, in a plain map (not a
+// per-name template ref) so the ref lookup is by id — never by label or a
+// DOM query. The function ref form fires with null on unmount; deleting the
+// entry keeps the map free of stale elements.
+const iconRefs = {}
+
+function setIconRef(id, el) {
+  if (el) iconRefs[id] = el
+  else delete iconRefs[id]
+}
+
+// S-017: focus a drawer's opener button by id — the target App.vue hands to
+// the Escape handler's focusDrawerOpener. A no-op for an id that has no
+// button here ('history' is a viewMode toggle, not an item) or one filtered
+// out of the current view (isDrawerModeAllowedIn).
+function focusItem(id) {
+  iconRefs[id]?.focus?.({ preventScroll: true })
+}
+
+defineExpose({ focusItem })
 </script>
 
 <style scoped>

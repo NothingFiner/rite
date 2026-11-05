@@ -17,6 +17,7 @@
     }"
   >
     <ActivityBar
+      ref="activityBarRef"
       :active-id="leftDrawerMode"
       :drawer-open="leftDrawerOpen"
       :view-mode="viewMode"
@@ -241,6 +242,10 @@ const leftDrawerOpen = ref(false)
 const leftDrawerMode = ref('chapters')
 const rightDrawerOpen = ref(false)
 const addExpanded = ref(false)
+// The ActivityBar instance — needed for S-017: Escape that closes a drawer
+// returns focus to the icon button that had opened it (focusItem is exposed
+// by ActivityBar).
+const activityBarRef = ref(null)
 
 // How often autosave journals a delta to the on-disk history sidecar. The
 // store's autosaveDocument bails when there's no lastPath or nothing modified,
@@ -562,6 +567,14 @@ function openGeneralOptions() {
   openLeftDrawer('general-options')
 }
 
+// S-017: return focus to the icon button that opened the current drawer. The
+// current leftDrawerMode is the id both the drawer and its ActivityBar button
+// share, so no label/title lookup is needed; a no-op when the bar or the
+// target button is absent (e.g. 'history', which has no drawer icon).
+function focusDrawerOpener() {
+  activityBarRef.value?.focusItem?.(leftDrawerMode.value)
+}
+
 // Focus / typewriter mode (5.3). One shared shell instance: the keyboard
 // shortcuts toggle/exit/recentre through it, the root element's focus-mode
 // class reads `active` (destructured as focusActive so the template
@@ -592,6 +605,8 @@ useKeyboardShortcuts({
   addExpanded,
   editorRef,
   onInsertSection,
+  // S-017: Escape that closes a drawer gives focus back to its opener.
+  focusDrawerOpener,
   focusMode,
 })
 
@@ -635,7 +650,13 @@ onUnmounted(() => {
   top: 38px;
   bottom: 36px;
   width: 400px;
-  transition: transform 0.25s ease;
+  /* S-018: a closed drawer keeps its slide animation but leaves the tab
+     order — visibility flips to hidden 0.25s AFTER the close starts (the
+     slide stays on screen) and back to visible instantly on open. The same
+     pattern lives in every drawer style home (Navigation/General/Text/
+     HistoryList and this file); keep the values identical. */
+  visibility: hidden;
+  transition: transform 0.25s ease, visibility 0s linear 0.25s;
   z-index: 25;
 }
 
@@ -651,11 +672,15 @@ onUnmounted(() => {
      touching frame-for-frame, no gap, no trail. (The left drawers keep
      `transform` — they have no padding to sync against.) */
   right: -400px;
-  transition: right 0.25s ease;
+  transition: right 0.25s ease, visibility 0s linear 0.25s;
 }
 
 .drawer.right.open {
   right: 0;
+  /* S-018: slide via `right`, so the open transition clears the visibility
+     delay too (the base's transform flip never runs for this drawer). */
+  visibility: visible;
+  transition: right 0.25s ease, visibility 0s;
 }
 
 /* Stats drawer (5.4): a left drawer like Sections/General/Text, but with an
@@ -669,6 +694,9 @@ onUnmounted(() => {
 
 .drawer.stats.open {
   transform: translateX(0);
+  /* S-018: visibility open state — same pattern as the four left drawers. */
+  visibility: visible;
+  transition: transform 0.25s ease, visibility 0s;
 }
 
 .drawer-content {

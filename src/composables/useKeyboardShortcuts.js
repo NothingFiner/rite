@@ -37,6 +37,11 @@ export function useKeyboardShortcuts({
   // mocks may omit pieces (e.g. no `recentre` key): an absent focusMode must
   // simply mean none of the focus-mode behaviour applies.
   focusMode,
+  // S-017: Escape that closes a drawer returns focus to the drawer's opener
+  // button. Optional-chained, like themePicker/focusMode, because the
+  // unit-test mocks don't pass it — an absent callback must simply mean the
+  // close happens with no focus return.
+  focusDrawerOpener,
 }) {
   function onKeydown(e) {
     const cmd = e.metaKey || e.ctrlKey
@@ -139,7 +144,13 @@ export function useKeyboardShortcuts({
       }
       if (leftDrawerOpen.value) {
         e.preventDefault()
+        // S-017: read where focus sits BEFORE the close — the gate decides
+        // whether "return focus" applies at all. Escape pressed elsewhere
+        // (e.g. the editor) closes the drawer without stealing focus; the
+        // call itself is a no-op when no opener is wired.
+        const focusInDrawer = document.activeElement?.closest?.('.drawer') != null
         leftDrawerOpen.value = false
+        if (focusInDrawer) focusDrawerOpener?.()
         return
       }
       // Focus mode is the LAST fall-through of the chain (S-007 order):
