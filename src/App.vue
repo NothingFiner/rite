@@ -187,7 +187,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, reactive, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, reactive, nextTick, toRef } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useDocumentStore } from './stores/document.js'
 import { useTheme } from './composables/useTheme.js'
@@ -576,6 +576,16 @@ useKeyboardShortcuts({
   fileIO,
   format,
   search,
+  // Escape must also close the theme picker tooltip (SPEC 5.7). Chain
+  // order is search → theme picker → drawer → focus mode. `theme` above is
+  // a reactive() proxy, so `theme.showThemePicker` inline unwraps to a
+  // boolean snapshot; toRef keeps a live ref, which is what the composable
+  // reads via `.value`. `close` mirrors what a swatch click already does:
+  // useTheme.selectTheme clears the same underlying ref.
+  themePicker: {
+    open: toRef(theme, 'showThemePicker'),
+    close: () => { theme.showThemePicker = false },
+  },
   viewMode,
   leftDrawerOpen,
   leftDrawerMode,

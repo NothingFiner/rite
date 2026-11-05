@@ -20,8 +20,8 @@
           <!-- Each entry li IS the control (role=button, tabbable): the accessible
                name spells the kind out ("Snapshot"/"Delta") rather than leaving the
                S/Δ glyph to be read, and aria-current marks exactly the selected
-               version (SPEC 5.7). Keyboard activation itself is wired in a later
-               iteration, so there is deliberately no keydown handler here. -->
+               version (SPEC 5.7). Enter/Space activate through onRowKeydown, so a
+               focused row selects exactly as a pointer click does (S-009). -->
           <li
             v-for="entry in history.entries"
             :key="entry.timestamp"
@@ -32,6 +32,7 @@
             :aria-label="`${entryKindName(entry.kind)} ${formatHistoryTimestamp(entry.timestamp)}`"
             :aria-current="history.selectedTimestamp === entry.timestamp ? 'true' : undefined"
             @click="onSelect(entry.timestamp)"
+            @keydown="onRowKeydown($event, entry.timestamp)"
           >
             <span class="history-kind" :class="entry.kind" :title="entry.kind === 'snapshot' ? 'Snapshot (full save)' : 'Delta (autosave)'">
               {{ entry.kind === 'snapshot' ? 'S' : 'Δ' }}
@@ -103,6 +104,17 @@ function onSelect(timestamp) {
     return
   }
   props.history.selectVersion(timestamp)
+}
+
+// Entry activation (S-009): the row is an li with role="button", not a native
+// button, so Enter fires no click and Space would scroll the drawer content.
+// One handler reads e.key (no template modifiers, as in NavigationDrawer) and
+// routes both activation keys through the same onSelect a pointer click uses,
+// so keyboard selection loads the preview exactly like clicking.
+function onRowKeydown(e, timestamp) {
+  if (e.key !== 'Enter' && e.key !== ' ') return
+  e.preventDefault()
+  onSelect(timestamp)
 }
 
 async function onRestore() {

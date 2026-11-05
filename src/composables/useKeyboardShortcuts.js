@@ -21,6 +21,11 @@ export function useKeyboardShortcuts({
   store,
   format,
   search,
+  // Theme picker (SPEC 5.7). Optional-chained at every use (`themePicker?.`)
+  // because App.vue wires it, but unit-test mocks and any pre-wiring host
+  // don't pass it — an absent picker must simply mean the Escape chain skips
+  // it with no change to the existing behaviour.
+  themePicker,
   viewMode,
   leftDrawerOpen,
   leftDrawerMode,
@@ -123,15 +128,25 @@ export function useKeyboardShortcuts({
         search.closeSearch()
         return
       }
+      // Theme picker closes before any drawer (SPEC 5.7 chain order:
+      // search → theme picker → drawer → focus mode): the most recently
+      // opened popup wins, so Escape over an open picker tooltip never
+      // reaches the drawer. Optional-chained for callers without a picker.
+      if (themePicker?.open?.value) {
+        e.preventDefault()
+        themePicker.close()
+        return
+      }
       if (leftDrawerOpen.value) {
         e.preventDefault()
         leftDrawerOpen.value = false
         return
       }
       // Focus mode is the LAST fall-through of the chain (S-007 order):
-      // a search panel Escape closes only the search, an open drawer Escape
-      // closes only the drawer, and focus mode exits only once nothing else
-      // wants the key — closing chrome first, the mode last.
+      // a search panel Escape closes only the search, a theme-picker Escape
+      // closes only the picker, an open drawer Escape closes only the
+      // drawer, and focus mode exits only once nothing else wants the key —
+      // closing chrome first, the mode last.
       if (focusMode?.active?.value) {
         e.preventDefault()
         focusMode.exit()
