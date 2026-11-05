@@ -22,6 +22,7 @@
           @click="$emit('toggleThemePicker')"
         ></button>
         <div v-if="showThemePicker" class="theme-tooltip">
+          <!-- aria-current (SPEC 5.7, decision 7): only the current theme's swatch is the current item. -->
           <button
             v-for="(t, i) in themes"
             :key="i"
@@ -30,6 +31,7 @@
             :class="{ active: theme === i }"
             :style="{ background: t.bg, borderColor: swatchBorder(t.bg) }"
             :aria-label="swatchAriaLabel(t, i)"
+            :aria-current="theme === i ? 'true' : undefined"
             @click="$emit('selectTheme', i)"
           ></button>
         </div>
