@@ -241,6 +241,16 @@ onBeforeUnmount(removeDismissal)
 }
 
 .thesaurus-senses {
+  /* The popover is a 10px-gap flex column, so left alone the scrollport's
+     clipping edges sit 10px inside the two rules and entries vanish in
+     mid-air, a band away from the line. Pull the box out over the gaps and
+     hand the space back as padding: the scrollport then spans rule to rule,
+     text clips exactly on the line, and the first and last entries still
+     start and end 10px from it. */
+  margin-top: -10px;
+  margin-bottom: -10px;
+  padding-top: 10px;
+  padding-bottom: 10px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
