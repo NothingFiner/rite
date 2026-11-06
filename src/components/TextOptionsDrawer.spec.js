@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { reactive, ref } from 'vue'
 import TextOptionsDrawer from './TextOptionsDrawer.vue'
+import { THEMES } from '../constants/themes.js'
+import { useTheme } from '../composables/useTheme.js'
 
 // TextOptionsDrawer is a thin control surface: it shows the CURRENT margin,
 // zoom, font and manuscript format, and calls the matching setter on the
@@ -114,5 +117,162 @@ describe('TextOptionsDrawer', () => {
     expect(props.theme.setZoom).not.toHaveBeenCalled()
     expect(props.format.setFont).not.toHaveBeenCalled()
     expect(props.manuscriptFormat.selectFormat).not.toHaveBeenCalled()
+  })
+})
+
+
+// --- colour controls (SPEC.md 5.13, S-001 … S-006, S-013, S-014) -------------
+//
+// The rows are drawn from `themes.js`. The test computes the palette the same
+// way the component must. It is every distinct colour in the theme table, in
+// first-appearance order: theme order, then bg, text and accent. A named palette
+// position lets a test point at one swatch without depending on markup order.
+
+const PALETTE = []
+{
+  const seen = new Set()
+  for (const theme of THEMES) {
+    for (const [field, hex] of [['bg', theme.bg], ['text', theme.text], ['accent', theme.accent]]) {
+      if (seen.has(hex)) continue
+      seen.add(hex)
+      PALETTE.push({ hex, theme: theme.name, field })
+    }
+  }
+}
+
+const rows = (wrapper) => wrapper.findAll('.swatch-row')
+const row = (wrapper, name) => wrapper.find(`.swatch-row[data-row="${name}"]`)
+const swatches = (wrapper, name) => row(wrapper, name).findAll('.colour-swatch')
+const presets = (wrapper) => wrapper.findAll('.theme-preset')
+
+const realTheme = () => reactive(useTheme(ref('editor')))
+
+function colourProps(overrides = {}) {
+  return {
+    ...makeProps(),
+    theme: {
+      ...makeProps().theme,
+      themes: THEMES,
+      editorBg: THEMES[0].bg,
+      editorText: THEMES[0].text,
+      editorAccent: THEMES[0].accent,
+      matchedPreset: 0,
+      selectTheme: vi.fn(),
+      selectBackground: vi.fn(),
+      selectText: vi.fn(),
+      selectAccent: vi.fn(),
+    },
+    ...overrides,
+  }
+}
+
+describe('TextOptionsDrawer colour controls', () => {
+  it('S-001: renders Background, Text and Accent rows, one swatch per distinct colour', () => {
+    const wrapper = mount(TextOptionsDrawer, { props: colourProps() })
+
+    expect(rows(wrapper).map((r) => r.attributes('data-row'))).toEqual([
+      'background',
+      'text',
+      'accent',
+    ])
+    for (const name of ['background', 'text', 'accent']) {
+      expect(swatches(wrapper, name)).toHaveLength(PALETTE.length)
+    }
+    // The palette order is the order the colours appear in the theme table.
+    expect(swatches(wrapper, 'background')[2].attributes('data-colour')).toBe(PALETTE[2].hex)
+    expect(swatches(wrapper, 'text')[0].attributes('data-colour')).toBe(PALETTE[0].hex)
+  })
+
+  it('S-002: renders one preset button per theme, labelled with its name', () => {
+    const wrapper = mount(TextOptionsDrawer, { props: colourProps() })
+
+    expect(presets(wrapper).map((b) => b.text())).toEqual(THEMES.map((t) => t.name))
+  })
+
+  it('S-004: applies a swatch colour on the click, with no confirm control', async () => {
+    const wrapper = mount(TextOptionsDrawer, { props: colourProps() })
+
+    expect(swatches(wrapper, 'background').length).toBeGreaterThan(2)
+    await swatches(wrapper, 'background')[2].trigger('click')
+
+    expect(wrapper.props('theme').selectBackground).toHaveBeenCalledWith(PALETTE[2].hex)
+
+    const confirm = wrapper
+      .findAll('button')
+      .filter((b) => /^(ok|apply|cancel|save)$/i.test(b.text().trim()))
+    expect(confirm).toHaveLength(0)
+  })
+
+  it('S-005: applies a preset background, text and accent together on one click', async () => {
+    const theme = realTheme()
+    const wrapper = mount(TextOptionsDrawer, { props: { ...makeProps(), theme } })
+
+    expect(presets(wrapper).length).toBeGreaterThan(2)
+    const forest = presets(wrapper).find((b) => b.text() === 'Forest')
+    await forest.trigger('click')
+
+    expect(theme.editorBg).toBe(THEMES[2].bg)
+    expect(theme.editorText).toBe(THEMES[2].text)
+    expect(theme.editorAccent).toBe(THEMES[2].accent)
+  })
+
+  it('S-006: marks the matching preset, and no preset for a mixed combination', async () => {
+    const theme = realTheme()
+    const wrapper = mount(TextOptionsDrawer, { props: { ...makeProps(), theme } })
+
+    const active = () => presets(wrapper).filter((b) => b.classes().includes('active'))
+    expect(active()).toHaveLength(1)
+    expect(active()[0].text()).toBe('Mist')
+
+    theme.selectBackground(THEMES[4].bg)
+    theme.selectText(THEMES[1].text)
+    await wrapper.vm.$nextTick()
+
+    expect(active()).toHaveLength(0)
+  })
+
+  it('S-013: disables a colour already chosen in another row', async () => {
+    const props = colourProps()
+    const wrapper = mount(TextOptionsDrawer, { props })
+    const chosen = THEMES[0].bg
+
+    const inTextRow = row(wrapper, 'text').find(`[data-colour="${chosen}"]`)
+    const inAccentRow = row(wrapper, 'accent').find(`[data-colour="${chosen}"]`)
+    expect(inTextRow.exists()).toBe(true)
+    expect(inTextRow.attributes('disabled')).toBeDefined()
+    expect(inAccentRow.attributes('disabled')).toBeDefined()
+
+    await inTextRow.trigger('click')
+    expect(props.theme.selectText).not.toHaveBeenCalled()
+
+    // A colour free in the other rows stays selectable.
+    const free = PALETTE.find((entry) => ![THEMES[0].bg, THEMES[0].text, THEMES[0].accent].includes(entry.hex))
+    const freeSwatch = row(wrapper, 'text').find(`[data-colour="${free.hex}"]`)
+    expect(freeSwatch.attributes('disabled')).toBeUndefined()
+  })
+
+  it('S-014: names each swatch by row and theme, and marks the chosen one in each row', () => {
+    const wrapper = mount(TextOptionsDrawer, { props: colourProps() })
+
+    expect(swatches(wrapper, 'background')).toHaveLength(PALETTE.length)
+    expect(swatches(wrapper, 'text')).toHaveLength(PALETTE.length)
+    expect(swatches(wrapper, 'background')[0].attributes('aria-label')).toBe(
+      `Background ${PALETTE[0].theme}`,
+    )
+    expect(swatches(wrapper, 'text')[0].attributes('aria-label')).toBe(
+      `Text ${PALETTE[0].theme}`,
+    )
+
+    for (const [name, chosen] of [
+      ['background', THEMES[0].bg],
+      ['text', THEMES[0].text],
+      ['accent', THEMES[0].accent],
+    ]) {
+      const marked = swatches(wrapper, name).filter(
+        (s) => s.attributes('aria-current') === 'true',
+      )
+      expect(marked).toHaveLength(1)
+      expect(marked[0].attributes('data-colour')).toBe(chosen)
+    }
   })
 })

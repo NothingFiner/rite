@@ -53,6 +53,18 @@
         >
           <option v-for="f in manuscriptFormat.formats" :key="f.id" :value="f.id">{{ f.name }}</option>
         </select>
+        <!--
+          Stub (SPEC 5.13). The three rows and the preset row exist so the colour
+          tests reach their assertions. None of them renders a swatch yet.
+        -->
+        <div class="drawer-label">Background</div>
+        <div class="swatch-row" data-row="background"></div>
+        <div class="drawer-label">Text</div>
+        <div class="swatch-row" data-row="text"></div>
+        <div class="drawer-label">Accent</div>
+        <div class="swatch-row" data-row="accent"></div>
+        <div class="drawer-label">Presets</div>
+        <div class="preset-row"></div>
       </div>
     </div>
   </div>

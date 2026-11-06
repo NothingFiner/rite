@@ -27,7 +27,7 @@ const props = defineProps({
   // up its own instance/cold cache.
   pageBreaks: { type: Array, default: () => [] },
   wordCount: { type: Number, default: 0 },
-  theme: { type: Number, default: 0 },
+  theme: { type: [Number, Object], default: 0 },
   zoom: { type: Number, default: 16 },
   margin: { type: String, default: 'compact' },
   tocItems: { type: Array, default: () => [] },

@@ -48,7 +48,7 @@ const props = defineProps({
   // One shared `usePagination` lives in App.vue (roadmap 2.5); a per-editor copy
   // would measure cold. Each entry is a block index that starts a new page.
   pageBreaks: { type: Array, default: () => [] },
-  theme: { type: Number, default: 0 },
+  theme: { type: [Number, Object], default: 0 },
   zoom: { type: Number, default: 16 },
   margin: { type: String, default: 'compact' },
 })

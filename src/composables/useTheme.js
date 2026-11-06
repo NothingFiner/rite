@@ -37,6 +37,16 @@ export function useTheme(viewModeRef) {
 
   const currentTheme = computed(() => themes[clampThemeIndex(editorTheme.value)])
 
+  // Stub (SPEC 5.13). The colour refs start on the first preset and the preset
+  // match tracks the index. The three setters are empty.
+  const editorBg = ref(themes[0].bg)
+  const editorText = ref(themes[0].text)
+  const editorAccent = ref(themes[0].accent)
+  const matchedPreset = computed(() => clampThemeIndex(editorTheme.value))
+  function selectBackground() {}
+  function selectText() {}
+  function selectAccent() {}
+
   const uiTextPrimary = computed(() => viewModeRef.value === 'editor' ? currentTheme.value.text : '#f0f0f5')
   const uiTextSecondary = computed(() => viewModeRef.value === 'editor' ? currentTheme.value.text + '99' : '#a0a0b099')
   const uiAccent = computed(() => viewModeRef.value === 'editor' ? currentTheme.value.accent : '#4f8ef7')
@@ -102,6 +112,14 @@ export function useTheme(viewModeRef) {
   return {
     themes,
     editorTheme,
+    currentTheme,
+    editorBg,
+    editorText,
+    editorAccent,
+    matchedPreset,
+    selectBackground,
+    selectText,
+    selectAccent,
     editorZoom,
     editorMargin,
     showThemePicker,
