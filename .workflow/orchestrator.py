@@ -71,6 +71,18 @@ def plural(n, word):
     return word if n == 1 else word + "s"
 
 
+def fresh_write(path, since):
+    """True when `path` was written after `since`, allowing for coarse timestamps.
+
+    The work tree survives a resume, so a file left by an earlier run is not
+    evidence about this one. Only a write from this iteration counts.
+    """
+    try:
+        return path.exists() and path.stat().st_mtime >= since - 2
+    except OSError:
+        return False
+
+
 def finish(status, reason, code, **extra):
     """Write the verdict and exit. The one place a run states what it proved."""
     OUT.mkdir(exist_ok=True)
@@ -1149,6 +1161,15 @@ def main():
     strong_ok = bool(models.get("strong"))
     if not strong_ok:
         log("no strong model configured: this run will not escalate")
+
+    # A resumed run inherits the stopped run's work tree, including any signal
+    # file it wrote. The planner reads that directory, so an old objection has to
+    # go before the first iteration instead of being judged as this run's.
+    stale = OUT / "test-objection.md"
+    if stale.exists():
+        log(f"dropping the previous run's {stale.name}")
+        stale.unlink()
+
     for i in range(1, lim["max_iterations"] + 1):
         escalated = goose_ok and strong_ok and (
             same >= lim["escalate_after"] or no_gain >= lim["escalate_after"])
@@ -1191,7 +1212,7 @@ def main():
             goose_fails = 0
 
         objection = OUT / "test-objection.md"
-        if objection.exists():
+        if fresh_write(objection, iteration_started):
             finish("needs_human", "agent objected to the tests: " + objection.read_text()[:500], 2, iterations=i)
 
         bad = protected_violations(start_sha, patterns)

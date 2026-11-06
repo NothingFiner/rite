@@ -183,6 +183,12 @@ because the implementation already exists. It only refuses to start if a test th
 passed in the previous run now fails (`baseline.json` in `.workflow-out/` records
 that). It also refuses a work tree on the wrong branch, or one left mid-merge.
 
+A resumed tree still holds the stopped run's `.workflow-out/`, and the planner reads
+that directory. The run therefore deletes a leftover `test-objection.md` before the
+first iteration, and only honours one written after an iteration started. Without
+that, the first iteration after a resume did its work and was then failed on the
+previous run's objection, which cost a full implementation pass to learn nothing.
+
 ## The pull-request description
 When the suite goes green the orchestrator runs `.workflow/recipes/describe-changes.yaml`
 once: a fresh agent reads the diff against the base branch and writes a PR title and a
