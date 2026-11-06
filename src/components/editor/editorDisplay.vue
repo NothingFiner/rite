@@ -17,7 +17,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, nextTick, watch, computed, toRef } from 'vue'
-import { flattenSections, computeFirstLineIndent } from '../../composables/useSectionBlocks.js'
+import { flattenSections, computeFirstLineIndent, AUTO_FIRST_LINE_INDENT } from '../../composables/useSectionBlocks.js'
 import { computeReconcileOps, blockKey, renderBlockHTML } from '../../composables/useEditorReconcile.js'
 import { buildEditorHTML } from '../../composables/useEditorRender.js'
 import { applySearchHighlights, clearSearchHighlights } from '../../composables/useSearchHighlights.js'
@@ -35,7 +35,7 @@ import {
   getCurrentPage as getCurrentPageInSheet,
 } from '../../composables/useEditorPageNav.js'
 import {
-  useEditorReadback,
+  useEditorReadback, PX_PER_INCH,
   blockPlainText, adjustOffsetForReplace, isNonContentBlock, readSectionTitleText,
 } from '../../composables/useEditorReadback.js'
 import { resolveTabAction } from '../../composables/useEditorTabKey.js'
@@ -390,10 +390,10 @@ function onKeydown(e) {
 
     document.execCommand('defaultParagraphSeparator', false, 'div')
     document.execCommand('insertParagraph', false, null)
-// Return always produces an automatic paragraph: strip what the browser copied
-// from the split partner (inline indent, no-indent class, marker state) and
-// mark automatic. The fresh id plus its section id keep the undo-delta keys
-// unambiguous. The readback then stamps the automatic rule.
+// Return always produces an automatic paragraph. The browser copies the inline
+// indent, the `no-indent` class and the marker state from the paragraph it
+// splits. Clear all three, then mark the new paragraph automatic. A fresh id
+// plus its section id keep the undo-delta keys unambiguous.
     const sectionId = getSectionIdAtCursor()
     const sel2 = window.getSelection()
     let createdPara = null
@@ -413,17 +413,17 @@ function onKeydown(e) {
       }
     }
     syncFromDOM()
-// The readback stamp reads an empty paragraph as flush (it is the spacer rule),
-// so a Return that split at a paragraph end shows 0px until typing fills it.
-// Return's visible contract is the continuation indent (0.5 inch after a text
-// paragraph), and the marker above keeps the model automatic either way.
+// Without this, the readback leaves the new paragraph at 0px, because an empty
+// paragraph reads as a spacer. Return promises the continuation indent instead,
+// 0.5 inch below a text paragraph. The marker above keeps the model automatic
+// either way.
     if (createdPara && !createdPara.textContent?.trim()) {
       let prevBlock = createdPara.previousElementSibling
       while (prevBlock && isNonContentBlock(prevBlock)) {
         prevBlock = prevBlock.previousElementSibling
       }
       if (prevBlock && prevBlock.classList?.contains('paragraph') && prevBlock.textContent?.trim()) {
-        createdPara.style.textIndent = `${Math.round(0.5 * 96)}px`
+        createdPara.style.textIndent = `${Math.round(AUTO_FIRST_LINE_INDENT * PX_PER_INCH)}px`
       }
     }
     return

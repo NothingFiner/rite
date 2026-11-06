@@ -33,13 +33,13 @@ import { paragraphToHTML, sectionTitleToHTML } from './useParagraphHTML.js'
 ///   - `formatChapter(index)`: renders the locked "Chapter N: " prefix for a
 ///     Chapter's render-derived index. Injected so this module is Vue-free.
 ///
-/// Returns `{ html, blocks, sectionCount }`. `blocks` is the baked flat list
-/// (paragraph blocks shallow-copied; AUTOMATIC paragraphs get the computed
-/// number + an `autoIndent: true` flag on the copy, explicit ones pass through
-/// with their stored number and no flag; title blocks carry the `chapterIndex`
-/// flattenSections stamps); `sectionCount` is the number of section-title
-/// blocks. Paragraph blocks are shallow-copied so baking `firstLineIndent` does
-/// not mutate the store's reactive paragraph objects.
+/// Returns `{ html, blocks, sectionCount }`.
+///
+/// `blocks` is the baked flat list. Paragraph blocks are shallow copies, so
+/// baking an indent never mutates the store's reactive paragraphs. An automatic
+/// indent lands on the copy and gets the `autoIndent` flag. An explicit number
+/// passes through untouched. Title blocks carry the `chapterIndex`
+/// flattenSections stamps, and `sectionCount` counts the section-title blocks.
 export function buildEditorHTML(sections, { freshSectionId, formatChapter } = {}) {
   // Shallow-copy paragraph blocks so baking computed indents does not mutate
   // the store's reactive paragraphs.
@@ -50,14 +50,9 @@ export function buildEditorHTML(sections, { freshSectionId, formatChapter } = {}
 
   for (let i = 0; i < blocks.length; i++) {
     if (blocks[i].kind !== 'paragraph') continue
-    // Automatic (`null`) paragraphs: the computed number and the `autoIndent`
-    // marker flag both live on the copy only — the store's paragraph keeps
-    // `null` (SPEC.md 5.18). The marker is what `paragraphToHTML` emits and
-    // `parseParagraphElement` reads back as `null`, so an automatic indent
-    // never freezes into an explicit number on the first readback after a
-    // render. A numeric `firstLineIndent` is the writer's explicit value: it
-    // is not re-baked and not flagged, so its rendered HTML stays
-    // byte-identical to the pre-5.18 output (no marker).
+    // An automatic indent (`null`) is computed onto the copy and flagged there.
+    // The store keeps `null` (SPEC.md 5.18). An explicit number is the writer's
+    // own value, so the renderer neither recomputes it nor flags it.
     if (blocks[i].paragraph.firstLineIndent == null) {
       blocks[i].paragraph.firstLineIndent = computeFirstLineIndent(blocks, i)
       blocks[i].paragraph.autoIndent = true

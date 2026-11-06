@@ -3,9 +3,9 @@ import { installTauriIpc, ipcCalls } from './helpers/tauri-ipc.js'
 
 // Automatic first-line indent on Return (SPEC.md follow-up to 5.18, S-023–S-033).
 //
-// Everything here needs a real viewport: the caret, `insertParagraph`'s default
-// action and the computed text-indent do not exist in jsdom. The app is exercised
-// in Chromium with the shared Tauri v2 IPC mock, as TESTING.md requires.
+// Everything here needs a real viewport. The caret, `insertParagraph`'s default
+// action and the computed text-indent do not exist in jsdom. The app therefore
+// runs in Chromium with the shared Tauri v2 IPC mock, as TESTING.md requires.
 
 const textStyle = { bold: false, italic: false, underline: false, fontSize: null }
 const para = (id, text) => ({
@@ -36,8 +36,8 @@ const seededDoc = {
   ],
 }
 
-/// Same section, but p-2 is empty. Used for the "Return in an empty paragraph"
-/// edge case: the automatic rule gives 0 after an empty paragraph.
+/// Same section, but p-2 is empty. This seeds the "Return in an empty
+/// paragraph" edge case, where the automatic rule gives 0 after an empty one.
 const emptyParagraphDoc = {
   ...seededDoc,
   sections: [
@@ -204,14 +204,14 @@ test.describe('automatic indent on Return', () => {
     await page.keyboard.press('Enter')
 
     await expect(paragraphs(page)).toHaveCount(4)
-    // Measured contenteditable behaviour: the original id stays on the empty
-    // paragraph above; the text moves into the new paragraph below.
+    // Measured contenteditable behaviour. The original id stays on the empty
+    // paragraph above. The text moves into the new paragraph below.
     expect(await paraIdOf(page, 1)).toBe('p-2')
     expect(await textOf(page, 1)).toBe('')
     expect(await textOf(page, 2)).toBe('Second paragraph')
 
-    // Empty first paragraph of a section → 0; text paragraph now follows an
-    // empty paragraph → 0. Both stay automatic, not explicit.
+    // An empty first paragraph of a section gives 0. A text paragraph after an
+    // empty one also gives 0. Both stay automatic, not explicit.
     expect(await indentOf(page, 1)).toBe('0px')
     expect(await autoOf(page, 1)).toBe('true')
     expect(await indentOf(page, 2)).toBe('0px')
@@ -237,8 +237,8 @@ test.describe('automatic marker on render', () => {
   test('S-033: loaded automatic paragraphs keep their marker and model null after typing', async ({ page }) => {
     await open(page)
 
-    // Before any edit: the automatic rule must be visible in the DOM, otherwise
-    // the first readback turns 0 / 0.5 into explicit numbers.
+    // The automatic rule must be visible in the DOM before any edit. Otherwise
+    // the first readback turns 0 and 0.5 into explicit numbers.
     expect(await autoOf(page, 0)).toBe('true')
     expect(await autoOf(page, 1)).toBe('true')
 
