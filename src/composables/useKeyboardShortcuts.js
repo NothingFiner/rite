@@ -21,6 +21,11 @@ export function useKeyboardShortcuts({
   store,
   format,
   search,
+  // Theme picker (SPEC 5.7). Optional-chained at every use (`themePicker?.`)
+  // because App.vue wires it, but unit-test mocks and any pre-wiring host
+  // don't pass it — an absent picker must simply mean the Escape chain skips
+  // it with no change to the existing behaviour.
+  themePicker,
   viewMode,
   leftDrawerOpen,
   leftDrawerMode,
@@ -32,6 +37,11 @@ export function useKeyboardShortcuts({
   // mocks may omit pieces (e.g. no `recentre` key): an absent focusMode must
   // simply mean none of the focus-mode behaviour applies.
   focusMode,
+  // S-017: Escape that closes a drawer returns focus to the drawer's opener
+  // button. Optional-chained, like themePicker/focusMode, because the
+  // unit-test mocks don't pass it — an absent callback must simply mean the
+  // close happens with no focus return.
+  focusDrawerOpener,
 }) {
   function onKeydown(e) {
     const cmd = e.metaKey || e.ctrlKey
@@ -123,19 +133,37 @@ export function useKeyboardShortcuts({
         search.closeSearch()
         return
       }
-      if (leftDrawerOpen.value) {
+      // Theme picker closes before any drawer (SPEC 5.7 chain order:
+      // search → theme picker → drawer → focus mode): the most recently
+      // opened popup wins, so Escape over an open picker tooltip never
+      // reaches the drawer. Optional-chained for callers without a picker.
+      if (themePicker?.open?.value) {
         e.preventDefault()
-        leftDrawerOpen.value = false
+        themePicker.close()
         return
       }
-      // Focus mode exits once chrome is closed (S-007 refusal position):
-      // search → drawer → focus mode → editor. An editor-view Escape with no
-      // panel wanting the key moves focus out of the editor sheet — the final
-      // fall-through (SPEC decision 4, S-022). editorRef is `ref(null)` in the
-      // unit-test mocks, hence the optional chaining.
+      if (leftDrawerOpen.value) {
+        e.preventDefault()
+        // S-017: read where focus sits BEFORE the close — the gate decides
+        // whether "return focus" applies at all. Escape pressed elsewhere
+        // (e.g. the editor) closes the drawer without stealing focus; the
+        // call itself is a no-op when no opener is wired.
+        const focusInDrawer = document.activeElement?.closest?.('.drawer') != null
+        leftDrawerOpen.value = false
+        if (focusInDrawer) focusDrawerOpener?.()
+        return
+      }
+      // Escape chain order (S-007, SPEC 5.7): search → theme picker → drawer
+      // → focus mode → editor. Focus mode exits once no chrome wants the key;
+      // one press does one thing, so it returns here. An editor-view Escape
+      // with no panel, drawer or focus mode open is the final fall-through: it
+      // moves focus out of the editor sheet (SPEC decision 4, S-022).
+      // editorRef is `ref(null)` in the unit-test mocks, hence the optional
+      // chaining below.
       if (focusMode?.active?.value) {
         e.preventDefault()
         focusMode.exit()
+        return
       }
       if (viewMode.value === 'editor') {
         e.preventDefault()

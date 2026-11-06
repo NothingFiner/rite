@@ -894,7 +894,10 @@ defineExpose({
   font-size: 16px;
   line-height: 1.6;
   width: 100%;
-  transition: background 0.2s, color 0.2s;
+  /* No background/colour transition: a theme switch — keyboard (Enter on a
+     focused swatch) or click — must read as applied in getComputedStyle
+     immediately; a fade turns the switched-to colour into an interpolated
+     mid-animation value for 200ms. */
   font-family: var(--editor-font, 'Inter', sans-serif);
 }
 

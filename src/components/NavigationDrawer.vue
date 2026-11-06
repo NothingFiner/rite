@@ -30,20 +30,43 @@
               />
               <button class="nav-confirm" @click.stop="confirmRename(item)">&#10003;</button>
             </span>
-            <span v-else class="nav-title">
-              {{ item.displayTitle }}
-              <button
-                v-if="props.activeId === item.id"
-                class="nav-edit"
-                @click.stop="startRename(item)"
-                :title="item.sectionType === 'chapter' ? 'Rename subtitle' : 'Rename section'"
-              >&#9998;</button>
-              <button
-                v-if="props.activeId === item.id"
-                class="nav-delete"
-                @click.stop="onDelete(item.id)"
-              >&#10005;</button>
-            </span>
+            <!-- The row control (S-001): a native <button> named by the display
+                 title via aria-label (SPEC decision 8), carrying the list's
+                 single roving tab stop (SPEC decision 2) and the row id, so the
+                 control itself answers [data-nav-id][aria-current="true"] for
+                 focus/current lookups (the li keeps its own data-nav-id for
+                 drag targeting). Enter activates the button and the click
+                 bubbles to the row, selecting exactly once as a pointer click
+                 does; Space is intercepted in onRowKeydown so it selects
+                 without the row-click scroll. -->
+            <!-- aria-current (S-002): only the active section is the current item — SPEC decision 7. -->
+            <button
+              v-else
+              class="nav-row-control"
+              type="button"
+              :aria-label="item.displayTitle"
+              :tabindex="rowTabindex(item)"
+              :aria-current="props.activeId === item.id ? 'true' : undefined"
+              :data-nav-id="item.id"
+              @keydown="onRowKeydown($event, item)"
+            >
+              <span class="nav-title">{{ item.displayTitle }}</span>
+            </button>
+            <!-- Rename/delete sit AFTER the row control, not inside it: a
+                 button inside a button is invalid HTML and Enter would fire
+                 both (SPEC decision 5). @click.stop keeps them from also
+                 selecting the section. -->
+            <button
+              v-if="!editingIds.has(item.id) && props.activeId === item.id"
+              class="nav-edit"
+              @click.stop="startRename(item)"
+              :title="item.sectionType === 'chapter' ? 'Rename subtitle' : 'Rename section'"
+            >&#9998;</button>
+            <button
+              v-if="!editingIds.has(item.id) && props.activeId === item.id"
+              class="nav-delete"
+              @click.stop="onDelete(item.id)"
+            >&#10005;</button>
             <button
               class="nav-type-toggle"
               :class="{ chapter: item.sectionType === 'chapter' }"
@@ -123,6 +146,49 @@ function addSection() {
 
 function onDelete(id) {
   emit('deleteItem', id)
+}
+
+// Roving tabindex (SPEC decision 2): the section list is ONE tab stop — the
+// active row is in the tab order; with no active section the first row
+// carries it. The other rows stay reachable via focus movement inside the
+// list, not Tab.
+function rowTabindex(item) {
+  if (props.activeId === null) {
+    return item.id === sections.value[0]?.id ? 0 : -1
+  }
+  return item.id === props.activeId ? 0 : -1
+}
+
+// Row keyboard handling (S-004/S-005/S-006): one handler that reads e.key —
+// no template .prevent modifiers, no Vue key-alias trust.
+// - Space (S-005): keydown preventDefault cancels the native button
+//   activation, so no bubbled click reaches the row and onRowClick's scrollTo
+//   (scrollIntoView on the editor) never runs — page and .scroll-layer stay
+//   put. The select is emitted from here instead.
+// - Enter (S-004): deliberately NOT handled — the native activation bubbles a
+//   click to the row, so Enter selects and scrolls exactly as a pointer click
+//   does.
+// - ArrowDown/ArrowUp (S-006): focus moves one .nav-row-control forward or
+//   back in DOM order, CLAMPED at the first/last row (no wrap), with
+//   preventDefault so the arrow does not also scroll the drawer content
+//   mid-gesture. Arrows never select (SPEC decision 3) and never touch the
+//   roving tabindex — it stays anchored on the active row (rowTabindex).
+function onRowKeydown(e, item) {
+  if (e.key === ' ') {
+    e.preventDefault()
+    emit('select', item.id)
+    return
+  }
+  const delta = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0
+  if (delta === 0) return
+  e.preventDefault()
+  const controls = navTreeRef.value
+    ? Array.from(navTreeRef.value.querySelectorAll('.nav-row-control'))
+    : []
+  const index = controls.indexOf(e.currentTarget)
+  if (index === -1) return
+  const next = controls[Math.min(controls.length - 1, Math.max(0, index + delta))]
+  next?.focus({ preventScroll: true })
 }
 
 // --- drag-to-reorder (roadmap 5.5) --------------------------------------------
@@ -232,9 +298,12 @@ function onPointerDown(e, item) {
   // app, so mouse/pen only.
   if (e.pointerType === 'touch') return
   // A pointerdown on interactive row controls is their gesture, not a drag
-  // start — the rename input, the type toggle, and the edit/delete buttons
-  // keep their clicks. And a row being renamed is never draggable.
-  if (e.target.closest('button, input')) return
+  // start — the rename input, the confirm, and the four action buttons keep
+  // their clicks. The row control itself is NOT excluded: it covers the
+  // title, and a real-mouse press there must still arm a drag
+  // (e2e/outline-drag.spec.js presses the row at its centre). A row being
+  // renamed is never draggable.
+  if (e.target.closest('button, input') && !e.target.closest('.nav-row-control')) return
   if (editingIds.value.has(item.id)) return
   dragCandidate.value = { id: item.id, startX: e.clientX, startY: e.clientY }
   suppressNextClick = false
@@ -364,13 +433,42 @@ function confirmRename(item) {
   delete draftTitles.value[item.id]
 }
 
+// Opening the drawer is the keyboard entry point (S-006): until something moves
+// focus into the list, the single roving tab stop is unreachable by keyboard —
+// no e2e arrow press can land on a row while focus stays on the button that
+// opened the drawer. On open, after the DOM settles, focus lands on the active
+// row's control, falling back to the FIRST row's control when there is no
+// active row or the active row has no control (mid-rename rows render an
+// input, not a control). preventScroll so entering the drawer never yanks the
+// page or the .scroll-layer. Bail when the component is unmounted or has no
+// row controls. No wrap-around, no select. The closing branch is untouched —
+// its emits are depended on by the HistoryView and close flows.
 watch(() => props.open, (v) => {
-  if (!v) {
+  if (v) {
+    nextTick(focusEntryRow)
+  } else {
     emit('update:expanded', false)
     emit('select', null)
     editingIds.value.clear()
   }
 })
+
+function focusEntryRow() {
+  const list = navTreeRef.value
+  if (!list) return
+  const controls = list.querySelectorAll('.nav-row-control')
+  if (controls.length === 0) return
+  // The active row is matched by its data-nav-id in the DOM (equivalent to the
+  // ".nav-section[data-nav-id=…] .nav-row-control" selector) — dataset
+  // comparison avoids building an interpolated attribute selector from a
+  // store-supplied id.
+  const activeRow = props.activeId
+    ? Array.from(list.querySelectorAll('.nav-section')).find(
+        (row) => row.dataset.navId === props.activeId
+      )
+    : null
+  ;(activeRow?.querySelector('.nav-row-control') ?? controls[0]).focus({ preventScroll: true })
+}
 
 watch(sections, () => {
   nextTick(() => {
@@ -388,7 +486,13 @@ watch(sections, () => {
   top: 38px;
   bottom: 36px;
   width: 260px;
-  transition: transform 0.25s ease;
+  /* S-018: a closed drawer keeps its slide animation but leaves the tab
+     order — visibility flips to hidden 0.25s AFTER the close starts (the
+     slide stays on screen) and back to visible instantly on open. Keep the
+     values identical to App.vue's .drawer base rule (its scoped rule also
+     reaches this component's root element). */
+  visibility: hidden;
+  transition: transform 0.25s ease, visibility 0s linear 0.25s;
   z-index: 25;
 }
 
@@ -399,6 +503,9 @@ watch(sections, () => {
 
 .drawer.left.open {
   transform: translateX(0);
+  /* S-018: open state — visible immediately, no visibility delay. */
+  visibility: visible;
+  transition: transform 0.25s ease, visibility 0s;
 }
 
 .drawer-content {
@@ -476,6 +583,25 @@ watch(sections, () => {
 
 .nav-section.drop-below {
   box-shadow: inset 0 -2px 0 0 var(--accent);
+}
+
+/* The row control (S-001): a native <button> is the keyboard contract, but the
+   row must look and behave exactly like the bare title span it replaces — so
+   the default button chrome is reset and the title span's flex slot moves up
+   onto the button. The .nav-title ellipsis still applies inside it, and the
+   row's user-select: none still holds (the button inherits from the row). */
+.nav-row-control {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
 }
 
 .nav-title {

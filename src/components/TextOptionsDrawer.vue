@@ -80,7 +80,13 @@ defineProps({
   top: 38px;
   bottom: 36px;
   width: 260px;
-  transition: transform 0.25s ease;
+  /* S-018: a closed drawer keeps its slide animation but leaves the tab
+     order — visibility flips to hidden 0.25s AFTER the close starts (the
+     slide stays on screen) and back to visible instantly on open. Keep the
+     values identical to App.vue's .drawer base rule (its scoped rule also
+     reaches this component's root element). */
+  visibility: hidden;
+  transition: transform 0.25s ease, visibility 0s linear 0.25s;
   z-index: 25;
 }
 
@@ -91,6 +97,9 @@ defineProps({
 
 .drawer.left.open {
   transform: translateX(0);
+  /* S-018: open state — visible immediately, no visibility delay. */
+  visibility: visible;
+  transition: transform 0.25s ease, visibility 0s;
 }
 
 .drawer-content {
