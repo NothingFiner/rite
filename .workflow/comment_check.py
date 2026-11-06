@@ -81,6 +81,11 @@ CAPS = re.compile(r"\b[A-Z]{4,}\b")
 CAPS_ALLOWED = {
     "SPEC", "HTML", "DOM", "IPC", "CSS", "JSON", "HTTP", "HTTPS", "API", "URL",
     "SVG", "PNG", "PDF", "WAV", "UTF", "LLM", "TESTING", "TODO", "RUST", "TAURI",
+    # Format and protocol names the domain writes in caps. Flagging these taught
+    # the coder to spell `OOXML` as `OOxml`, which is worse prose than the rule
+    # it protects. They were 41% of every caps hit across the last eight feature
+    # commits. The gate was wrong about the term more often than the emphasis.
+    "EPUB", "DOCX", "XHTML", "OOXML", "OPC", "OCF", "OPF", "MIME", "UUID",
 }
 BACKTICKED = re.compile(r"`[^`]*`")
 
