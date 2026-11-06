@@ -92,10 +92,11 @@ function editorClearSearchHighlights() {
 }
 
 const editorStyles = computed(() => {
-  // SPEC 5.13 "Rendering the sheet": the theme prop is either the index into
-  // THEMES (numbers keep the existing rendering path) or the currentTheme
-  // descriptor object from useTheme.js, used as itself — a mixed bg/text/accent
-  // combination has no index and must paint without a preset.
+  // SPEC 5.13 "Rendering the sheet".
+  // `props.theme` is either a preset index or the `currentTheme` object from
+  // `useTheme.js`. A mixed background, text and accent choice has no preset
+  // index, so the object resolves as itself. Numbers resolve through
+  // `THEMES[props.theme]`.
   const t = typeof props.theme === 'object' && props.theme !== null
     ? props.theme
     : (THEMES[props.theme] || THEMES[0])
