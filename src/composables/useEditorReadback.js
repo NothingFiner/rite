@@ -1,3 +1,7 @@
+// Readback: reading the live contenteditable DOM back into the model, the
+// reverse of rendering. The DOM is the source of truth while the writer types,
+// so the model follows it after every input.
+//
 // Editor DOM→model readback, extracted from editorDisplay.vue (roadmap 5.6,
 // PR3). The pure helpers walk the contenteditable's flat block list back into
 // the block/Section shape the store holds; the factory wraps the two readback
