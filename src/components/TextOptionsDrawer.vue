@@ -54,20 +54,23 @@
           <option v-for="f in manuscriptFormat.formats" :key="f.id" :value="f.id">{{ f.name }}</option>
         </select>
         <!-- Colour applies on the click itself, like the zoom and margin
-             controls beside it, so no confirm step exists. The theme setters
-             refuse a hex another field already holds (useTheme.js), so a
-             click can be handed straight through. -->
+             controls beside it, so no confirm step exists. Each row disables
+             the swatches the other two rows hold; the theme setters refuse
+             such a hex as the second half of the guard (useTheme.js). -->
         <template v-for="def in swatchRows" :key="def.row">
           <div class="drawer-label">{{ def.label }}</div>
           <div class="swatch-row" :data-row="def.row">
             <button
-              v-for="hex in palette"
-              :key="hex"
+              v-for="colour in palette"
+              :key="colour.hex"
               type="button"
               class="colour-swatch"
-              :data-colour="hex"
-              :style="{ background: hex }"
-              @click="theme[def.setter](hex)"
+              :data-colour="colour.hex"
+              :aria-label="def.label + ' ' + colour.theme"
+              :aria-current="def.current(theme) === colour.hex ? 'true' : undefined"
+              :disabled="def.others(theme).includes(colour.hex)"
+              :style="{ background: colour.hex }"
+              @click="theme[def.setter](colour.hex)"
             ></button>
           </div>
         </template>
@@ -105,17 +108,38 @@ defineProps({
 })
 
 // Row order is fixed by the drawer layout, so each row's label and setter
-// travel in one definition instead of three hand-written pairs.
+// travel in one definition instead of three hand-written pairs. The
+// accessors read the theme prop, so the marks track the live colours like
+// the preset's active match.
 const swatchRows = [
-  { row: 'background', label: 'Background', setter: 'selectBackground' },
-  { row: 'text', label: 'Text', setter: 'selectText' },
-  { row: 'accent', label: 'Accent', setter: 'selectAccent' },
+  {
+    row: 'background',
+    label: 'Background',
+    setter: 'selectBackground',
+    current: (theme) => theme.editorBg,
+    others: (theme) => [theme.editorText, theme.editorAccent],
+  },
+  {
+    row: 'text',
+    label: 'Text',
+    setter: 'selectText',
+    current: (theme) => theme.editorText,
+    others: (theme) => [theme.editorBg, theme.editorAccent],
+  },
+  {
+    row: 'accent',
+    label: 'Accent',
+    setter: 'selectAccent',
+    current: (theme) => theme.editorAccent,
+    others: (theme) => [theme.editorBg, theme.editorText],
+  },
 ]
 
 // Palette for the swatch rows: the distinct colours of the theme table, in
 // first-appearance order (theme order, then bg, text, accent inside a theme).
 // Repeating a hex would offer the same colour twice in one row, so first
-// occurrence is kept.
+// occurrence is kept. Each entry carries the contributing theme's name, the
+// second part of every swatch's label.
 const palette = []
 {
   const knownHexes = new Set()
@@ -123,7 +147,7 @@ const palette = []
     for (const hex of [entry.bg, entry.text, entry.accent]) {
       if (knownHexes.has(hex)) continue
       knownHexes.add(hex)
-      palette.push(hex)
+      palette.push({ hex, theme: entry.name })
     }
   }
 }
