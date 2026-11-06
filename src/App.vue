@@ -105,7 +105,7 @@
           :mode="viewMode"
           :page-breaks="pagination.pageBreaks"
           :word-count="wordCount"
-          :theme="theme.editorTheme"
+          :theme="theme.currentTheme"
           :zoom="theme.editorZoom"
           :margin="theme.editorMargin"
           :toc-items="nav.tocItems"

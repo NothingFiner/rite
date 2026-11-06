@@ -92,7 +92,13 @@ function editorClearSearchHighlights() {
 }
 
 const editorStyles = computed(() => {
-  const t = THEMES[props.theme] || THEMES[0]
+  // SPEC 5.13 "Rendering the sheet": the theme prop is either the index into
+  // THEMES (numbers keep the existing rendering path) or the currentTheme
+  // descriptor object from useTheme.js, used as itself — a mixed bg/text/accent
+  // combination has no index and must paint without a preset.
+  const t = typeof props.theme === 'object' && props.theme !== null
+    ? props.theme
+    : (THEMES[props.theme] || THEMES[0])
   const pad = props.margin === 'manuscript' ? '96px' : '24px 32px'
   return {
     fontSize: props.zoom + 'px',
