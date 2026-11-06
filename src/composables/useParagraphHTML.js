@@ -19,7 +19,10 @@ export function isSceneBreak(p) {
 /// Render a body paragraph to HTML.
 ///   manuscript: true → <p class="ms-para [scene-break] [no-indent]">…</p>
 ///   manuscript: false → <div class="paragraph [no-indent]" data-para-id
-///                              data-section-id style>…</div>
+///                              data-section-id [data-auto-indent] style>…</div>
+/// `data-auto-indent="true"` appears only on an automatic (renderer-derived)
+/// indent — the shallow copy the renderer passes carries `autoIndent: true`
+/// (SPEC.md 5.18). The writer's explicit number never gets the marker.
 /// `sectionId` is required for the editor branch so the flat DOM can map a
 /// paragraph back to its owning section during DOM-sync.
 export function paragraphToHTML(p, options = {}) {
@@ -61,13 +64,21 @@ export function paragraphToHTML(p, options = {}) {
   }
   const paraStyleAttr = paraStyles.length ? ` style="${paraStyles.join(';')}"` : ''
   const sectionAttr = sectionId ? ` data-section-id="${sectionId}"` : ''
+  // Automatic (renderer-derived) indent marker, SPEC.md 5.18. The renderer
+  // stamps `autoIndent` on its shallow copy when the model holds `null`, and
+  // `parseParagraphElement` reads the marker back as `null` again — without it
+  // an automatic indent would freeze into an explicit number on the first
+  // readback after a render. The writer's own number carries no flag and
+  // renders byte-identical to the pre-5.18 output. Editor branch only: the
+  // manuscript `<p class="ms-para">` has no DOM→model readback.
+  const autoIndentAttr = p.autoIndent === true ? ' data-auto-indent="true"' : ''
 
   let className = 'paragraph'
   if (typeof p.firstLineIndent === 'number' && p.firstLineIndent === 0) {
     className += ' no-indent'
   }
 
-  return `<div class="${className}"${idAttr}${sectionAttr}${paraStyleAttr}>${content}</div>`
+  return `<div class="${className}"${idAttr}${sectionAttr}${autoIndentAttr}${paraStyleAttr}>${content}</div>`
 }
 
 export function paragraphsToHTML(paragraphs, options = {}) {
