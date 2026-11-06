@@ -170,3 +170,107 @@ No custom tab stops, no ruler markers, no leader dots, no "show formatting marks
 No indent controls besides these keys (the Ruler stays unmounted). No tab in
 section titles. No multi-paragraph indent when Tab is pressed over a selection —
 the selection is replaced by one tab character (S-009).
+
+---
+
+# Automatic first-line indent on Return — follow-up to 5.18 (S-023–S-033)
+
+## Context
+
+### The report
+
+Pressing Return in the editor produces a paragraph with `text-indent: 0px` and
+`class="paragraph no-indent"`, and the model stores `firstLineIndent: 0`. The
+indent is therefore explicit, not automatic, and it never recovers. Measured on
+`feature/5.18-tab-characters` before this work, with a two-paragraph section and
+typing "Hello", Return, "World": `computeFirstLineIndent` said the new paragraph
+should be `0.5`, the DOM said `no-indent`.
+
+### Cause
+
+`editorDisplay.vue`'s Enter branch calls `execCommand('insertParagraph')` and
+then forces the caret paragraph flush:
+
+```js
+para.style.textIndent = '0px'
+```
+
+It also gives that paragraph a fresh id and pins its section id, which stay. The
+`0px` is read back by `parseParagraphElement` as an **explicit 0**, so the
+automatic rule never applies. The comment above it ("New paragraphs start flush
+so the user controls the indent explicitly") encodes the old model and must be
+reversed.
+
+There is a second, pre-existing gap this spec closes: `paragraphToHTML` never
+emits the `data-auto-indent="true"` marker, and `buildEditorHTML` does not flag
+its baked copies with `autoIndent`. The 5.18 Context requires both. Without them,
+the first readback after a render parses every automatic paragraph as an explicit
+number, so an Enter-created automatic paragraph would lose its status on the next
+full render. Existing 5.18 tests do not pin this, which is why the suite was green
+while the app was not.
+
+### The 5.18 model this builds on
+
+- `Paragraph.first_line_indent` is `Option<f32>` and carries three meanings:
+  `null` = automatic, a number = explicit (including explicit `0` = flush). Do
+  **not** add a field to `Paragraph`: protected Rust tests construct it with every
+  field spelled out.
+- The automatic rule is `computeFirstLineIndent(blocks, i)` in
+  `useSectionBlocks.js`: 0 for the first block, 0 after a section title, 0 after
+  an empty paragraph, 0.5 otherwise.
+- The DOM distinguishes the two cases with `data-auto-indent="true"` on automatic
+  paragraphs. `parseParagraphElement` returns `null` when the marker is present;
+  otherwise it parses the inline `text-indent` (`no-indent` → 0).
+- `buildEditorHTML` bakes the computed number onto a **shallow copy** only, so the
+  store keeps `null`. Per 5.18, the copy must also carry `autoIndent: true` so
+  `paragraphToHTML` can emit the marker. An explicit paragraph must keep rendering
+  byte-identical HTML to today (no marker).
+- The readback paths (`fullSyncFromDOM`, `syncFromDOM`) stamp the marker and the
+  computed display indent on automatic paragraphs, but must never overwrite the
+  parsed value.
+
+### Browser behaviour measured for this spec
+
+Measured in Chromium through the project's Playwright harness:
+
+- Return at the **end** of a paragraph leaves the original intact and inserts a
+  new empty paragraph after it.
+- Return at **offset 0** keeps the original paragraph's id on an **empty**
+  paragraph above, and moves the original text into a **new** paragraph below it.
+  S-030 is written against this measured behaviour, not against the intuitive
+  "text stays put" wording.
+- The browser copies the previous paragraph's inline `text-indent` (and sometimes
+  its `data-para-id`) onto the new paragraph. The existing handler already
+  replaces the id; this feature replaces the copied indent with the automatic
+  rule's result.
+
+### Scope and layers
+
+S-032 is `unit` because `buildEditorHTML` is pure. Every other sentence is `e2e`:
+caret position, key default actions and computed indent need a real viewport.
+There is no `rust` sentence — `Option<f32>` already serialises `null` to `None`.
+The manuscript view needs no sentence of its own: it already bakes
+`computeFirstLineIndent` from the model, so a `null` model value flows through.
+
+Out of scope: inheriting an explicit indent into the next paragraph (the approved
+default is that Return always produces an automatic paragraph), any Rust change,
+and any UI for setting indents beyond the 5.18 Tab rules.
+
+## Sentences
+
+### Automatic indent on Return — `e2e`
+
+- **S-023** — Pressing Return at the end of a non-empty body paragraph that is not a section's first paragraph gives the new paragraph a 0.5-inch (48 px) first-line indent as soon as it appears, before any typing.
+- **S-024** — Pressing Return at the end of a section's first body paragraph makes the new second paragraph indent 0.5 inch.
+- **S-025** — Pressing Return inside a non-empty paragraph splits it: the text after the caret moves to the new paragraph, which gets a 0.5-inch indent, while the original keeps its id and the text before the caret.
+- **S-026** — Pressing Return in an empty body paragraph gives the new paragraph no first-line indent, and the new paragraph is automatic, because the automatic rule gives 0 after an empty paragraph.
+- **S-027** — The paragraph created by Return is automatic in the model: after the sync that follows it, `firstLineIndent` is `null` and the element carries `data-auto-indent="true"`.
+- **S-028** — Typing into the paragraph created by Return does not turn its indent into an explicit 0: it stays `null` and keeps the 0.5-inch render.
+- **S-029** — An automatic paragraph created by Return keeps its automatic indent after a later edit elsewhere in the document triggers a sync.
+- **S-030** — Pressing Return at the very start of a paragraph leaves an empty paragraph holding the original paragraph's id and moves the text into a new paragraph; both follow the automatic rule, so the text paragraph, now after an empty paragraph, is flush and stays automatic.
+- **S-031** — A paragraph created by Return after a paragraph with an explicit Tab-set indent shows the automatic 0.5 inch, not the explicit value.
+
+### Automatic marker on render — `unit` + `e2e`
+
+- **S-032** *(unit)* — `buildEditorHTML` marks a paragraph whose model `firstLineIndent` is `null` with `data-auto-indent="true"` and the computed `text-indent`; a paragraph with a numeric explicit indent renders without the marker and byte-identical HTML to today.
+- **S-033** *(e2e)* — On load, an automatic paragraph carries `data-auto-indent="true"`, and typing in it then syncing leaves its model `firstLineIndent` `null`.
