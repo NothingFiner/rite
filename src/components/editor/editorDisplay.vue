@@ -17,7 +17,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, nextTick, watch, computed, toRef } from 'vue'
-import { flattenSections, computeFirstLineIndent } from '../../composables/useSectionBlocks.js'
+import { flattenSections, computeFirstLineIndent, AUTO_FIRST_LINE_INDENT } from '../../composables/useSectionBlocks.js'
 import { computeReconcileOps, blockKey, renderBlockHTML } from '../../composables/useEditorReconcile.js'
 import { buildEditorHTML } from '../../composables/useEditorRender.js'
 import { applySearchHighlights, clearSearchHighlights } from '../../composables/useSearchHighlights.js'
@@ -35,7 +35,7 @@ import {
   getCurrentPage as getCurrentPageInSheet,
 } from '../../composables/useEditorPageNav.js'
 import {
-  useEditorReadback,
+  useEditorReadback, PX_PER_INCH,
   blockPlainText, adjustOffsetForReplace, isNonContentBlock, readSectionTitleText,
 } from '../../composables/useEditorReadback.js'
 import { resolveTabAction } from '../../composables/useEditorTabKey.js'
@@ -390,12 +390,13 @@ function onKeydown(e) {
 
     document.execCommand('defaultParagraphSeparator', false, 'div')
     document.execCommand('insertParagraph', false, null)
-// The browser copies `text-indent` and `data-para-id` from the split paragraph.
-// Reset the indent (the block list supplies the automatic one) and give the new
-// paragraph a fresh id plus its section id; duplicate or missing ids make the undo
-// delta ambiguous.
+// Return always produces an automatic paragraph. The browser copies the inline
+// indent, the `no-indent` class and the marker state from the paragraph it
+// splits. Clear all three, then mark the new paragraph automatic. A fresh id
+// plus its section id keep the undo-delta keys unambiguous.
     const sectionId = getSectionIdAtCursor()
     const sel2 = window.getSelection()
+    let createdPara = null
     if (sel2.rangeCount) {
       let node = sel2.anchorNode
       let para = node.nodeType === 3 ? node.parentElement : node
@@ -403,12 +404,28 @@ function onKeydown(e) {
         para = para.parentElement
       }
       if (para) {
-        para.style.textIndent = '0px'
+        para.style.textIndent = ''
+        para.classList.remove('no-indent')
+        para.dataset.autoIndent = 'true'
         para.dataset.paraId = generateParagraphId()
         if (sectionId) para.dataset.sectionId = sectionId
+        createdPara = para
       }
     }
     syncFromDOM()
+// Without this, the readback leaves the new paragraph at 0px, because an empty
+// paragraph reads as a spacer. Return promises the continuation indent instead,
+// 0.5 inch below a text paragraph. The marker above keeps the model automatic
+// either way.
+    if (createdPara && !createdPara.textContent?.trim()) {
+      let prevBlock = createdPara.previousElementSibling
+      while (prevBlock && isNonContentBlock(prevBlock)) {
+        prevBlock = prevBlock.previousElementSibling
+      }
+      if (prevBlock && prevBlock.classList?.contains('paragraph') && prevBlock.textContent?.trim()) {
+        createdPara.style.textIndent = `${Math.round(AUTO_FIRST_LINE_INDENT * PX_PER_INCH)}px`
+      }
+    }
     return
   }
 

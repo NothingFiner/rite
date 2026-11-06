@@ -18,6 +18,10 @@
 import { generateSectionId } from '../constants/DocumentModel.js'
 import { isEmptyParagraph } from '../constants/ParagraphStyle.js'
 
+/// The first-line indent, in inches, that the automatic rule applies. Named
+/// once because the editor also converts it to px for the DOM.
+export const AUTO_FIRST_LINE_INDENT = 0.5
+
 /// A block is one row in the flat editor sequence.
 ///   kind: 'section-title' | 'paragraph'
 ///   sectionId: the owning section's id (stable)
@@ -80,16 +84,20 @@ export function groupBlocks(blocks) {
 }
 
 /// Section-aware first-line indent for the paragraph block at `index` in a flat
-/// block list: 0 for the first paragraph of a section (preceded by a
-/// section-title) or right after an empty paragraph (scene break / spacer),
-/// 0.5 otherwise. Headings are gone, so there is no heading special-case; page
-/// breaks no longer influence indent — section-first + after-empty fully
-/// determines it. Shared by the editor (render + sync) and the manuscript so
-/// both views apply the identical rule.
+/// block list. Returns 0 for the first paragraph of a section, for an empty
+/// paragraph, and for the paragraph after an empty one. A spacer paragraph is
+/// the empty paragraph that starts the next line at the margin, so it carries
+/// no indent itself. Returns `AUTO_FIRST_LINE_INDENT` otherwise. Shared by the
+/// editor (render + sync) and the manuscript, so both views apply the identical
+/// rule.
 export function computeFirstLineIndent(blocks, index) {
   const prev = blocks[index - 1]
   if (!prev) return 0
   if (prev.kind === 'section-title') return 0
   if (prev.kind === 'paragraph' && isEmptyParagraph(prev.paragraph)) return 0
-  return 0.5
+  // An empty paragraph is the spacer, so it carries no indent of its own.
+  // There is no first line to indent.
+  const self = blocks[index]?.paragraph
+  if (self && isEmptyParagraph(self)) return 0
+  return AUTO_FIRST_LINE_INDENT
 }

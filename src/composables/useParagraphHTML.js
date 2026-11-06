@@ -19,7 +19,10 @@ export function isSceneBreak(p) {
 /// Render a body paragraph to HTML.
 ///   manuscript: true → <p class="ms-para [scene-break] [no-indent]">…</p>
 ///   manuscript: false → <div class="paragraph [no-indent]" data-para-id
-///                              data-section-id style>…</div>
+///                              data-section-id [data-auto-indent] style>…</div>
+/// `data-auto-indent="true"` marks an automatic (renderer-derived) indent, the
+/// one the model stores as `null` (SPEC.md 5.18). The writer's explicit number
+/// never gets the marker.
 /// `sectionId` is required for the editor branch so the flat DOM can map a
 /// paragraph back to its owning section during DOM-sync.
 export function paragraphToHTML(p, options = {}) {
@@ -61,13 +64,18 @@ export function paragraphToHTML(p, options = {}) {
   }
   const paraStyleAttr = paraStyles.length ? ` style="${paraStyles.join(';')}"` : ''
   const sectionAttr = sectionId ? ` data-section-id="${sectionId}"` : ''
+  // An automatic indent keeps its `null` through a readback, because
+  // `parseParagraphElement` turns this marker back into `null`. Only the editor
+  // branch emits it. The manuscript `<p class="ms-para">` never reads the DOM
+  // back into the model.
+  const autoIndentAttr = p.autoIndent === true ? ' data-auto-indent="true"' : ''
 
   let className = 'paragraph'
   if (typeof p.firstLineIndent === 'number' && p.firstLineIndent === 0) {
     className += ' no-indent'
   }
 
-  return `<div class="${className}"${idAttr}${sectionAttr}${paraStyleAttr}>${content}</div>`
+  return `<div class="${className}"${idAttr}${sectionAttr}${autoIndentAttr}${paraStyleAttr}>${content}</div>`
 }
 
 export function paragraphsToHTML(paragraphs, options = {}) {

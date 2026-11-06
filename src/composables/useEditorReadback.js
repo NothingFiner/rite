@@ -10,7 +10,7 @@ import { generateParagraphId, generateSectionId, createParagraph, defaultTextSty
 
 // The renderer writes inches as value × 96; the readback divides by the same
 // number, so the two stay exact inverses.
-const PX_PER_INCH = 96
+export const PX_PER_INCH = 96
 
 /// The decorations interleaved with real blocks (page-break <hr>, page-number
 /// label, click sentinel), skipped so they never become model blocks.
