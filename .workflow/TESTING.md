@@ -76,3 +76,16 @@ Do not put real behaviour in stubs.
 - Test behaviour, not implementation details.
 - No `.skip`, `.todo`, `test.fixme` or `#[ignore]`: the orchestrator counts these as failures.
 - Deterministic only: no real network, no sleeps. Use fake timers and mocked IPC.
+
+## Comments in test and stub code
+
+Test files are code, so the comment rules apply to them without exception. Read
+`universal.md` in `standards.dir` (section Comments) before writing a test or
+a stub. The rules that bite here are the ones a test invites: a comment that
+restates its assertion, a fixture explained by inventory instead of by the
+failure it provokes, and a header that points at "the specs next door" instead of
+naming the file.
+
+The mechanical half is enforced, not advisory. `.workflow/comment_check.py` reads
+every comment a run adds, including `<!-- … -->` blocks inside Vue templates, and
+the orchestrator hands each violation to the next coder iteration.

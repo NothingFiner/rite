@@ -114,6 +114,24 @@ disabled run cannot inherit last run's rules.
 Only the coder sub-recipe reads them. The planner still plans from SPEC.md and the failing
 tests; the PR-description agent is governed by ASD-STE100 instead.
 
+## The comment gate
+`.workflow/comment_check.py` scans every comment a run adds and reports the mechanical half
+of `universal.md`'s Comments rules: sentences over 25 words, a semicolon or a dash joining
+two ideas, change-history wording, emphasis in caps, and a block that restates another.
+It reads `//`, `///`, `/* */` and `<!-- -->` blocks, including a hunk that starts in the
+middle of a template comment.
+
+A violation is a verdict, not a note. If the suite is green and the commentary is not, the
+run does not finish: the gate spends the next iteration on the prose, and an iteration
+that reaches green with violations still open does not take the green path. A run that
+never clears them ends with `comment_rules` (exit 7) and keeps its work tree, like
+`needs_human` does.
+
+The instruction handed to the next iteration is bounded at five lines, so it cannot push
+the failing-test detail out of the 8,000-char brief. Format names the domain writes in
+caps — `EPUB`, `DOCX`, `OOXML`, `XHTML`, `MIME`, `UUID` — are allowlisted, because
+flagging them taught the coder to spell the term wrong.
+
 ## Provider preflight (why a run stops before it starts)
 The container starts with an empty `HOME`, so it cannot read `~/.config/goose`
 (provider settings) or the login keychain (API keys). The launcher closes both

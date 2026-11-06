@@ -347,6 +347,25 @@ def comment_violations(start_sha):
     return payload.get("violations") or []
 
 
+# How much of the iteration's brief the comment gate may spend. `write_failures`
+# truncates the joined brief at 8,000 chars, and notes come first. Ten 150-char
+# lines took 20% of that window and cut the log tails off the end. Five short
+# lines carry the same instruction.
+COMMENT_NOTE_ITEMS = 5
+COMMENT_NOTE_ITEM_CHARS = 100
+
+
+def comment_note(found):
+    """The instruction the next iteration reads about the comments this run added."""
+    shown = [f"- {v[:COMMENT_NOTE_ITEM_CHARS]}" for v in found[:COMMENT_NOTE_ITEMS]]
+    hidden = len(found) - len(shown)
+    tail = f"\n({hidden} more, not shown)" if hidden > 0 else ""
+    return (
+        "Comments you added break the project's comment rules. Fix the prose; "
+        "do not touch the tests:\n" + "\n".join(shown) + tail
+    )
+
+
 # ---------- test running and parsing ----------
 
 def parse_junit(path):
@@ -1106,6 +1125,11 @@ def main():
                    ["Initial state. Every failure below is expected: make them pass."], scope)
 
     prev_sig, same, violations, goose_fails = None, 0, 0, 0
+    # Whether the last iteration passed every test with comment violations open.
+    # The fall-through after the loop reports `comment_rules` rather than
+    # `needs_human` for that case.
+    comment_blocked = False
+    comment_bad = []
     prev_failing = len(base["failing"])
     # The ids, not just the count, so scoping can tell which in-scope tests cleared.
     prev_failing_ids = list(base["failing"])
@@ -1206,10 +1230,7 @@ def main():
         comment_bad = comment_violations(start_sha)
         if comment_bad:
             log(f"comment rules: {len(comment_bad)} violation(s) in the comments this run added")
-            notes.append(
-                "Comments you added break the project's comment rules. Fix the prose; "
-                "do not touch the tests:\n" + "\n".join(f"- {v}" for v in comment_bad[:10])
-            )
+            notes.append(comment_note(comment_bad))
 
         # Fold the outcome into the scoping state before the next scope is chosen:
         # which tests cleared, which layers went unselected, whether this iteration
@@ -1224,7 +1245,13 @@ def main():
                                 tokens_total, scope, cleared)
         prev_failing = len(res["failing"])
 
-        if not res["failing"]:
+        # A green suite is not a finished change when the prose this run added
+        # breaks the rules. The verdict is a claim about the whole diff, and the
+        # host ships that diff as the PR. Block the verdict and let the next
+        # iteration spend itself on the prose. A note alone changes nothing.
+        comment_blocked = not res["failing"] and bool(comment_bad)
+
+        if not res["failing"] and not comment_bad:
             # Last step, once: describe the finished change for the reviewer. It is not
             # part of the loop, and a failure here must not fail the run — the branch is
             # already green and the host can still open the PR without a description.
@@ -1239,11 +1266,23 @@ def main():
             finish("green", "all tests pass", 0, iterations=i,
                    pr_description=str(body) if body else None)
 
+        if comment_blocked:
+            log(f"comment rules: {len(comment_bad)} violation(s) block the green verdict; "
+                "the next iteration rewrites that prose")
+
         sig = hashlib.sha1("\n".join(sorted(res["failing"])).encode()).hexdigest()
         same = same + 1 if (sig == prev_sig and goose_ok) else 1
         prev_sig = sig
         log(f"{len(res['failing'])} failing, same failing set for {same} iteration(s), "
             f"no reduction for {no_gain} iteration(s)")
+        if comment_blocked and max(same, no_gain) >= lim["escalate_after"] + lim["strong_attempts"]:
+            # The prose did not clear within the iterations a stuck failure would
+            # have earned. Name that verdict instead of reporting "stuck on 0
+            # failures", which reads as a bug in the harness.
+            finish("comment_rules",
+                   f"tests pass, but {len(comment_bad)} comment violation(s) remain "
+                   f"after {max(same, no_gain)} iterations", 7, iterations=i,
+                   comment_violations=comment_bad[:10])
         if same >= lim["escalate_after"] + lim["strong_attempts"]:
             finish("needs_human", f"stuck on the same {len(res['failing'])} failures", 2,
                    iterations=i, failing=res["failing"][:50])
@@ -1260,6 +1299,11 @@ def main():
         log_scope(i + 1, scope, len(res["failing"]))
         write_failures(failures_file, res, notes, scope)
 
+    if comment_blocked:
+        finish("comment_rules",
+               f"tests pass, but {len(comment_bad)} comment violation(s) remain after "
+               f"{lim['max_iterations']} iterations", 7,
+               iterations=lim["max_iterations"], comment_violations=comment_bad[:10])
     finish("needs_human", "max iterations reached", 2, iterations=lim["max_iterations"])
 
 

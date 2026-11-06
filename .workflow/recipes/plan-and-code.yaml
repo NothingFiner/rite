@@ -34,6 +34,12 @@ instructions: |
   - If you believe a test is wrong or cannot be satisfied, do not touch it. Write your reasoning
     to .workflow-out/test-objection.md and stop. A human will review it.
 
+  ## When every test passes and only the comments are wrong
+  The failures file may carry a NOTE about comment rules with no failing tests under it.
+  That prose is then the whole work for this iteration: plan one unit that rewrites only
+  the named comments, delegate it, and stop. Do not touch the tests. Do not read an empty
+  failure list as done — the orchestrator, not you, decides the verdict.
+
   ## Steps
   1. Read SPEC.md, .workflow/config.yaml, .workflow/TESTING.md and the failures file.
   2. Use repomix (compressed) to understand the codebase. Re-pack after large changes, since a

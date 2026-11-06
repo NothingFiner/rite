@@ -25,6 +25,11 @@ function section(id, title, sectionType, paragraphs) {
 const mountDiff = (diffBlocks) => mount(DiffView, { props: { diffBlocks } })
 const left = (wrapper) => wrapper.find('.diff-cell.diff-left')
 const right = (wrapper) => wrapper.find('.diff-cell.diff-right')
+// One row per paragraph means the first cell holds one paragraph, not the whole
+// section. Joining every cell on a side keeps the "this side only" assertions
+// honest about the column rather than about row order.
+const allText = (wrapper, side) =>
+  wrapper.findAll(`.diff-cell.diff-${side}`).map((c) => c.text()).join(' ')
 
 describe('DiffView', () => {
   it('labels the two columns as past and current', () => {
@@ -45,9 +50,9 @@ describe('DiffView', () => {
       },
     ])
 
+    expect(wrapper.text()).toContain('The Arrival')
+    expect(wrapper.text()).toContain('The door opened.')
     for (const cell of [left(wrapper), right(wrapper)]) {
-      expect(cell.text()).toContain('The Arrival')
-      expect(cell.text()).toContain('The door opened.')
       expect(cell.classes()).not.toContain('diff-tint-removed')
       expect(cell.classes()).not.toContain('diff-tint-added')
     }
@@ -61,11 +66,11 @@ describe('DiffView', () => {
       },
     ])
 
-    expect(left(wrapper).text()).toContain('Cut Chapter')
-    expect(left(wrapper).text()).toContain('Gone text.')
+    expect(wrapper.text()).toContain('Cut Chapter')
+    expect(allText(wrapper, 'left')).toContain('Gone text.')
     expect(left(wrapper).classes()).toContain('diff-tint-removed')
     expect(right(wrapper).find('.diff-gap').exists()).toBe(true)
-    expect(right(wrapper).text()).not.toContain('Gone text.')
+    expect(allText(wrapper, 'right')).not.toContain('Gone text.')
     expect(right(wrapper).classes()).not.toContain('diff-tint-added')
   })
 
@@ -77,11 +82,11 @@ describe('DiffView', () => {
       },
     ])
 
-    expect(right(wrapper).text()).toContain('New Chapter')
-    expect(right(wrapper).text()).toContain('Fresh text.')
+    expect(wrapper.text()).toContain('New Chapter')
+    expect(allText(wrapper, 'right')).toContain('Fresh text.')
     expect(right(wrapper).classes()).toContain('diff-tint-added')
     expect(left(wrapper).find('.diff-gap').exists()).toBe(true)
-    expect(left(wrapper).text()).not.toContain('Fresh text.')
+    expect(allText(wrapper, 'left')).not.toContain('Fresh text.')
   })
 
   it('splits a modified paragraph word by word, each side keeping its own text', () => {
@@ -139,11 +144,11 @@ describe('DiffView', () => {
       },
     ])
 
-    const struck = left(wrapper).find('.diff-renamed')
+    const struck = wrapper.find('.diff-title-cell.diff-left .diff-renamed')
     expect(struck.exists()).toBe(true)
     expect(struck.text()).toBe('Old Name')
-    expect(right(wrapper).find('.diff-renamed').exists()).toBe(false)
-    expect(right(wrapper).text()).toContain('New Name')
+    expect(wrapper.find('.diff-title-cell.diff-right .diff-renamed').exists()).toBe(false)
+    expect(wrapper.find('.diff-title-cell.diff-right').text()).toContain('New Name')
   })
 
   it('does not strike through a title that was not renamed', () => {
@@ -159,8 +164,8 @@ describe('DiffView', () => {
       },
     ])
 
-    expect(left(wrapper).find('.diff-renamed').exists()).toBe(false)
-    expect(left(wrapper).text()).toContain('Same Name')
+    expect(wrapper.find('.diff-title-cell.diff-left .diff-renamed').exists()).toBe(false)
+    expect(wrapper.find('.diff-title-cell.diff-left').text()).toContain('Same Name')
   })
 
   it('shows paragraph-level additions and removals inside a modified section', () => {
@@ -179,10 +184,10 @@ describe('DiffView', () => {
       },
     ])
 
-    expect(left(wrapper).find('.diff-para-removed').text()).toContain('Deleted paragraph.')
-    expect(left(wrapper).text()).not.toContain('Inserted paragraph.')
-    expect(right(wrapper).find('.diff-para-added').text()).toContain('Inserted paragraph.')
-    expect(right(wrapper).text()).not.toContain('Deleted paragraph.')
+    expect(wrapper.find('.diff-para-removed').text()).toContain('Deleted paragraph.')
+    expect(allText(wrapper, 'left')).not.toContain('Inserted paragraph.')
+    expect(wrapper.find('.diff-para-added').text()).toContain('Inserted paragraph.')
+    expect(allText(wrapper, 'right')).not.toContain('Deleted paragraph.')
   })
 
   it('falls back to a readable label for an untitled section', () => {
@@ -221,8 +226,9 @@ describe('DiffView', () => {
       },
     ])
 
-    // Both cells still show the title line; neither is blank.
-    expect(left(wrapper).text()).toContain('Title')
-    expect(right(wrapper).text()).toContain('Title')
+    // The title row is the whole section here, and neither side is blank.
+    expect(wrapper.find('.diff-title-cell.diff-left').text()).toContain('Title')
+    expect(wrapper.find('.diff-title-cell.diff-right').text()).toContain('Title')
+    expect(wrapper.findAll('.diff-row')).toHaveLength(0)
   })
 })
