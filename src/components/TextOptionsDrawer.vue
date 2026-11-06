@@ -53,24 +53,26 @@
         >
           <option v-for="f in manuscriptFormat.formats" :key="f.id" :value="f.id">{{ f.name }}</option>
         </select>
-        <!-- Colour applies on the click itself, like the zoom and margin
-             controls beside it, so no confirm step exists. Each row disables
-             the swatches the other two rows hold; the theme setters refuse
-             such a hex as the second half of the guard (useTheme.js). -->
+        <!-- Color applies on the click itself, like the zoom and margin
+             controls beside it, so no confirm step exists. Each row keeps
+             out the colors the other two rows hold. :disabled marks them,
+             and applyColor re-checks isHeldElsewhere, because a dispatched
+             click still fires a disabled button's listener. The setters
+             refuse such a hex as well (useTheme.js). -->
         <template v-for="def in swatchRows" :key="def.row">
           <div class="drawer-label">{{ def.label }}</div>
           <div class="swatch-row" :data-row="def.row">
             <button
-              v-for="colour in palette"
-              :key="colour.hex"
+              v-for="color in palette"
+              :key="color.hex"
               type="button"
-              class="colour-swatch"
-              :data-colour="colour.hex"
-              :aria-label="def.label + ' ' + colour.theme"
-              :aria-current="def.current(theme) === colour.hex ? 'true' : undefined"
-              :disabled="def.others(theme).includes(colour.hex)"
-              :style="{ background: colour.hex }"
-              @click="theme[def.setter](colour.hex)"
+              class="color-swatch"
+              :data-color="color.hex"
+              :aria-label="def.label + ' ' + color.theme + ' ' + color.role"
+              :aria-current="def.current(theme) === color.hex ? 'true' : undefined"
+              :disabled="isHeldElsewhere(theme, def, color)"
+              :style="{ background: color.hex }"
+              @click="applyColor(theme, def, color)"
             ></button>
           </div>
         </template>
@@ -109,7 +111,7 @@ defineProps({
 
 // Row order is fixed by the drawer layout, so each row's label and setter
 // travel in one definition instead of three hand-written pairs. The
-// accessors read the theme prop, so the marks track the live colours like
+// accessors read the theme prop, so the marks track the live colors like
 // the preset's active match.
 const swatchRows = [
   {
@@ -135,19 +137,34 @@ const swatchRows = [
   },
 ]
 
-// Palette for the swatch rows: the distinct colours of the theme table, in
+// True when a row other than def already holds the color's hex. One
+// definition feeds :disabled and applyColor, so the two guards cannot
+// drift apart.
+const isHeldElsewhere = (theme, def, color) => def.others(theme).includes(color.hex)
+
+const applyColor = (theme, def, color) => {
+  if (isHeldElsewhere(theme, def, color)) return
+  theme[def.setter](color.hex)
+}
+
+// Palette for the swatch rows: the distinct colors of the theme table, in
 // first-appearance order (theme order, then bg, text, accent inside a theme).
-// Repeating a hex would offer the same colour twice in one row, so first
-// occurrence is kept. Each entry carries the contributing theme's name, the
-// second part of every swatch's label.
+// Repeating a hex would offer the same color twice in one row, so first
+// occurrence is kept. Each entry carries the contributing theme's name and
+// role, the two parts that follow the row label in a swatch's aria-label
+// (SPEC.md 5.13).
 const palette = []
 {
   const knownHexes = new Set()
   for (const entry of THEMES) {
-    for (const hex of [entry.bg, entry.text, entry.accent]) {
+    for (const [role, hex] of [
+      ['background', entry.bg],
+      ['text', entry.text],
+      ['accent', entry.accent],
+    ]) {
       if (knownHexes.has(hex)) continue
       knownHexes.add(hex)
-      palette.push({ hex, theme: entry.name })
+      palette.push({ hex, theme: entry.name, role })
     }
   }
 }
@@ -278,7 +295,7 @@ const palette = []
   gap: 6px;
 }
 
-.colour-swatch {
+.color-swatch {
   width: 16px;
   height: 16px;
   border-radius: 4px;
