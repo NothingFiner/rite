@@ -11,16 +11,18 @@
     <div class="diff-header">
       <div class="diff-header-cell diff-left">Past version</div>
       <div class="diff-header-cell diff-right">Current</div>
-      <!--
-        Navigation controls placeholder (SPEC 5.12). Prev and Next are static
-        buttons and the position label is a fixed string. The change targets
-        are the rows marked with `data-change-index`, and
-        `data-current-change` is pinned to the first section's title row.
-      -->
       <div class="diff-nav">
-        <button class="diff-nav-prev" disabled>Previous change</button>
-        <span class="diff-nav-position">Change 0 of 0</span>
-        <button class="diff-nav-next" disabled>Next change</button>
+        <button
+          class="diff-nav-prev"
+          :disabled="!canGoPrevious"
+          @click="goToPreviousChange"
+        >Previous change</button>
+        <span class="diff-nav-position">Change {{ currentChange + 1 }} of {{ changeTargets.total }}</span>
+        <button
+          class="diff-nav-next"
+          :disabled="!canGoNext"
+          @click="goToNextChange"
+        >Next change</button>
       </div>
     </div>
     <div class="diff-body">
@@ -28,7 +30,7 @@
         <div
           class="diff-title-row"
           :data-change-index="changeTargets.titleStops[i]"
-          :data-current-change="i === 0 ? 'true' : undefined"
+          :data-current-change="isCurrentChange(changeTargets.titleStops[i])"
         >
           <div
             class="diff-title-cell diff-left"
@@ -46,6 +48,7 @@
           :key="j"
           class="diff-row"
           :data-change-index="changeTargets.rowStops[i]?.[j]"
+          :data-current-change="isCurrentChange(changeTargets.rowStops[i]?.[j])"
         >
           <div
             class="diff-cell diff-left"
@@ -64,7 +67,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { paragraphToHTML, escapeHtml } from '../composables/useParagraphHTML.js'
 
 const props = defineProps({
@@ -78,8 +81,8 @@ const GAP = '<div class="diff-gap">—</div>'
 /// uncounted.
 const CHANGED_PARAGRAPH_KINDS = new Set(['modified', 'added', 'removed'])
 
-/// Change targets of the whole diff, numbered from 0 in document order.
-/// `titleStops[i]` is the value for section i's title row and
+/// Change targets of the whole diff, numbered from 0 in document order; `total`
+/// is their count. `titleStops[i]` is the value for section i's title row and
 /// `rowStops[i][j]` for its paragraph row j. The nav tests find targets with
 /// the bare `[data-change-index]` selector, which matches an empty value
 /// too. A non-target row must leave the attribute absent.
@@ -110,8 +113,40 @@ const changeTargets = computed(() => {
     }
     rowStops.push([])
   }
-  return { titleStops, rowStops }
+  return { titleStops, rowStops, total: nextTarget }
 })
+
+/// Index of the change the header marks, 0-based. SPEC.md Reset: a new
+/// version's diff returns the walk to the first change.
+const currentChange = ref(0)
+watch(() => props.diffBlocks, () => {
+  currentChange.value = 0
+})
+
+/// End guards double as the buttons' disabled state and the click handlers'
+/// bounds, so no path can move the index past the targets. A diff with no
+/// targets gives a negative upper bound, which locks both buttons instead of
+/// wrapping the index.
+const canGoPrevious = computed(() => currentChange.value > 0)
+const canGoNext = computed(() => currentChange.value < changeTargets.value.total - 1)
+
+function goToPreviousChange() {
+  if (!canGoPrevious.value) return
+  currentChange.value -= 1
+}
+
+function goToNextChange() {
+  if (!canGoNext.value) return
+  currentChange.value += 1
+}
+
+/// `data-current-change` value for a stop row: `"true"` only when that stop's
+/// index is the current change, so exactly one stop wears the mark and
+/// non-target rows never do.
+function isCurrentChange(target) {
+  if (target === undefined) return undefined
+  return target === currentChange.value ? 'true' : undefined
+}
 
 function typeTag(sectionType) {
   return sectionType === 'chapter' ? 'Chapter' : 'Section'
