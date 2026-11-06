@@ -53,9 +53,10 @@
         >
           <option v-for="f in manuscriptFormat.formats" :key="f.id" :value="f.id">{{ f.name }}</option>
         </select>
-        <!-- Render only: a swatch stands for one palette colour and a preset
-             for one theme. Clicks, disabling and the selected marks belong to
-             the theme setters, and they arrive with the theme wiring. -->
+        <!-- Colour applies on the click itself, like the zoom and margin
+             controls beside it, so no confirm step exists. The theme setters
+             refuse a hex another field already holds (useTheme.js), so a
+             click can be handed straight through. -->
         <template v-for="def in swatchRows" :key="def.row">
           <div class="drawer-label">{{ def.label }}</div>
           <div class="swatch-row" :data-row="def.row">
@@ -66,12 +67,20 @@
               class="colour-swatch"
               :data-colour="hex"
               :style="{ background: hex }"
+              @click="theme[def.setter](hex)"
             ></button>
           </div>
         </template>
         <div class="drawer-label">Presets</div>
         <div class="preset-row">
-          <button v-for="entry in THEMES" :key="entry.name" type="button" class="theme-preset">
+          <button
+            v-for="(entry, index) in THEMES"
+            :key="entry.name"
+            type="button"
+            class="theme-preset"
+            :class="{ active: theme.matchedPreset === index }"
+            @click="theme.selectTheme(index)"
+          >
             {{ entry.name }}
           </button>
         </div>
@@ -95,12 +104,12 @@ defineProps({
   manuscriptFormat: { type: Object, required: true },
 })
 
-// Row order is fixed by the drawer layout, so the names travel with one
-// definition instead of three hand-written label/row pairs.
+// Row order is fixed by the drawer layout, so each row's label and setter
+// travel in one definition instead of three hand-written pairs.
 const swatchRows = [
-  { row: 'background', label: 'Background' },
-  { row: 'text', label: 'Text' },
-  { row: 'accent', label: 'Accent' },
+  { row: 'background', label: 'Background', setter: 'selectBackground' },
+  { row: 'text', label: 'Text', setter: 'selectText' },
+  { row: 'accent', label: 'Accent', setter: 'selectAccent' },
 ]
 
 // Palette for the swatch rows: the distinct colours of the theme table, in
@@ -263,5 +272,14 @@ const palette = []
   background: transparent;
   color: var(--text-secondary);
   font-size: 12px;
+}
+
+/* The current preset marks itself with the zoom control's active grammar, so
+   both marks read as one pattern inside the drawer. */
+.theme-preset.active {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
 }
 </style>
