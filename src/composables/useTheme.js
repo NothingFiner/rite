@@ -8,7 +8,7 @@ function hexToRgba(hex, alpha) {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
-// Returns a #RRGGBB string so accentHover keeps the palette's stored format.
+// Returns a six-digit hex string so accentHover keeps the palette's stored format.
 function darkenHex(hex, factor) {
   const channels = [1, 3, 5].map((offset) =>
     Math.max(0, Math.round(parseInt(hex.slice(offset, offset + 2), 16) * factor)),
@@ -65,8 +65,8 @@ export function useTheme(viewModeRef) {
   const editorMargin = ref('compact')
   const showThemePicker = ref(false)
 
-  // The theme selection (SPEC 5.13) is three colours, not an index: the refs
-  // hold the choice and a preset is a shortcut that sets all three at once.
+  // The theme selection is three colours, not an index. Each ref holds one
+  // colour, and a preset sets all three together.
   const editorBg = ref(themes[0].bg)
   const editorText = ref(themes[0].text)
   const editorAccent = ref(themes[0].accent)
@@ -81,7 +81,8 @@ export function useTheme(viewModeRef) {
     accentHover: darkenHex(editorAccent.value, ACCENT_HOVER_FACTOR),
   }))
 
-  // A combination no preset repeats has no THEMES index, so it reads as -1.
+  // A combination no preset repeats has no entry in the themes list, so
+  // findIndex returns -1.
   const matchedPreset = computed(() =>
     themes.findIndex((theme) =>
       theme.bg === editorBg.value && theme.text === editorText.value && theme.accent === editorAccent.value,

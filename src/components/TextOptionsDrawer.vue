@@ -53,24 +53,36 @@
         >
           <option v-for="f in manuscriptFormat.formats" :key="f.id" :value="f.id">{{ f.name }}</option>
         </select>
-        <!--
-          Stub (SPEC 5.13). The three rows and the preset row exist so the colour
-          tests reach their assertions. None of them renders a swatch yet.
-        -->
-        <div class="drawer-label">Background</div>
-        <div class="swatch-row" data-row="background"></div>
-        <div class="drawer-label">Text</div>
-        <div class="swatch-row" data-row="text"></div>
-        <div class="drawer-label">Accent</div>
-        <div class="swatch-row" data-row="accent"></div>
+        <!-- Render only: a swatch stands for one palette colour and a preset
+             for one theme. Clicks, disabling and the selected marks belong to
+             the theme setters, and they arrive with the theme wiring. -->
+        <template v-for="def in swatchRows" :key="def.row">
+          <div class="drawer-label">{{ def.label }}</div>
+          <div class="swatch-row" :data-row="def.row">
+            <button
+              v-for="hex in palette"
+              :key="hex"
+              type="button"
+              class="colour-swatch"
+              :data-colour="hex"
+              :style="{ background: hex }"
+            ></button>
+          </div>
+        </template>
         <div class="drawer-label">Presets</div>
-        <div class="preset-row"></div>
+        <div class="preset-row">
+          <button v-for="entry in THEMES" :key="entry.name" type="button" class="theme-preset">
+            {{ entry.name }}
+          </button>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
+import { THEMES } from '../constants/themes.js'
+
 // Receives the theme, format, and manuscriptFormat composables as props and
 // drives them directly (setMargin / setZoom / setFont / selectFormat). See
 // GeneralOptionsDrawer for the rationale. manuscriptFormat is a reactive proxy
@@ -82,6 +94,30 @@ defineProps({
   format: { type: Object, required: true },
   manuscriptFormat: { type: Object, required: true },
 })
+
+// Row order is fixed by the drawer layout, so the names travel with one
+// definition instead of three hand-written label/row pairs.
+const swatchRows = [
+  { row: 'background', label: 'Background' },
+  { row: 'text', label: 'Text' },
+  { row: 'accent', label: 'Accent' },
+]
+
+// Palette for the swatch rows: the distinct colours of the theme table, in
+// first-appearance order (theme order, then bg, text, accent inside a theme).
+// Repeating a hex would offer the same colour twice in one row, so first
+// occurrence is kept.
+const palette = []
+{
+  const knownHexes = new Set()
+  for (const entry of THEMES) {
+    for (const hex of [entry.bg, entry.text, entry.accent]) {
+      if (knownHexes.has(hex)) continue
+      knownHexes.add(hex)
+      palette.push(hex)
+    }
+  }
+}
 </script>
 
 <style scoped>
@@ -198,5 +234,34 @@ defineProps({
   background-repeat: no-repeat;
   background-position: right 8px center;
   padding-right: 24px;
+}
+
+/* The swatch and preset rows wrap: a full palette overflows a fixed-width
+   drawer. */
+.swatch-row,
+.preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.colour-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1px solid var(--bg-glass-border);
+  /* UA button padding would dwarf a 16px tint box. */
+  padding: 0;
+  appearance: none;
+}
+
+.theme-preset {
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--bg-glass-border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
 }
 </style>

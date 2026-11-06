@@ -144,13 +144,8 @@
       :title="store.doc?.title || 'Untitled'"
       :file-name="fileName"
       :save-status="saveStatus"
-      :theme="theme.editorTheme"
-      :themes="theme.themes"
-      :show-theme-picker="theme.showThemePicker"
       :word-count="wordCount"
       :selected-word-count="format.selectedWordCount"
-      @toggle-theme-picker="theme.showThemePicker = !theme.showThemePicker"
-      @select-theme="theme.selectTheme"
     />
 
     <!-- Thesaurus popover (5.11). Anchored at the right-click point; mounted
