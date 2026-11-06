@@ -114,3 +114,52 @@ test('S-015: Tab reaches the swatches and Enter applies the focused one', async 
 
   await expect(sheet(page)).toHaveCSS('background-color', 'rgb(237, 209, 176)')
 })
+
+// --- affordance ----------------------------------------------------------------
+//
+// Whether a choice is visible, and whether a control looks clickable, are
+// computed styles. jsdom loads no stylesheet, so only a real page can answer.
+
+const ROWS = ['background', 'text', 'accent']
+
+/** The decoration a swatch carries, ignoring the color it shows. */
+const decoration = (locator) =>
+  locator.evaluate((el) => {
+    const style = getComputedStyle(el)
+    return [style.outlineStyle, style.outlineWidth, style.boxShadow, style.backgroundImage].join('|')
+  })
+
+test('S-016: the chosen swatch in each row carries a visible mark', async ({ page }) => {
+  await openTextOptions(page)
+
+  for (const row of ROWS) {
+    const swatches = page.locator(`.swatch-row[data-row="${row}"] .color-swatch`)
+    const current = page.locator(
+      `.swatch-row[data-row="${row}"] .color-swatch[aria-current="true"]`,
+    )
+    await expect(current).toHaveCount(1)
+
+    // The last swatch of a row is neither current nor held elsewhere, so any
+    // difference in decoration is the mark the sentence asks for.
+    const plain = swatches.last()
+    expect(await decoration(current)).not.toBe(await decoration(plain))
+  }
+})
+
+test('S-017: swatches, presets and the selects show a pointer cursor', async ({ page }) => {
+  await openTextOptions(page)
+
+  for (const row of ROWS) {
+    await expect(page.locator(`.swatch-row[data-row="${row}"] .color-swatch`).first()).toHaveCSS(
+      'cursor',
+      'pointer',
+    )
+  }
+
+  await expect(page.locator('.theme-preset').first()).toHaveCSS('cursor', 'pointer')
+
+  const selects = page.locator('.text-options select')
+  await expect(selects).toHaveCount(2)
+  await expect(selects.first()).toHaveCSS('cursor', 'pointer')
+  await expect(selects.last()).toHaveCSS('cursor', 'pointer')
+})

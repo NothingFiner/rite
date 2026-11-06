@@ -17,6 +17,11 @@ independent choices instead of ten fixed bundles:
 - A swatch applies on the click. There is no OK, Apply or Cancel for color.
 - No color may be chosen twice: a swatch whose color is already chosen in
   another row is disabled.
+- The chosen swatch in each row carries a visible mark, so the writer can see
+  which color is live without reading the sheet. `aria-current` alone is not
+  enough, because it changes nothing on screen.
+- Swatches, preset buttons and the drawer's selects show a pointer cursor, like
+  the zoom and margin controls beside them.
 
 The status bar loses its swatch and its picker entirely.
 
@@ -105,6 +110,10 @@ guarantees are re-owned, not dropped:
 - **No confirm**: color is a live preference, like zoom and margin beside it.
 - **Status bar**: no swatch, no picker, no read-only indicator.
 - **Corrupt prefs**: fall back to `THEMES[0]` rather than to a half-applied set.
+- **Visible mark**: the chosen swatch draws a mark the plain swatches do not.
+  The active preset already uses the zoom control's outline grammar, so the
+  swatch follows it. `aria-current` stays for assistive tech but changes nothing
+  on screen, which is why S-016 measures a computed style in a real page.
 
 ## Sentences
 
@@ -142,6 +151,13 @@ guarantees are re-owned, not dropped:
 |---|---|---|
 | S-014 | unit | it should name each swatch by its row, its source theme and that theme's role, and mark the chosen swatch in each row as current |
 | S-015 | e2e | it should reach the swatches by Tab and apply the focused one with Enter |
+
+### Affordance
+
+| ID | Layer | Sentence |
+|---|---|---|
+| S-016 | e2e | it should give the chosen swatch in each row a visible mark that the free swatches in that row do not carry |
+| S-017 | e2e | it should show a pointer cursor on every swatch, every preset button and both selects in the drawer |
 
 ## Out of scope
 

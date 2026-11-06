@@ -147,12 +147,11 @@ const applyColor = (theme, def, color) => {
   theme[def.setter](color.hex)
 }
 
-// Palette for the swatch rows: the distinct colors of the theme table, in
-// first-appearance order (theme order, then bg, text, accent inside a theme).
-// Repeating a hex would offer the same color twice in one row, so first
-// occurrence is kept. Each entry carries the contributing theme's name and
-// role, the two parts that follow the row label in a swatch's aria-label
-// (SPEC.md 5.13).
+// Palette for the swatch rows, ordered as the palette section of SPEC.md 5.13
+// defines it, so rows and tests read it the same way. Repeating a hex would
+// offer the same color twice in one row, so first occurrence is kept. Each entry
+// also carries the theme name and the role it played there, because a swatch's
+// aria-label names both.
 const palette = []
 {
   const knownHexes = new Set()
