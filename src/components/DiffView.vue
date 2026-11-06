@@ -12,9 +12,9 @@
       <div class="diff-header-cell diff-left">Past version</div>
       <div class="diff-header-cell diff-right">Current</div>
       <!--
-        Stub (SPEC 5.12). These controls exist so the navigation tests reach
-        their assertions instead of failing on a missing element. No behaviour
-        stands behind them. `data-change-index` is empty on every row.
+        Navigation controls placeholder (SPEC 5.12). Prev and Next are static
+        buttons and the position label is a fixed string. The change targets
+        are the rows marked with `data-change-index`, and
         `data-current-change` is pinned to the first section's title row.
       -->
       <div class="diff-nav">
@@ -27,7 +27,7 @@
       <div v-for="(sd, i) in diffBlocks" :key="i" class="diff-section">
         <div
           class="diff-title-row"
-          data-change-index=""
+          :data-change-index="changeTargets.titleStops[i]"
           :data-current-change="i === 0 ? 'true' : undefined"
         >
           <div
@@ -41,7 +41,12 @@
             v-html="titleHTML(sd, 'right')"
           ></div>
         </div>
-        <div v-for="(pd, j) in paragraphRows(sd)" :key="j" class="diff-row" data-change-index="">
+        <div
+          v-for="(pd, j) in paragraphRows(sd)"
+          :key="j"
+          class="diff-row"
+          :data-change-index="changeTargets.rowStops[i]?.[j]"
+        >
           <div
             class="diff-cell diff-left"
             :class="sideTint(sd, 'left')"
@@ -59,6 +64,7 @@
 </template>
 
 <script setup>
+import { computed } from 'vue'
 import { paragraphToHTML, escapeHtml } from '../composables/useParagraphHTML.js'
 
 const props = defineProps({
@@ -66,6 +72,46 @@ const props = defineProps({
 })
 
 const GAP = '<div class="diff-gap">—</div>'
+
+/// Paragraph-diff kinds that count as changed. The set is explicit instead of
+/// a negation of `unchanged`, so a future changed kind cannot slip by
+/// uncounted.
+const CHANGED_PARAGRAPH_KINDS = new Set(['modified', 'added', 'removed'])
+
+/// Change targets of the whole diff, numbered from 0 in document order.
+/// `titleStops[i]` is the value for section i's title row and
+/// `rowStops[i][j]` for its paragraph row j. The nav tests find targets with
+/// the bare `[data-change-index]` selector, which matches an empty value
+/// too. A non-target row must leave the attribute absent.
+const changeTargets = computed(() => {
+  const titleStops = []
+  const rowStops = []
+  let nextTarget = 0
+  const takeTarget = () => {
+    const target = nextTarget
+    nextTarget += 1
+    return target
+  }
+  for (const sectionDiff of props.diffBlocks) {
+    if (sectionDiff.type === 'modified') {
+      titleStops.push(sectionDiff.oldTitle !== sectionDiff.newTitle ? takeTarget() : undefined)
+      rowStops.push(
+        (sectionDiff.paragraphDiffs || []).map((paragraphDiff) => {
+          if (!CHANGED_PARAGRAPH_KINDS.has(paragraphDiff.type)) return undefined
+          return takeTarget()
+        })
+      )
+      continue
+    }
+    if (sectionDiff.type === 'added' || sectionDiff.type === 'removed') {
+      titleStops.push(takeTarget())
+    } else {
+      titleStops.push(undefined)
+    }
+    rowStops.push([])
+  }
+  return { titleStops, rowStops }
+})
 
 function typeTag(sectionType) {
   return sectionType === 'chapter' ? 'Chapter' : 'Section'
