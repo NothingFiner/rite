@@ -121,11 +121,18 @@ gaps on the host, before the container starts:
 
 1. **Provider name** — defaulted from `~/.config/goose/config.yaml`
    (`active_provider`). A provider name is not a secret.
-2. **API key** — read from goose's own keychain entry (`security
-   find-generic-password -s goose -a secrets`, a JSON map that `goose configure`
-   wrote) when the variable is not already exported. The key is passed to the
-   container as an environment variable and written nowhere: no `.zshrc` line,
-   no `.env` file. macOS may ask once for permission — choose "Always Allow".
+2. **API key** — **Docker runner only.** Read from goose's own keychain entry
+   (`security find-generic-password -s goose -a secrets`, a JSON map that `goose
+   configure` wrote) when the variable is not already exported. The key is passed
+   to the container as an environment variable and written nowhere: no `.zshrc`
+   line, no `.env` file. macOS may ask once for permission — choose "Always
+   Allow".
+
+   The native runner does not do this lookup: goose reads the same entry itself,
+   and macOS grants keychain access per application. Two readers meant two
+   "wants to access" prompts per run (`/usr/bin/security` and the goose binary),
+   and "Always Allow" on one did not cover the other. With goose as the only
+   reader there is one prompt, and one "Always Allow" is enough.
 
 Explicit exports still win, so a CI box or a shell with the variable already set
 behaves as before:

@@ -318,6 +318,35 @@ def restore_regions(start_sha, pairs):
             Path(f).write_text(current[:cur_start] + base[base_start:])
 
 
+# ---------- comment rules ----------
+
+def comment_violations(start_sha):
+    """Run the comment gate over everything this run added, since `start_sha`.
+
+    Non-fatal on purpose. A wording nit must not turn a green build red, and the
+    coder cannot fix it by making another test pass, so the violations become
+    notes for the next iteration instead of a verdict. A checker that crashes
+    reports nothing: the gate must never be the reason a run stops.
+    """
+    script = Path(__file__).with_name("comment_check.py")
+    proc = subprocess.run(
+        [sys.executable, str(script), "--base", start_sha, "--json"],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        log(f"comment rules: check exited {proc.returncode}; skipped this iteration")
+        return []
+    try:
+        payload = json.loads(proc.stdout or "{}")
+    except ValueError:
+        log("comment rules: unreadable output; skipped this iteration")
+        return []
+    if payload.get("error"):
+        log(f"comment rules: {payload['error']}")
+        return []
+    return payload.get("violations") or []
+
+
 # ---------- test running and parsing ----------
 
 def parse_junit(path):
@@ -1173,6 +1202,14 @@ def main():
             notes.append(f"{len(gone)} baseline tests no longer run (deleted or filtered). Example: {gone[0]}")
 
         commit(f"wip: iteration {i}, {len(res['failing'])} failing")
+
+        comment_bad = comment_violations(start_sha)
+        if comment_bad:
+            log(f"comment rules: {len(comment_bad)} violation(s) in the comments this run added")
+            notes.append(
+                "Comments you added break the project's comment rules. Fix the prose; "
+                "do not touch the tests:\n" + "\n".join(f"- {v}" for v in comment_bad[:10])
+            )
 
         # Fold the outcome into the scoping state before the next scope is chosen:
         # which tests cleared, which layers went unselected, whether this iteration

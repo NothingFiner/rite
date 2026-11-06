@@ -148,10 +148,17 @@ print(cfg.get("active_provider") or "")
 fi
 
 # goose stores its secrets in the login keychain (service "goose", account
-# "secrets") as a JSON map — that is where `goose configure` put them. Reuse that
-# entry instead of asking you to keep the key in ~/.zshrc: it is read for this one
-# run, passed to the container as an environment variable, and written nowhere.
-# macOS may ask once for permission; choose "Always Allow".
+# "secrets") as a JSON map, and `goose configure` wrote that entry. The Docker
+# runner reuses it, so the key does not have to live in ~/.zshrc. It is read for
+# this one run, passed to the container as an environment variable, and written
+# nowhere.
+#
+# Docker only, deliberately. On the native runner goose reads that same keychain
+# entry itself, and macOS grants keychain access per application. With the
+# launcher reading it too, one run showed two "wants to access" prompts. One was
+# for /usr/bin/security, the other for the goose binary. "Always Allow" on the
+# first did nothing for the second. With goose as the only reader there is one
+# prompt, and one "Always Allow" is enough.
 #
 # Nothing is printed but the variable NAME. The key itself must not appear in a
 # terminal scrollback or in the workflow logs.
@@ -162,7 +169,7 @@ case "${GOOSE_PROVIDER:-}" in
   anthropic)    KEY_VAR=ANTHROPIC_API_KEY ;;
   openai)       KEY_VAR=OPENAI_API_KEY ;;
 esac
-if [ -n "$KEY_VAR" ] && [ -z "${!KEY_VAR:-}" ]; then
+if [ "$RUNNER" = "docker" ] && [ -n "$KEY_VAR" ] && [ -z "${!KEY_VAR:-}" ]; then
   KEYCHAIN_BLOB="$(security find-generic-password -s goose -a secrets -w 2>/dev/null || true)"
   if [ -n "$KEYCHAIN_BLOB" ]; then
     KEYCHAIN_VALUE="$(printf '%s' "$KEYCHAIN_BLOB" | python3 -c '
