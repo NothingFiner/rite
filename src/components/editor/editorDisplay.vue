@@ -711,33 +711,6 @@ function onMousedown(e) {
   }
 }
 
-// --- Escape fall-through (spec decision 4, S-022) ----------------------------
-// No earlier branch claimed Escape (search panel, drawer, fresh title, focus
-// mode), so the editor is the last fall-through. Hand keyboard ownership to the
-// next focusable control outside the sheet. The decision lives in
-// `useKeyboardShortcuts.js`; this method only performs the move it orders, so the
-// chain has no component-local key listener.
-function leaveEditor() {
-  const sheet = sheetRef.value
-  if (!sheet) return
-  const tabbables = Array.from(document.querySelectorAll(
-    'a[href], button:not([disabled]), input:not([disabled]), ' +
-    'select:not([disabled]), textarea:not([disabled]), ' +
-    '[tabindex]:not([tabindex="-1"])'
-  )).filter(el => !sheet.contains(el))
-  // First candidate after the sheet in document order; wrap to the document
-  // start when the sheet is the last focusable thing on the page.
-  const following = tabbables.filter(el =>
-    sheet.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)
-  for (const el of following.length ? following : tabbables) {
-    el.focus()
-    // focus() silently no-ops on hidden candidates — verify it took, or keep
-    // walking (universal rules: no silent failure of the intent).
-    if (document.activeElement === el) return
-  }
-  sheet.blur()
-}
-
 // --- Section insert ----------------------------------------------------------
 // Insert is local (decision 2). Splice a new section into a copy of the sections
 // array and mark it fresh so its title renders editable. Emit the new array
@@ -863,9 +836,6 @@ defineExpose({
   // Reactive boolean: true while the sheet has a non-empty selection. The
   // Assistant panel uses it to auto-scope to the selection (roadmap 3.2).
   hasSelection,
-  // Moves focus to the next focusable control outside the sheet; the Escape
-  // chain's fall-through calls it (useKeyboardShortcuts.js, S-022).
-  leaveEditor,
 })
 </script>
 

@@ -82,13 +82,6 @@ function selectLine() {
   editorRef.value?.selectLine?.()
 }
 
-// SPEC 5.18 decision 4 (S-022): the Escape chain's final fall-through leaves
-// the editor sheet. App.vue's `editorRef` points at THIS wrapper, so forward
-// the method like the other editor surface methods above.
-function leaveEditor() {
-  editorRef.value?.leaveEditor?.()
-}
-
 function navigatePage(direction) {
   editorRef.value?.navigatePage?.(direction)
 }
@@ -135,9 +128,6 @@ defineExpose({
   applySearchHighlights,
   clearSearchHighlights,
   getSelectionText,
-  // SPEC 5.18 decision 4 (S-022): the Escape chain's fall-through leaves the
-  // editor sheet through this wrapper (see leaveEditor above).
-  leaveEditor,
   hasSelection,
 })
 </script>

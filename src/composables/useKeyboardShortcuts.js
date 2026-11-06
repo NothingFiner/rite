@@ -1,5 +1,30 @@
 import { onMounted, onUnmounted } from 'vue'
 
+// Everything the page can move focus to. The Escape fall-through walks this
+// list; the editor sheet's own descendants are filtered out at the call site.
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), ' +
+  'select:not([disabled]), textarea:not([disabled]), ' +
+  '[tabindex]:not([tabindex="-1"])'
+
+/**
+ * Move focus to the first focusable control after `el`, wrapping to the start
+ * of the document when `el` is the last one. `focus()` silently no-ops on a
+ * hidden candidate, so each is verified before the walk moves on. If nothing
+ * takes, `el` is blurred so the page cannot keep the keyboard.
+ */
+function focusAfter(el) {
+  const candidates = Array.from(document.querySelectorAll(FOCUSABLE))
+    .filter(candidate => !el.contains(candidate))
+  const following = candidates.filter(candidate =>
+    el.compareDocumentPosition(candidate) & Node.DOCUMENT_POSITION_FOLLOWING)
+  for (const candidate of following.length ? following : candidates) {
+    candidate.focus()
+    if (document.activeElement === candidate) return
+  }
+  el.blur()
+}
+
 /**
  * Centralised keyboard-shortcut handling for the app shell.
  *
@@ -9,7 +34,9 @@ import { onMounted, onUnmounted } from 'vue'
  * `document` for the host component's lifetime. Keeping this out of App.vue's
  * setup body lets App.vue be about layout/wiring rather than key mapping, and
  * makes every shortcut's effect a call on an injected dependency — no hidden
- * DOM reach-through.
+ * DOM reach-through. The one exception is the Escape fall-through, which reads
+ * the active view's root element (`$el`) because moving focus past the sheet is
+ * a DOM operation, not a capability any component offers.
  *
  * Page/line navigation delegates to methods exposed by the editor
  * (`editorRef.value?.selectLine` / `navigatePage` / `navigateSectionPage`)
@@ -157,9 +184,15 @@ export function useKeyboardShortcuts({
       // → focus mode → editor. Focus mode exits once no chrome wants the key;
       // one press does one thing, so it returns here. An editor-view Escape
       // with no panel, drawer or focus mode open is the final fall-through: it
-      // moves focus out of the editor sheet (SPEC decision 4, S-022).
-      // editorRef is `ref(null)` in the unit-test mocks, hence the optional
-      // chaining below.
+      // moves focus out of the editor sheet (SPEC decision 4, S-022), so the
+      // captured Tab key can never trap the keyboard.
+      //
+      // The sheet is the active view's root element. `$el` is the only
+      // reach-through this module makes into a view, and it is deliberate: the
+      // wrapper's exposed surface is behaviour, not DOM, so asking it for a
+      // `leaveEditor` method would add a delegating stub for every future
+      // surface method. `editorRef` is `ref(null)` in the unit-test mocks,
+      // hence the optional chaining.
       if (focusMode?.active?.value) {
         e.preventDefault()
         focusMode.exit()
@@ -167,15 +200,15 @@ export function useKeyboardShortcuts({
       }
       if (viewMode.value === 'editor') {
         e.preventDefault()
-        const editor = editorRef.value
-        editor?.leaveEditor?.()
-        // Belt and braces: the move must land. If focus is still inside the
-        // editor wrapper's root element (the .editor-sheet div itself — the
-        // normal path already placed it on an outside control), drop it so the
-        // page cannot trap the keyboard.
-        const sheetEl = editor?.$el
-        if (sheetEl && (document.activeElement === sheetEl || sheetEl.contains(document.activeElement))) {
-          sheetEl.blur()
+        const sheetEl = editorRef.value?.$el
+        if (sheetEl) {
+          focusAfter(sheetEl)
+          // Belt and braces: the move must land. If focus is still inside the
+          // sheet — the only candidate was the sheet itself — drop it so the
+          // page cannot trap the keyboard.
+          if (document.activeElement === sheetEl || sheetEl.contains(document.activeElement)) {
+            sheetEl.blur()
+          }
         }
       }
     }
