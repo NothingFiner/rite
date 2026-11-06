@@ -14,6 +14,10 @@ Checks, all from `universal.md` -> Comments:
     emphasis          an ALL CAPS word of 4+ letters
     duplicate         a block that restates another added block (>= 0.8 similar)
 
+Vue and HTML template comments (`<!-- … -->`) are scanned like any other block.
+Their inner lines carry no prefix, so the scanner tracks the closing marker
+rather than the line's start.
+
 Deliberately NOT checked: why-vs-what, evidence and consequence, term definition.
 Those need judgement, and a gate that guesses would train the coder to game it.
 
@@ -36,6 +40,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from difflib import SequenceMatcher
+from pathlib import Path
 
 MAX_WORDS = 25
 # A restated rule is the costly failure mode: the copies drift, then disagree.
@@ -57,6 +62,14 @@ COMMENT_PREFIXES = {
     ".toml": ("#",),
 }
 SKIP_SUFFIXES = {".md", ".lock", ".json", ".br", ".png", ".jpg", ".webp", ".ico"}
+
+# A Vue or HTML template comment opens with `<!--` and closes with `-->`, and the
+# lines between the markers carry no prefix of their own. The scanner tracks
+# whether it is inside one, because prose without a prefix is otherwise invisible
+# to every check in `violations()`.
+HTML_COMMENT_SUFFIXES = {".vue", ".html", ".htm"}
+HTML_OPEN = "<!--"
+HTML_CLOSE = "-->"
 
 HISTORY = re.compile(
     r"\b(no longer|previously|used to|was changed|today's|now|pre-\d[\w.]*)\b",
@@ -102,6 +115,7 @@ def added_comment_blocks(base: str, at: str | None) -> list[Block]:
     blocks: list[Block] = []
     current: list[str] = []
     current_file, current_line, new_line = "", 0, 0
+    in_html = False
 
     def flush() -> None:
         nonlocal current
@@ -113,6 +127,7 @@ def added_comment_blocks(base: str, at: str | None) -> list[Block]:
         if raw.startswith("+++ b/"):
             flush()
             current_file = raw[6:]
+            in_html = False
             continue
         if raw.startswith("---") or raw.startswith("+++"):
             flush()
@@ -121,15 +136,42 @@ def added_comment_blocks(base: str, at: str | None) -> list[Block]:
             flush()
             m = re.search(r"\+(\d+)", raw)
             new_line = int(m.group(1)) if m else 0
+            suffix = "." + current_file.rsplit(".", 1)[-1] if "." in current_file else ""
+            # A hunk can begin in the middle of a template comment. The opening
+            # marker then sits above the hunk, where no added line shows it. Ask
+            # the file what state the hunk starts in.
+            in_html = (
+                in_template_comment_at(current_file, new_line, at)
+                if current_file and suffix in HTML_COMMENT_SUFFIXES
+                else False
+            )
             continue
         if raw.startswith("+") and not raw.startswith("+++"):
             stripped = raw[1:].strip()
             suffix = "." + current_file.rsplit(".", 1)[-1] if "." in current_file else ""
             prefixes = COMMENT_PREFIXES.get(suffix, ())
-            if suffix not in SKIP_SUFFIXES and stripped.startswith(prefixes):
+            in_template = suffix in HTML_COMMENT_SUFFIXES
+            opens_template = in_template and stripped.startswith(HTML_OPEN)
+            is_comment = suffix not in SKIP_SUFFIXES and (
+                stripped.startswith(prefixes)
+                or opens_template
+                or (in_template and in_html)
+            )
+            if is_comment:
                 if not current:
                     current_line = new_line
-                current.append(clean(stripped, prefixes))
+                text = (
+                    clean_html(stripped)
+                    if opens_template or in_html
+                    else clean(stripped, prefixes)
+                )
+                if text:
+                    current.append(text)
+                if opens_template:
+                    in_html = HTML_CLOSE not in stripped
+                elif in_html and HTML_CLOSE in stripped:
+                    in_html = False
+                    flush()
             else:
                 flush()
             new_line += 1
@@ -151,6 +193,34 @@ def clean(stripped: str, prefixes: tuple[str, ...]) -> str:
             stripped = stripped[len(prefix):]
             break
     return stripped.lstrip("!").strip().rstrip("*/").strip()
+
+
+def clean_html(stripped: str) -> str:
+    """Drop the template comment markers, keeping the prose between them."""
+    return stripped.replace(HTML_OPEN, "").replace(HTML_CLOSE, "").strip()
+
+
+_SOURCE_CACHE: dict[tuple[str, str | None], str] = {}
+
+
+def source_at(file: str, at: str | None) -> str:
+    """The file's text on the new side of the diff, cached for the run."""
+    key = (file, at)
+    if key not in _SOURCE_CACHE:
+        if at:
+            _SOURCE_CACHE[key] = git("show", f"{at}:{file}")
+        else:
+            try:
+                _SOURCE_CACHE[key] = Path(file).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                _SOURCE_CACHE[key] = ""
+    return _SOURCE_CACHE[key]
+
+
+def in_template_comment_at(file: str, line: int, at: str | None) -> bool:
+    """Whether `line` (1-based) starts inside a `<!-- … -->` block."""
+    head = "\n".join(source_at(file, at).splitlines()[: max(line - 1, 0)])
+    return head.rfind(HTML_OPEN) > head.rfind(HTML_CLOSE)
 
 
 def prose(text: str) -> str:

@@ -12,7 +12,7 @@
       <div class="diff-header-cell diff-left">Past version</div>
       <div class="diff-header-cell diff-right">Current</div>
       <!--
-        STUB (SPEC 5.12). These controls exist so the navigation tests reach
+        Stub (SPEC 5.12). These controls exist so the navigation tests reach
         their assertions instead of failing on a missing element. No behaviour
         stands behind them. `data-change-index` is empty on every row.
         `data-current-change` is pinned to the first section's title row.
