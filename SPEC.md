@@ -84,6 +84,9 @@ guarantees are re-owned, not dropped:
   trigger and tooltip; the file is deleted. Swatch names, the current mark and
   keyboard operation are re-owned by S-014 and S-015 against the drawer.
 - `e2e/keyboard-navigation.spec.js` S-013 and S-014 — same reason, same re-owning.
+  S-019 measured the focus ring on the deleted status-bar swatch, so it measures
+  the font select in this drawer instead; that control already draws an accent
+  border on focus.
 - `src/composables/useTheme.test.js` — cases that assert an index in
   `rite-theme` are rewritten against the three colour keys. No case is dropped
   without a replacement.
