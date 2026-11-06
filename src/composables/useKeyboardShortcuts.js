@@ -1,17 +1,15 @@
 import { onMounted, onUnmounted } from 'vue'
 
-// Everything the page can move focus to. The Escape fall-through walks this
-// list; the editor sheet's own descendants are filtered out at the call site.
+// Focusable controls, in document order.
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), ' +
   'select:not([disabled]), textarea:not([disabled]), ' +
   '[tabindex]:not([tabindex="-1"])'
 
 /**
- * Move focus to the first focusable control after `el`, wrapping to the start
- * of the document when `el` is the last one. `focus()` silently no-ops on a
- * hidden candidate, so each is verified before the walk moves on. If nothing
- * takes, `el` is blurred so the page cannot keep the keyboard.
+ * Hand focus to the first focusable control after `el`, wrapping to the start of
+ * the document when `el` is last. `focus()` silently no-ops on a hidden
+ * candidate, so each one is verified; if none takes, `el` is blurred.
  */
 function focusAfter(el) {
   const candidates = Array.from(document.querySelectorAll(FOCUSABLE))
@@ -34,9 +32,8 @@ function focusAfter(el) {
  * `document` for the host component's lifetime. Keeping this out of App.vue's
  * setup body lets App.vue be about layout/wiring rather than key mapping, and
  * makes every shortcut's effect a call on an injected dependency — no hidden
- * DOM reach-through. The one exception is the Escape fall-through, which reads
- * the active view's root element (`$el`) because moving focus past the sheet is
- * a DOM operation, not a capability any component offers.
+ * DOM reach-through. One exception: the Escape fall-through reads the active
+ * view's `$el`, because moving focus past the sheet is a DOM operation.
  *
  * Page/line navigation delegates to methods exposed by the editor
  * (`editorRef.value?.selectLine` / `navigatePage` / `navigateSectionPage`)
@@ -180,19 +177,10 @@ export function useKeyboardShortcuts({
         if (focusInDrawer) focusDrawerOpener?.()
         return
       }
-      // Escape chain order (S-007, SPEC 5.7): search → theme picker → drawer
-      // → focus mode → editor. Focus mode exits once no chrome wants the key;
-      // one press does one thing, so it returns here. An editor-view Escape
-      // with no panel, drawer or focus mode open is the final fall-through: it
-      // moves focus out of the editor sheet (SPEC decision 4, S-022), so the
-      // captured Tab key can never trap the keyboard.
-      //
-      // The sheet is the active view's root element. `$el` is the only
-      // reach-through this module makes into a view, and it is deliberate: the
-      // wrapper's exposed surface is behaviour, not DOM, so asking it for a
-      // `leaveEditor` method would add a delegating stub for every future
-      // surface method. `editorRef` is `ref(null)` in the unit-test mocks,
-      // hence the optional chaining.
+      // Escape chain (S-007): search → theme picker → drawer → focus mode →
+      // editor. One press does one thing, so each branch returns. With no
+      // chrome open, focus leaves the sheet so the captured Tab key cannot
+      // trap the keyboard (S-022).
       if (focusMode?.active?.value) {
         e.preventDefault()
         focusMode.exit()
