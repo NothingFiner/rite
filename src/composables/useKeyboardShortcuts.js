@@ -1,5 +1,28 @@
 import { onMounted, onUnmounted } from 'vue'
 
+// Focusable controls, in document order.
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), ' +
+  'select:not([disabled]), textarea:not([disabled]), ' +
+  '[tabindex]:not([tabindex="-1"])'
+
+/**
+ * Hand focus to the first focusable control after `el`, wrapping to the start of
+ * the document when `el` is last. `focus()` silently no-ops on a hidden
+ * candidate, so each one is verified; if none takes, `el` is blurred.
+ */
+function focusAfter(el) {
+  const candidates = Array.from(document.querySelectorAll(FOCUSABLE))
+    .filter(candidate => !el.contains(candidate))
+  const following = candidates.filter(candidate =>
+    el.compareDocumentPosition(candidate) & Node.DOCUMENT_POSITION_FOLLOWING)
+  for (const candidate of following.length ? following : candidates) {
+    candidate.focus()
+    if (document.activeElement === candidate) return
+  }
+  el.blur()
+}
+
 /**
  * Centralised keyboard-shortcut handling for the app shell.
  *
@@ -9,7 +32,8 @@ import { onMounted, onUnmounted } from 'vue'
  * `document` for the host component's lifetime. Keeping this out of App.vue's
  * setup body lets App.vue be about layout/wiring rather than key mapping, and
  * makes every shortcut's effect a call on an injected dependency — no hidden
- * DOM reach-through.
+ * DOM reach-through. One exception: the Escape fall-through reads the active
+ * view's `$el`, because moving focus past the sheet is a DOM operation.
  *
  * Page/line navigation delegates to methods exposed by the editor
  * (`editorRef.value?.selectLine` / `navigatePage` / `navigateSectionPage`)
@@ -21,10 +45,9 @@ export function useKeyboardShortcuts({
   store,
   format,
   search,
-  // Theme picker (SPEC 5.7). Optional-chained at every use (`themePicker?.`)
-  // because App.vue wires it, but unit-test mocks and any pre-wiring host
-  // don't pass it — an absent picker must simply mean the Escape chain skips
-  // it with no change to the existing behaviour.
+  // Optional-chained at every use (`themePicker?.`): App.vue wires it, but
+  // unit-test mocks and pre-wiring hosts do not, and an absent picker simply
+  // skips its Escape branch.
   themePicker,
   viewMode,
   leftDrawerOpen,
@@ -32,27 +55,20 @@ export function useKeyboardShortcuts({
   addExpanded,
   editorRef,
   onInsertSection,
-  // Focus / typewriter mode (roadmap 5.3). Every access is optional-chained
-  // (`focusMode?.`) because App.vue doesn't wire it yet and the unit-test
-  // mocks may omit pieces (e.g. no `recentre` key): an absent focusMode must
-  // simply mean none of the focus-mode behaviour applies.
+  // Optional-chained, like the picker: App.vue wires focus mode, the mocks may
+  // omit parts of it, and an absent one means none of its behaviour applies.
   focusMode,
-  // S-017: Escape that closes a drawer returns focus to the drawer's opener
-  // button. Optional-chained, like themePicker/focusMode, because the
-  // unit-test mocks don't pass it — an absent callback must simply mean the
-  // close happens with no focus return.
+  // Returns focus to the drawer's opener button (S-017). Optional-chained: the
+  // mocks pass no opener, and then the close happens with no focus return.
   focusDrawerOpener,
 }) {
   function onKeydown(e) {
     const cmd = e.metaKey || e.ctrlKey
 
-    // The native menu owns Save (Cmd/Ctrl+S), Save As (Cmd/Ctrl+Shift+S),
-    // Undo (Cmd/Ctrl+Z) and Redo (Cmd/Ctrl+Shift+Z) — see src-tauri/src/menu.rs.
-    // Handling those keys here too would fire each action twice per press (a
-    // double undo is silent data loss), so this listener leaves them alone
-    // entirely: no preventDefault, no action (SPEC.md S-021).
-    // Cmd/Ctrl+Y carries no menu item, so it stays here as a second redo
-    // spelling.
+    // The native menu owns Save, Save As, Undo and Redo (src-tauri/src/menu.rs).
+    // Handling those here too would fire each twice, and a double undo is silent
+    // data loss. Cmd/Ctrl+Y has no menu item, so it stays as a second redo
+    // spelling (S-021).
     if (cmd && e.key === 'y') {
       e.preventDefault()
       store.redo()
@@ -102,15 +118,10 @@ export function useKeyboardShortcuts({
       }
     }
 
-    // Cmd/Ctrl+Shift+F → toggle focus / typewriter mode (roadmap 5.3). Must be
-    // checked BEFORE the plain `cmd && e.key === 'f'` search branch below:
-    // with Shift held `e.key` may arrive as 'F' (which the search branch would
-    // miss), and on layouts that report lowercase 'f' it would otherwise fall
-    // through INTO the search branch. Lower-casing covers both, so a cmd/ctrl
-    // +shift+F is always focus mode, never search. Editor-view only: in the
-    // manuscript/history views the combination is left alone entirely (no
-    // preventDefault, no toggle) so those views' own key handling is untouched
-    // (S-004).
+    // Checked BEFORE the plain `f` search branch: with Shift held `e.key` may
+    // arrive as 'F', which the search branch would miss, and a layout that
+    // reports lowercase 'f' would otherwise fall through into it. Editor view
+    // only (S-004).
     if (cmd && e.shiftKey && e.key.toLowerCase() === 'f') {
       if (viewMode.value !== 'editor') return
       e.preventDefault()
@@ -133,10 +144,9 @@ export function useKeyboardShortcuts({
         search.closeSearch()
         return
       }
-      // Theme picker closes before any drawer (SPEC 5.7 chain order:
-      // search → theme picker → drawer → focus mode): the most recently
-      // opened popup wins, so Escape over an open picker tooltip never
-      // reaches the drawer. Optional-chained for callers without a picker.
+      // The picker closes before any drawer (chain order, SPEC 5.7): the most
+      // recently opened popup wins, so Escape over a tooltip never reaches the
+      // drawer.
       if (themePicker?.open?.value) {
         e.preventDefault()
         themePicker.close()
@@ -144,23 +154,34 @@ export function useKeyboardShortcuts({
       }
       if (leftDrawerOpen.value) {
         e.preventDefault()
-        // S-017: read where focus sits BEFORE the close — the gate decides
-        // whether "return focus" applies at all. Escape pressed elsewhere
-        // (e.g. the editor) closes the drawer without stealing focus; the
-        // call itself is a no-op when no opener is wired.
+        // Read focus BEFORE the close: escape pressed elsewhere closes the
+        // drawer without stealing focus (S-017).
         const focusInDrawer = document.activeElement?.closest?.('.drawer') != null
         leftDrawerOpen.value = false
         if (focusInDrawer) focusDrawerOpener?.()
         return
       }
-      // Focus mode is the LAST fall-through of the chain (S-007 order):
-      // a search panel Escape closes only the search, a theme-picker Escape
-      // closes only the picker, an open drawer Escape closes only the
-      // drawer, and focus mode exits only once nothing else wants the key —
-      // closing chrome first, the mode last.
+      // Escape chain (S-007): search → theme picker → drawer → focus mode →
+      // editor. One press does one thing, so each branch returns. With no
+      // chrome open, focus leaves the sheet so the captured Tab key cannot
+      // trap the keyboard (S-022).
       if (focusMode?.active?.value) {
         e.preventDefault()
         focusMode.exit()
+        return
+      }
+      if (viewMode.value === 'editor') {
+        e.preventDefault()
+        const sheetEl = editorRef.value?.$el
+        if (sheetEl) {
+          focusAfter(sheetEl)
+          // Belt and braces: the move must land. If focus is still inside the
+          // sheet — the only candidate was the sheet itself — drop it so the
+          // page cannot trap the keyboard.
+          if (document.activeElement === sheetEl || sheetEl.contains(document.activeElement)) {
+            sheetEl.blur()
+          }
+        }
       }
     }
     if (cmd && e.key === 'Enter') {

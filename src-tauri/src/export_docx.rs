@@ -1,31 +1,22 @@
 //! DOCX (Word `.docx`) export of the live document.
 //!
-//! A `.docx` file is an OPC package: a ZIP archive whose entries are OOXML
-//! "parts" (XML files) plus relationships that wire them together. This module
-//! emits those parts by hand — `document.xml` (the body), `styles.xml` (the
-//! Normal / Heading1 / Heading2 style definitions Word and mammoth both look
-//! up by name), `[Content_Types].xml`, and the two `.rels` files — and hands
-//! the bytes to the `zip` crate to deflate and archive.
+//! A `.docx` is an OPC package: a ZIP of OOXML parts plus the relationships that
+//! wire them. This module writes those parts by hand — `document.xml`,
+//! `styles.xml`, `[Content_Types].xml` and the two `.rels` files — and hands the
+//! bytes to the `zip` crate.
 //!
-//! Why hand-rolled OOXML instead of a high-level `docx-rs` crate:
-//! - The output is plain, readable OOXML. There is no opaque dependency to
-//!   audit, and a Rust novice can follow exactly what lands on disk.
-//! - It round-trips with the EXISTING import path. The frontend imports
-//!   `.docx` via `mammoth`, which maps a paragraph's style by its NAME
-//!   (`heading 1` → `<h1>`, `heading 2` → `<h2>`), and `useImport.js` then maps
-//!   `<h2>` → `chapter`, any other heading → `section`. We mirror that exactly:
-//!   `Chapter` → style "Heading2" (name "heading 2"), `Section` → style
-//!   "Heading1" (name "heading 1"). So exporting a chapter and re-importing it
-//!   yields the same section type. The derived chapter number is baked into
-//!   the heading text exactly as the editor/manuscript render it, so a
-//!   re-imported chapter keeps its prefix without the "Chapter 2: Chapter 2"
-//!   duplication 2.6's dedup handles anyway.
-//! - Run-level formatting (`TextStyle.bold/italic/underline/font_size`) maps to
-//!   the standard `<w:b/>`, `<w:i/>`, `<w:u>`, `<w:sz>` run-property children,
-//!   which mammoth reads back as `<strong>`/`<em>`/`<u>` and the import preserves.
+//! Why hand-rolled rather than a `docx-rs` crate:
+//! - The output is plain OOXML with no opaque dependency to audit.
+//! - It round-trips with the existing import. `mammoth` maps a paragraph by style
+//!   name, so `Chapter` → "Heading2" ("heading 2" → `<h2>` → `chapter`) and
+//!   `Section` → "Heading1", exactly the mapping `useImport.js` reverses. A
+//!   re-imported chapter keeps its derived number, which 2.6's dedup already
+//!   guards against duplicating.
+//! - Run formatting maps to the standard `<w:b/>`, `<w:i/>`, `<w:u>`, `<w:sz>`
+//!   properties, which mammoth reads back as `<strong>`, `<em>`, `<u>`.
 //!
-//! Output is written via `history::atomic_write` so a crash mid-export cannot
-//! leave a half-written file on disk, mirroring `export_text`.
+//! Writes go through `history::atomic_write`, as `export_text` does, so a crash
+//! mid-export leaves no half-written file.
 
 use crate::document::{Document, SectionType, TextStyle};
 use crate::history::atomic_write;
@@ -36,17 +27,18 @@ use tauri::State;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
-/// The page geometry for the exported document, in twips (1/1440 inch). US
-/// Letter (8.5×11in = 12240×15840 twips) with 1in (1440 twip) margins — a
-/// conventional manuscript page. These land in the final `<w:sectPr>` so Word
-/// opens the file at a sane page size; they do not affect text content.
+/// WordprocessingML measures length in twips: 1/1440 inch. Twips are integers,
+/// so layout math neither drifts nor depends on screen DPI.
+const TWIPS_PER_INCH: f32 = 1440.0;
+
+/// US Letter (12240×15840 twips) with 1in margins — a conventional manuscript
+/// page. These land in `<w:sectPr>`, so Word opens the file at a sane size.
 const PAGE_WIDTH_TWIPS: u32 = 12240;
 const PAGE_HEIGHT_TWIPS: u32 = 15840;
 const MARGIN_TWIPS: u32 = 1440;
 
-/// Render `doc` as a complete `.docx` byte vector. Pure over the document — no
-/// I/O, no state — so the tests can call it directly. The bytes are a valid
-/// OPC zip a reader (Word, Pages, LibreOffice, mammoth) can open.
+/// Render `doc` as complete `.docx` bytes. Pure: no I/O, no state, so the tests
+/// call it directly.
 pub fn document_to_docx(doc: &Document) -> Vec<u8> {
     let document_xml = build_document_xml(doc);
     let styles_xml = STYLES_XML;
@@ -60,9 +52,8 @@ pub fn document_to_docx(doc: &Document) -> Vec<u8> {
     // deflated (or stored raw); deflated keeps the file small.
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
 
-    // The package's entry relationships and content-types MUST be present for
-    // a reader to know how to open the parts; the order of entries inside the
-    // zip is not significant.
+    // A reader needs the relationships and content types to know how to open the
+    // parts; entry order inside the zip does not matter.
     zip.start_file("[Content_Types].xml", options)
         .expect("start content types");
     zip.write_all(content_types_xml.as_bytes())
@@ -86,11 +77,9 @@ pub fn document_to_docx(doc: &Document) -> Vec<u8> {
     buf
 }
 
-/// Build the `word/document.xml` body: one heading paragraph per section
-/// (Chapter → Heading2, Section → Heading1), then one paragraph per body
-/// `Paragraph` whose runs carry their `TextStyle`. Chapter numbering is
-/// render-derived (1-based position among chapters), matching the editor and
-/// `export_text`.
+/// Build `word/document.xml`: a heading paragraph per section (Chapter →
+/// Heading2, Section → Heading1), then one paragraph per body `Paragraph`.
+/// Chapter numbers are render-derived, as in the editor and `export_text`.
 fn build_document_xml(doc: &Document) -> String {
     let mut out = String::new();
     out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n");
@@ -101,9 +90,8 @@ fn build_document_xml(doc: &Document) -> String {
 
     let mut chapter_count = 0u32;
     for section in &doc.sections {
-        // Heading paragraph. Chapters always emit (with the derived number);
-        // a section with an empty title emits no heading, mirroring
-        // `export_text` (no empty heading line).
+        // Chapters always emit a heading; a section with an empty title emits
+        // none, as `export_text` does.
         if let Some(heading) = section_heading(section, &mut chapter_count) {
             out.push_str(&heading);
         }
@@ -113,9 +101,8 @@ fn build_document_xml(doc: &Document) -> String {
         }
     }
 
-    // The section properties MUST be the last child of the body. They describe
-    // the page; without them Word uses a default, but emitting them keeps the
-    // file unambiguous.
+    // `<w:sectPr>` must be the body's last child. It describes the page, and
+    // without it Word falls back to a default.
     out.push_str(&format!(
         "<w:sectPr><w:pgSz w:w=\"{w}\" w:h=\"{h}\"/><w:pgMar w:top=\"{m}\" w:right=\"{m}\" w:bottom=\"{m}\" w:left=\"{m}\"/></w:sectPr>",
         w = PAGE_WIDTH_TWIPS,
@@ -126,19 +113,17 @@ fn build_document_xml(doc: &Document) -> String {
     out
 }
 
-/// Build the heading paragraph for a section, or `None` if the section has no
-/// heading (a Section with an empty title). Chapters always render: an empty
-/// chapter title becomes "Chapter N" with no trailing colon, exactly as in
-/// `export_text`. Advances `chapter_count` for every Chapter encountered.
+/// The heading paragraph for a section, or `None` when it renders none (an empty
+/// Section title). An untitled chapter becomes "Chapter N" with no trailing
+/// colon, as in `export_text`. Advances `chapter_count` per Chapter.
 fn section_heading(
     section: &crate::document::Section,
     chapter_count: &mut u32,
 ) -> Option<String> {
     let title = section.title.trim();
-    // A hidden section emits no heading paragraph, but its body paragraphs
-    // still export. A hidden CHAPTER still advances the counter — chapter
-    // numbers are render-derived positionally (same as the editor), so
-    // hiding one must not renumber the chapters after it.
+    // A hidden section emits no heading but its body still exports. A hidden
+    // CHAPTER still advances the counter: numbers are positional, so hiding one
+    // must not renumber the rest.
     if section.hidden {
         if section.section_type == SectionType::Chapter {
             *chapter_count += 1;
@@ -166,9 +151,8 @@ fn section_heading(
     }
 }
 
-/// One heading paragraph referencing a style by its styleId. The style
-/// definition (name "heading 1"/"heading 2") lives in `styles.xml`; mammoth
-/// resolves the styleId to its name and maps to `<h1>`/`<h2>` on import.
+/// One heading paragraph referencing a styleId. `styles.xml` names that style
+/// "heading 1"/"heading 2", which mammoth resolves and maps to `<h1>`/`<h2>`.
 fn heading_paragraph_xml(style_id: &str, text: &str) -> String {
     format!(
         "<w:p><w:pPr><w:pStyle w:val=\"{style}\"/></w:pPr>{run}</w:p>",
@@ -177,24 +161,34 @@ fn heading_paragraph_xml(style_id: &str, text: &str) -> String {
     )
 }
 
-/// One body paragraph (Normal style): its runs concatenated, each carrying its
-/// own `TextStyle` as run properties. An empty paragraph still emits an empty
-/// `<w:p>` so paragraph breaks the author inserted are preserved.
+/// One body paragraph: its runs concatenated, each carrying its own `TextStyle`.
+/// An empty paragraph still emits `<w:p></w:p>`, so authored breaks survive. A
+/// first-line indent becomes `<w:firstLine>` inside `<w:pPr>`, in twips; without
+/// one no `<w:pPr>` is emitted at all.
 fn body_paragraph_xml(paragraph: &crate::document::Paragraph) -> String {
-    let mut runs = String::new();
-    for element in &paragraph.elements {
-        runs.push_str(&run_xml(&element.text_run.content, &element.text_run.text_style));
+    let mut content = String::new();
+    if let Some(inches) = paragraph.first_line_indent {
+        content.push_str(&format!(
+            "<w:pPr><w:ind w:firstLine=\"{}\"/></w:pPr>",
+            inches_to_twips(inches)
+        ));
     }
-    format!("<w:p>{}</w:p>", runs)
+    for element in &paragraph.elements {
+        content.push_str(&run_xml(&element.text_run.content, &element.text_run.text_style));
+    }
+    format!("<w:p>{}</w:p>", content)
 }
 
-/// One run: the text content wrapped in `<w:r>`, preceded by run properties
-/// (`<w:rPr>`) when the style is non-default. Property children are emitted in
-/// the OOXML schema order (b → i → sz → u) so the file validates against the
-/// strict schema, not just Word's lenient reader.
-///
-/// `font_size` is stored in points in the model but `w:sz` uses half-points
-/// (so 12pt → `w:val="24"`), the WordprocessingML convention.
+/// Scale an indent from inches to twips, the WordprocessingML unit: an inch is
+/// 1440 twips, so a half-inch indent writes `w:firstLine="720"`.
+fn inches_to_twips(inches: f32) -> i64 {
+    (inches * TWIPS_PER_INCH).round() as i64
+}
+
+/// One run: `<w:r>` around the text, preceded by `<w:rPr>` when the style is
+/// non-default. Property children follow schema order (b → i → sz → u), so the
+/// file validates strictly, not just in Word. `font_size` is in points;
+/// `w:sz` takes half-points, so 12pt → `w:val="24"`.
 fn run_xml(text: &str, style: &TextStyle) -> String {
     let mut rpr = String::new();
     if style.bold || style.italic || style.underline || style.font_size.is_some() {
@@ -214,7 +208,30 @@ fn run_xml(text: &str, style: &TextStyle) -> String {
         }
         rpr.push_str("</w:rPr>");
     }
-    format!("<w:r>{}<w:t xml:space=\"preserve\">{}</w:t></w:r>", rpr, xml_escape(text))
+    format!("<w:r>{}{}</w:r>", rpr, run_content_xml(text))
+}
+
+/// The content of one `<w:r>`: text in `<w:t xml:space="preserve">`, with every
+/// tab replaced by `<w:tab/>`. A literal U+0009 in `<w:t>` is not a tab to Word,
+/// so none may survive into `document.xml`. Empty segments around tabs are
+/// skipped, and a run without tabs keeps the single `<w:t>`.
+fn run_content_xml(text: &str) -> String {
+    if !text.contains('\t') {
+        return format!("<w:t xml:space=\"preserve\">{}</w:t>", xml_escape(text));
+    }
+    let mut out = String::new();
+    for (i, segment) in text.split('\t').enumerate() {
+        if i > 0 {
+            out.push_str("<w:tab/>");
+        }
+        if !segment.is_empty() {
+            out.push_str(&format!(
+                "<w:t xml:space=\"preserve\">{}</w:t>",
+                xml_escape(segment)
+            ));
+        }
+    }
+    out
 }
 
 /// Escape the five XML metacharacters for text content / attribute values.
@@ -235,10 +252,9 @@ fn xml_escape(s: &str) -> String {
     out
 }
 
-/// Export the live document to `path` as a `.docx`. Locks the document the way
-/// the other commands do (a single short-lived `Mutex` guard), renders via
-/// `document_to_docx`, then writes the bytes via `atomic_write`. Read-only:
-/// does not mark the document modified or touch its history.
+/// Export the live document to `path` as a `.docx`. Locks the document as the
+/// other commands do, renders via `document_to_docx`, and writes with
+/// `atomic_write`. Read-only: no modified flag, no history.
 #[tauri::command]
 pub fn export_docx(path: String, state: State<AppState>) -> Result<(), String> {
     let doc = state.document.lock().map_err(|e| e.to_string())?.clone();
@@ -248,10 +264,8 @@ pub fn export_docx(path: String, state: State<AppState>) -> Result<(), String> {
 
 // --- Static OOXML parts ----------------------------------------------------
 
-/// Declares the MIME types of the parts in the package. The two `Default`
-/// entries cover `.rels` and `.xml` generically; the `Override` entries pin
-/// the document and styles parts to their specific OOXML content types so a
-/// reader knows how to parse them.
+/// The MIME type of every part. `Default` covers `.rels` and `.xml`; the
+/// `Override` entries pin the document and styles parts to their OOXML types.
 const CONTENT_TYPES_XML: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
 <Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
 <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
@@ -272,11 +286,9 @@ const DOCUMENT_RELS_XML: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standa
 <Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>\
 </Relationships>";
 
-/// The styles part. Defines Normal (the default body paragraph style) plus
-/// Heading1 and Heading2, each carrying the `w:name` ("heading 1"/"heading 2")
-/// mammoth matches on import. `qFormat` marks them as quick styles (visible in
-/// the styles gallery); `outlineLvl` gives them a navigation outline level so
-/// Word's nav pane lists the chapters/sections.
+/// The styles part: Normal, plus Heading1 and Heading2 with the `w:name` mammoth
+/// matches on import. `qFormat` makes them quick styles and `outlineLvl` puts
+/// them in Word's navigation pane.
 const STYLES_XML: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
 <w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
 <w:docDefaults>\
