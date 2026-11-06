@@ -7,8 +7,8 @@ import DiffView from './DiffView.vue'
 // and S-016). `e2e/history-diff-nav.spec.js` carries the end-to-end sentences,
 // S-013 … S-015 and S-017.
 //
-// A change is a row, because the diff renders one row per paragraph. Each stop
-// needs an element to mark and to scroll to. These tests read the rows through
+// The diff renders one row per paragraph, so a change is a row. Each stop then
+// has an element to mark and to scroll to. These tests read the rows through
 // `data-change-index` and `data-current-change`, so the implementation may
 // compute targets however it likes.
 
@@ -80,7 +80,7 @@ let scrolled
 
 beforeEach(() => {
   scrolled = []
-  // jsdom has no layout, so scrollIntoView does not exist and never moves
+  // jsdom has no layout, so `scrollIntoView` does not exist and never moves
   // anything. Recording `this` is what lets a test name the row that asked to
   // be brought into view.
   vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function scrollIntoView() {
@@ -129,7 +129,7 @@ describe('DiffView change targets', () => {
       ]),
     ])
 
-    // Every row renders. The unchanged ones are simply not stops.
+    // Every row renders. The unchanged ones are not stops.
     expect(wrapper.findAll('.diff-row').length).toBeGreaterThan(1)
     expect(indices(wrapper)).toEqual(['0'])
   })
@@ -203,7 +203,7 @@ describe('DiffView change movement', () => {
     await nextTick()
     expect(current(wrapper)[0].attributes('data-change-index')).toBe('0')
 
-    // The first target is the stop the ends guard holds at.
+    // The first target is the end stop, so one more ArrowUp stays there.
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', altKey: true }))
     await nextTick()
     expect(current(wrapper)[0].attributes('data-change-index')).toBe('0')

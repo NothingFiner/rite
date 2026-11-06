@@ -1125,8 +1125,9 @@ def main():
                    ["Initial state. Every failure below is expected: make them pass."], scope)
 
     prev_sig, same, violations, goose_fails = None, 0, 0, 0
-    # The last iteration's verdict on the comments it added, for the fall-through
-    # below: a green suite with bad prose is `comment_rules`, not `needs_human`.
+    # Whether the last iteration passed every test with comment violations open.
+    # The fall-through after the loop reports `comment_rules` rather than
+    # `needs_human` for that case.
     comment_blocked = False
     comment_bad = []
     prev_failing = len(base["failing"])

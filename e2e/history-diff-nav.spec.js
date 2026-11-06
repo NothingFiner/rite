@@ -7,8 +7,8 @@ import { emitMenu, installTauriIpc } from './helpers/tauri-ipc.js'
 // `src/components/DiffView.navigation.spec.js` covers the marking, the counter
 // and the ends guards through the component's public data attributes. Those
 // sentences run in jsdom, which has no layout, and that file mocks
-// `scrollIntoView` to observe it. The sentences here need the real thing: a
-// laid-out page, a scrolling ancestor, and key events delivered to `document`.
+// `scrollIntoView` to observe it. The sentences here need a browser page: a
+// laid-out document, a scrolling ancestor, and key events delivered to `document`.
 //
 // `diff_against_current` is mocked, so the specs build `SectionDiff` by hand in
 // the shape `src-tauri/src/diff.rs` serialises. A block and a paragraph diff

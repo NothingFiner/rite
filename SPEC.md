@@ -70,9 +70,9 @@ components for no gain.
 ### Test files already touched by this change
 
 `src/components/DiffView.spec.js` was adapted (selector-only) when the title row
-was introduced: seven assertions that read the *first* `.diff-cell` now read the
-title cell or the whole column. No assertion was removed or loosened; that file is
-the locked baseline and the implementer must not edit it.
+was introduced: assertions in seven tests that read the *first* `.diff-cell` now
+read the title cell or the whole column. Coverage is unchanged; that file is the
+locked baseline and the implementer must not edit it.
 
 The new tests are:
 
