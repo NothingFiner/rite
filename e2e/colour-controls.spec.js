@@ -7,8 +7,8 @@ import { installTauriIpc } from './helpers/tauri-ipc.js'
 // The unit layer (src/components/TextOptionsDrawer.spec.js and
 // src/composables/useTheme.test.js) covers the swatch rows, the preset match and
 // the stored preferences in isolation. What only a real page can show is the
-// paint reaching the editor sheet while the drawer stays open, and the keyboard
-// path through the swatches into the sheet itself.
+// paint reaching the editor sheet while the drawer stays open. The keyboard path
+// through the swatches into the sheet itself is here too.
 //
 // Tauri IPC is the shared mock from ./helpers/tauri-ipc.js, seeded with a short
 // document so the sheet is on screen at load.
@@ -105,8 +105,8 @@ test('S-015: Tab reaches the swatches and Enter applies the focused one', async 
 
   expect(await focusedName(page)).toBe('Background Mist')
 
-  // The two Mist colours already held by the text and accent rows are disabled,
-  // so a browser tab order skips them and lands on the next background.
+  // The text and accent rows already hold two of the Mist colours, which
+  // disables them. A browser tab order skips a disabled button.
   await page.keyboard.press('Tab')
   expect(await focusedName(page)).toBe('Background Sepia')
 
