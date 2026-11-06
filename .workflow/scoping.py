@@ -167,10 +167,20 @@ def select_scope(
     # A dependent layer (e2e) is not a coherent unit of work while the layer it
     # exercises is red: every failure there is a symptom, and it is the slowest
     # layer to boot. Excluding it removes a whole class of chasing-the-wrong-thing.
-    eligible = [
+    #
+    # The excluded layers are kept, not just dropped, so the reason can say why a
+    # layer with more failures was passed over. Without that, a run with 1 unit
+    # and 10 e2e failures logged "unit has the most failures (1)". That reads as
+    # an arithmetic bug, but it is a dependency rule.
+    excluded = [
         name for name in present
-        if not any(dep in by_layer and dep != name for dep in depends_on.get(name, []))
-    ] or present
+        if any(dep in by_layer and dep != name for dep in depends_on.get(name, []))
+    ]
+    eligible = [name for name in present if name not in excluded]
+    if not eligible:
+        # Every layer depends on another red layer. Working on all of them is
+        # worse than working on the best slice, but better than refusing to plan.
+        eligible, excluded = present, []
 
     unselected: dict[str, int] = state.get("unselected", {})
     starved = [name for name in eligible if unselected.get(name, 0) >= STARVE_AFTER]
@@ -180,6 +190,13 @@ def select_scope(
     else:
         layer = sorted(eligible, key=lambda n: (-len(by_layer[n]), present.index(n)))[0]
         reason = f"{layer} has the most failures ({len(by_layer[layer])})"
+        if excluded:
+            why = "; ".join(
+                f"{name} ({len(by_layer[name])}) excluded while "
+                f"{'/'.join(d for d in depends_on.get(name, []) if d in by_layer and d != name)} is red"
+                for name in excluded
+            )
+            reason = f"{layer} has the most eligible failures ({len(by_layer[layer])}); {why}"
 
     stall = state.get("stall", 0)
     effective = 1 if stall >= STALL_AFTER else limit
