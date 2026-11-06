@@ -1,276 +1,153 @@
-# 5.18 — Indent and tab characters
+# 5.12 — History diff change navigation
 
-Approved sentence list for the spec-to-tests stage. The tests are already written
-and red; they define what "done" means. This file is the implementer's whole
-context — nothing here refers to any conversation.
+Approved sentence list for the spec-to-tests stage. The tests are written and red;
+they define what "done" means. This file is the implementer's whole context —
+nothing here refers to any conversation.
 
 ## Context
 
 ### What the writer gets
 
-Word's keyboard model for a manuscript, with the two concepts kept distinct:
+The History view renders a side-by-side diff of a past version against the live
+document. Today that diff is a read-only scroll: a long manuscript can hold a
+handful of changes buried in hundreds of unchanged paragraphs, and finding them
+means scrolling the whole thing. This feature adds a way to step from one change
+to the next, by button or by keyboard, and shows where you are in the set.
 
-- **Indent** stays a *paragraph property*. A first-line indent is a number of
-  inches stored beside the text, not characters in it. It applies to the first
-  line of the paragraph, is invisible to word count and search, and is removed by
-  a formatting action, not by Backspace.
-- **Tab** is a *text character* (U+0009). It sits in a run's `content`, is one
-  character long, can be selected and deleted, and advances the pen to the next
-  tab stop wherever the caret is.
+### What already exists
 
-A paragraph may have both. A 0.5-inch first-line indent plus a leading tab puts
-the first word one inch in: the indent shifts the line start, then the tab
-advances to the next 48 px stop after it. This was measured in the app's real
-engine (system WebKit / WKWebView 20621, Safari 26.3, macOS 15.7.4):
-`text-indent: 48px` + leading tab → 96 px; `text-indent: 96px` + leading tab →
-144 px; no indent + leading tab → 48 px. `tab-size: 48px` with
-`white-space: pre-wrap` is honoured exactly; without `pre-wrap` the tab collapses
-to a space (WebKit's default tab is 35.56 px).
+`diff_against_current` (Rust, `src-tauri/src/diff.rs`) returns
+`Vec<SectionDiff>`: a structural, id-matched walk that yields one block per
+section, each `unchanged`, `added`, `removed` or `modified`. A `modified` section
+carries `paragraphDiffs`, one per paragraph (`unchanged` / `added` / `removed` /
+`modified` with word-level spans). **This feature needs no Rust change** — the
+data is already enough to enumerate changes.
 
-### How indent works today — and what has to change
+`DiffView.vue` renders those blocks. On this branch its structure is:
 
-`Paragraph` (`src-tauri/src/document.rs`) already carries `left_indent`,
-`right_indent` and `first_line_indent` as `Option<f32>` in inches. But
-`first_line_indent` is not user data today: it is **derived on every render and
-every readback** from `computeFirstLineIndent(blocks, i)` in
-`src/composables/useSectionBlocks.js` (0 for the first paragraph after a section
-title and after an empty paragraph, 0.5 otherwise), and the derived number is
-written into the model by `fullSyncFromDOM` and the localized `syncFromDOM`. A
-stored value cannot survive, and no UI sets one — `Ruler.vue`, the only component
-that could, is not mounted anywhere in the app.
+```
+.diff-section
+├─ .diff-title-row    .diff-title-cell.diff-left  + .diff-title-cell.diff-right
+└─ .diff-row (one per paragraph)   .diff-cell.diff-left + .diff-cell.diff-right
+```
 
-Exports ignore all three indent fields today: DOCX writes `<w:p>` with no
-`<w:ind>`, EPUB writes a bare `<p>`. That gap becomes visible the moment a
-writer can set an indent, so this feature closes it.
+The title is its own row in every case. This is a prerequisite for the feature:
+a stop has to be a row so that it can be marked and scrolled to.
 
-### The model chosen for "automatic unless overridden"
+### The target contract
 
-`first_line_indent` gets three meanings, using the existing field only (no new
-field on `Paragraph` — protected Rust tests construct it with every field
-spelled out, and a new field would break their compilation):
+Every navigable change is a row carrying:
 
-- `null` → **automatic**: `computeFirstLineIndent` decides, as today.
-- a number → **explicit**: that value wins, including `0` (flush).
+- `data-change-index="<n>"` — 0-based, assigned in document order across the
+  whole diff.
+- `data-current-change="true"` — only on the row that is current. At most one row
+  in the document carries it at any time.
 
-To survive a DOM→model readback, the two cases are marked in the DOM:
+The header carries the controls, as siblings of the two header cells (do not add
+a third `.diff-header-cell`; an existing test asserts exactly two):
 
-- A paragraph following the automatic rule renders `data-auto-indent="true"` and
-  the computed inline `text-indent` as today.
-- An explicit paragraph renders no marker; its value lives in the existing inline
-  `style="text-indent:Npx"`, and an explicit 0 keeps the existing
-  `class="paragraph no-indent"`.
+```
+.diff-header
+├─ .diff-header-cell.diff-left    "Past version"
+├─ .diff-header-cell.diff-right   "Current"
+└─ .diff-nav
+   ├─ button.diff-nav-prev         "Previous change"
+   ├─ span.diff-nav-position       "Change 2 of 7"
+   └─ button.diff-nav-next         "Next change"
+```
 
-Readback (`parseParagraphElement`) therefore returns `null` when the marker is
-present, and otherwise parses the inline indent (`no-indent` → 0). The two sync
-paths must stop overwriting `firstLineIndent` with the computed value; they keep
-what the parser returned.
+With no changes at all, `.diff-nav` shows the text `No changes` and no buttons.
 
-The baked block list passed to the renderer is unchanged in spirit: automatic
-paragraphs are baked to their computed number **on the shallow copy only**
-(`buildEditorHTML`, `manuscriptDisplay.vue`), and the copy carries
-`autoIndent: true` so `paragraphToHTML` emits the marker. The model itself keeps
-`null`. This keeps the existing protected rendering contracts intact: a block
-with a numeric `firstLineIndent` and no `autoIndent` flag must render byte-identical
-HTML to today.
+### Keyboard
 
-### Migration note
+`Alt+ArrowDown` / `Alt+ArrowUp` move to the next / previous change while a diff is
+mounted. The listener belongs to the diff view, not to
+`useKeyboardShortcuts.js`: `rite.md` reserves that file for *app-level* commands,
+and this one exists only while a diff is on screen. Wiring it through App →
+HistoryView → DiffView would mean lifting the current index through three
+components for no gain.
 
-Documents saved before this feature carry derived numbers (0/0.5) in every
-paragraph. Under the new rule those read as explicit, so their indents freeze
-where they were saved. That is acceptable: the rendering is identical until the
-document structure changes. A load-time normalisation is out of scope.
+### Test files already touched by this change
+
+`src/components/DiffView.spec.js` was adapted (selector-only) when the title row
+was introduced: seven assertions that read the *first* `.diff-cell` now read the
+title cell or the whole column. No assertion was removed or loosened; that file is
+the locked baseline and the implementer must not edit it.
+
+The new tests are:
+
+- `src/components/DiffView.navigation.spec.js` — S-001 … S-012, S-016.
+- `e2e/history-diff-nav.spec.js` — S-013, S-014, S-015, S-017.
+
+Neither file may be edited to make the suite pass. They read the component only
+through the public contract above (`data-change-index`, `data-current-change`,
+`.diff-nav*`), so the implementation is free to compute targets however it likes.
+
+### The stub in place
+
+`DiffView.vue` carries a stub `.diff-nav` in the header (a disabled pair of
+buttons and the literal text `Change 0 of 0`), an empty `data-change-index` on
+every row, and `data-current-change="true"` on the first section's title row. That
+markup exists only so the tests reach their assertions instead of failing on a
+missing element. All of it is placeholder: delete the stub comment and the pinned
+attributes when you implement.
 
 ## Decisions
 
-1. **Tab at the start of a paragraph indents; elsewhere it tabs.** "Start" means
-   the caret sits at offset 0 of the paragraph with no selection.
-2. **Ctrl+Tab inserts a literal tab anywhere**, including at a paragraph start —
-   the only way to get a real tab where plain Tab means indent.
-3. **Shift+Tab removes, it does not leave.** With a tab immediately before the
-   caret it deletes that tab; at a paragraph start it lowers the indent one
-   0.5-inch step (to a floor of 0, where an automatic 0.5 becomes an explicit 0);
-   otherwise it does nothing.
-4. **Escape leaves the editor** when no search panel, drawer or focus mode wants
-   the key. The existing Escape chain in `useKeyboardShortcuts.js` keeps first
-   refusal; the editor is the last fall-through. Focus moves to the next
-   focusable control outside the sheet — the page must never trap the keyboard
-   now that Tab is captured.
-5. **Tab stops are fixed at 0.5 in (48 px) from the paragraph's left content
-   edge** and are not user-settable. A tab advances to the next stop past the
-   current pen position.
-6. **Section titles are not an editing surface for tabs.** The key handler runs
-   only for body paragraphs; a Tab in a title keeps the browser's focus
-   movement.
-7. **The key decision lives in a pure helper.** `resolveTabAction` in
-   `src/composables/useEditorTabKey.js` maps a key event plus the editor context
-   to `insert-tab` / `set-indent` / `delete-tab` / `none`; `editorDisplay.vue`
-   performs the action. This is the unit-test seam for the key rules.
-8. **The tab-stop styling belongs in CSS, not in the paragraph's HTML.** The
-   protected reconcile test pins the exact paragraph HTML string
-   (`style="text-indent:48px"`), so `white-space: pre-wrap` and
-   `tab-size: 48px` go on `.editor-sheet :deep(.paragraph)` and on the
-   manuscript's `.ms-para` rule.
-9. **Exports carry both.** DOCX: `<w:tab/>` for each tab and
-   `<w:ind w:firstLine="…"/>` (twips) for an explicit indent. EPUB: the tab
-   character survives and the package carries whitespace/tab-stop/indent rules
-   (inline or a stylesheet — either satisfies the tests). Plain text and Markdown
-   keep the tab character and cannot express indent.
-10. **Undo already journals indent changes.** `compute_paragraph_ops` compares
-    whole paragraphs (`old[i] != new[j]`), so an indent-only change is an
-    `UpdateParagraph` and inverts correctly.
+- **Granularity**: one stop per changed paragraph, per renamed section title, and
+  per whole added/removed section. Five edited paragraphs in one section are five
+  stops.
+- **Ends**: stop, do not wrap. Previous is disabled on the first change and Next
+  on the last.
+- **Index base**: `data-change-index` is 0-based; the counter is 1-based.
+- **Reset**: when `diffBlocks` becomes a different version's diff, the current
+  change returns to the first.
+- **Scroll on navigation only**: the view does not scroll on first render; it
+  scrolls when the current change moves.
 
 ## Sentences
 
-### Indent — a paragraph property
+### Targets
 
-- **S-001** (e2e) — Tab at the start of a section's first paragraph (automatic indent 0) sets an explicit 0.5-inch first-line indent and inserts no character.
-- **S-002** (e2e) — Tab at the start of a paragraph already at the automatic 0.5 inches raises the indent to 1 inch, the next 0.5-inch step.
-- **S-003** (e2e) — A Tab-set indent survives further typing in the document and the `sync_document` that follows it.
-- **S-004** (unit) — After a readback, a paragraph whose indent was never set keeps a `null` indent and still follows the automatic rule.
-- **S-005** (unit) — After a readback, a paragraph with an explicit indent keeps that exact value, including 0, which stays flush.
-- **S-006** (unit) — Shift+Tab at the start of a paragraph lowers the indent by one 0.5-inch step and stops at 0; an automatic 0.5 becomes an explicit 0.
+| ID | Layer | Sentence |
+|---|---|---|
+| S-001 | unit | it should treat each changed paragraph in a modified section as one change target, in document order |
+| S-002 | unit | it should treat an added or removed section as one change target, not each of its paragraphs |
+| S-003 | unit | it should treat a renamed section title as one change target even when no paragraph in that section changed |
+| S-004 | unit | it should not count unchanged sections or unchanged paragraphs as targets |
 
-### Literal tab — a text character
+### Movement
 
-- **S-007** (e2e) — Tab in the middle of a paragraph inserts exactly one U+0009 at the caret and keeps focus in the editor.
-- **S-008** (e2e) — The inserted tab reaches the model: the paragraph in the synced document contains U+0009 at that position.
-- **S-009** (e2e) — Tab with text selected replaces the selection with one tab character.
-- **S-010** (e2e) — Ctrl+Tab at the start of a paragraph inserts a literal tab and leaves the first-line indent unchanged.
-- **S-011** (unit) — Shift+Tab immediately after a literal tab deletes that tab and nothing else; with no tab before the caret and the caret not at the paragraph start it changes nothing.
-- **S-012** (e2e) — Tab with the caret in a section title inserts no character and moves focus out of the title.
+| ID | Layer | Sentence |
+|---|---|---|
+| S-006 | unit | it should make the first target current when a diff with at least one target first renders |
+| S-007 | unit | it should move to the next target when Next is pressed, and to the previous target when Previous is pressed |
+| S-008 | unit | it should disable Previous on the first target and Next on the last target |
+| S-011 | unit | it should return to the first target when `diffBlocks` changes to another version's diff |
+| S-016 | unit | it should move to the next target on Alt+ArrowDown and to the previous target on Alt+ArrowUp while a diff is shown |
 
-### Leaving the editor
+### Presentation
 
-- **S-022** (e2e) — Escape with the caret in the editor, when no search panel, drawer or focus mode is open, moves focus out of the editor; typing afterwards does not change the document.
+| ID | Layer | Sentence |
+|---|---|---|
+| S-005 | unit | it should number targets from 1 and show `Change N of M` in the diff header |
+| S-009 | unit | it should mark exactly one target row with `data-current-change="true"` and remove the mark from the row that was current |
+| S-010 | unit | it should bring the current target's row into view when the current target changes |
+| S-012 | unit | it should hide the navigation controls and show `No changes` when no section differs |
 
-### The two stay distinct
+### End to end
 
-- **S-013** (e2e) — Indent and tab are independent: after a Tab-set 0.5-inch indent, a literal tab inserted mid-line, then Backspace, the paragraph's text loses only the tab and the indent is still 0.5 inch.
-
-### Rendering
-
-- **S-014** (e2e) — Editor body paragraphs compute to `white-space: pre-wrap` and `tab-size: 48px`, so a tab is preserved rather than collapsed.
-- **S-015** (e2e) — A literal tab advances to the next 48 px stop from the paragraph's left content edge: 48 px with no indent, 96 px under a 0.5-inch indent.
-- **S-016** (e2e) — The manuscript view preserves whitespace with the same 48 px stops and renders a leading tab at the same offset as the editor.
-
-### Exports
-
-- **S-017** (rust) — DOCX export writes a tab as `<w:tab/>` and leaves no literal U+0009 inside `<w:t>`.
-- **S-018** (rust) — DOCX export writes a first-line indent as `w:ind w:firstLine` in twips (0.5 in = 720).
-- **S-019** (rust) — EPUB export preserves the tab character and applies the first-line indent in its XHTML and stylesheet.
-
-### Undo
-
-- **S-020** (e2e) — One undo after a Tab-set indent restores the previous indent.
-- **S-021** (e2e) — One undo after a literal tab removes the tab and restores the text.
+| ID | Layer | Sentence |
+|---|---|---|
+| S-013 | e2e | opening a version's diff shows `Change 1 of 3` when three paragraphs changed |
+| S-014 | e2e | pressing Next marks the second changed paragraph as current and scrolls it into view |
+| S-015 | e2e | Previous is disabled while the first change is current, and pressing it changes nothing |
+| S-017 | e2e | pressing Alt+ArrowDown on a version diff moves the current change forward |
 
 ## Out of scope
 
-No custom tab stops, no ruler markers, no leader dots, no "show formatting marks".
-No indent controls besides these keys (the Ruler stays unmounted). No tab in
-section titles. No multi-paragraph indent when Tab is pressed over a selection —
-the selection is replaced by one tab character (S-009).
-
----
-
-# Automatic first-line indent on Return — follow-up to 5.18 (S-023–S-033)
-
-## Context
-
-### The report
-
-Pressing Return in the editor produces a paragraph with `text-indent: 0px` and
-`class="paragraph no-indent"`, and the model stores `firstLineIndent: 0`. The
-indent is therefore explicit, not automatic, and it never recovers. Measured on
-`feature/5.18-tab-characters` before this work, with a two-paragraph section and
-typing "Hello", Return, "World": `computeFirstLineIndent` said the new paragraph
-should be `0.5`, the DOM said `no-indent`.
-
-### Cause
-
-`editorDisplay.vue`'s Enter branch calls `execCommand('insertParagraph')` and
-then forces the caret paragraph flush:
-
-```js
-para.style.textIndent = '0px'
-```
-
-It also gives that paragraph a fresh id and pins its section id, which stay. The
-`0px` is read back by `parseParagraphElement` as an **explicit 0**, so the
-automatic rule never applies. The comment above it ("New paragraphs start flush
-so the user controls the indent explicitly") encodes the old model and must be
-reversed.
-
-There is a second, pre-existing gap this spec closes: `paragraphToHTML` never
-emits the `data-auto-indent="true"` marker, and `buildEditorHTML` does not flag
-its baked copies with `autoIndent`. The 5.18 Context requires both. Without them,
-the first readback after a render parses every automatic paragraph as an explicit
-number, so an Enter-created automatic paragraph would lose its status on the next
-full render. Existing 5.18 tests do not pin this, which is why the suite was green
-while the app was not.
-
-### The 5.18 model this builds on
-
-- `Paragraph.first_line_indent` is `Option<f32>` and carries three meanings:
-  `null` = automatic, a number = explicit (including explicit `0` = flush). Do
-  **not** add a field to `Paragraph`: protected Rust tests construct it with every
-  field spelled out.
-- The automatic rule is `computeFirstLineIndent(blocks, i)` in
-  `useSectionBlocks.js`: 0 for the first block, 0 after a section title, 0 after
-  an empty paragraph, 0.5 otherwise.
-- The DOM distinguishes the two cases with `data-auto-indent="true"` on automatic
-  paragraphs. `parseParagraphElement` returns `null` when the marker is present;
-  otherwise it parses the inline `text-indent` (`no-indent` → 0).
-- `buildEditorHTML` bakes the computed number onto a **shallow copy** only, so the
-  store keeps `null`. Per 5.18, the copy must also carry `autoIndent: true` so
-  `paragraphToHTML` can emit the marker. An explicit paragraph must keep rendering
-  byte-identical HTML to today (no marker).
-- The readback paths (`fullSyncFromDOM`, `syncFromDOM`) stamp the marker and the
-  computed display indent on automatic paragraphs, but must never overwrite the
-  parsed value.
-
-### Browser behaviour measured for this spec
-
-Measured in Chromium through the project's Playwright harness:
-
-- Return at the **end** of a paragraph leaves the original intact and inserts a
-  new empty paragraph after it.
-- Return at **offset 0** keeps the original paragraph's id on an **empty**
-  paragraph above, and moves the original text into a **new** paragraph below it.
-  S-030 is written against this measured behaviour, not against the intuitive
-  "text stays put" wording.
-- The browser copies the previous paragraph's inline `text-indent` (and sometimes
-  its `data-para-id`) onto the new paragraph. The existing handler already
-  replaces the id; this feature replaces the copied indent with the automatic
-  rule's result.
-
-### Scope and layers
-
-S-032 is `unit` because `buildEditorHTML` is pure. Every other sentence is `e2e`:
-caret position, key default actions and computed indent need a real viewport.
-There is no `rust` sentence — `Option<f32>` already serialises `null` to `None`.
-The manuscript view needs no sentence of its own: it already bakes
-`computeFirstLineIndent` from the model, so a `null` model value flows through.
-
-Out of scope: inheriting an explicit indent into the next paragraph (the approved
-default is that Return always produces an automatic paragraph), any Rust change,
-and any UI for setting indents beyond the 5.18 Tab rules.
-
-## Sentences
-
-### Automatic indent on Return — `e2e`
-
-- **S-023** — Pressing Return at the end of a non-empty body paragraph that is not a section's first paragraph gives the new paragraph a 0.5-inch (48 px) first-line indent as soon as it appears, before any typing.
-- **S-024** — Pressing Return at the end of a section's first body paragraph makes the new second paragraph indent 0.5 inch.
-- **S-025** — Pressing Return inside a non-empty paragraph splits it: the text after the caret moves to the new paragraph, which gets a 0.5-inch indent, while the original keeps its id and the text before the caret.
-- **S-026** — Pressing Return in an empty body paragraph gives the new paragraph no first-line indent, and the new paragraph is automatic, because the automatic rule gives 0 after an empty paragraph.
-- **S-027** — The paragraph created by Return is automatic in the model: after the sync that follows it, `firstLineIndent` is `null` and the element carries `data-auto-indent="true"`.
-- **S-028** — Typing into the paragraph created by Return does not turn its indent into an explicit 0: it stays `null` and keeps the 0.5-inch render.
-- **S-029** — An automatic paragraph created by Return keeps its automatic indent after a later edit elsewhere in the document triggers a sync.
-- **S-030** — Pressing Return at the very start of a paragraph leaves an empty paragraph holding the original paragraph's id and moves the text into a new paragraph; both follow the automatic rule, so the text paragraph, now after an empty paragraph, is flush and stays automatic.
-- **S-031** — A paragraph created by Return after a paragraph with an explicit Tab-set indent shows the automatic 0.5 inch, not the explicit value.
-
-### Automatic marker on render — `unit` + `e2e`
-
-- **S-032** *(unit)* — `buildEditorHTML` marks a paragraph whose model `firstLineIndent` is `null` with `data-auto-indent="true"` and the computed `text-indent`; a paragraph with a numeric explicit indent renders without the marker and byte-identical HTML to today.
-- **S-033** *(e2e)* — On load, an automatic paragraph carries `data-auto-indent="true"`, and typing in it then syncing leaves its model `firstLineIndent` `null`.
+- No Rust change. `diff_against_current` already carries everything needed.
+- No change to restore, preview, or the version list.
+- No navigation by word-level span: a modified paragraph is one stop, not one per
+  changed word.
+- No wrap-around mode, no jump-to-first/last, no minimap.

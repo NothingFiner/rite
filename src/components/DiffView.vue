@@ -1,33 +1,61 @@
 <template>
   <!--
     Side-by-side diff of a past version (left = old) against the current live
-    document (right = new). Walks the `SectionDiff` blocks from Rust's
-    `diff_against_current`; each block becomes a two-column row. Unchanged
-    sections/paragraphs appear in both columns plainly; Removed (in the past,
-    gone now) appears on the left tinted red; Added (new since that version)
-    appears on the right tinted green; Modified paragraphs render word-level
-    spans — deleted words on the left struck through, inserted words on the
-    right highlighted. Run-level styling (bold/italic) is intentionally not
-    rendered in modified paragraphs: the diff is about text changes, and mixing
-    per-run styling with per-word diff spans would muddy both.
+    document (right = new). A section renders a title row, then one row per
+    paragraph, so the two columns stay aligned row by row. Unchanged content
+    appears plainly in both columns. Removed (in the past, gone now) appears on
+    the left tinted red. Added (new since that version) appears on the right
+    tinted green. A modified paragraph renders word-level spans: deleted words
+    struck through on the left, inserted words highlighted on the right.
+    Run-level styling (bold/italic) is not rendered in modified paragraphs —
+    the diff is about text changes, and mixing per-run styling with per-word
+    spans muddies both.
   -->
   <div class="diff-view">
     <div class="diff-header">
       <div class="diff-header-cell diff-left">Past version</div>
       <div class="diff-header-cell diff-right">Current</div>
+      <!--
+        STUB (SPEC 5.12). The controls are present so the navigation tests reach
+        their assertions instead of failing on a missing element; none of the
+        behaviour behind them exists yet. `data-change-index` is deliberately
+        empty and `data-current-change` is pinned to the first section's title
+        row — both are placeholders, not an enumeration of changes.
+      -->
+      <div class="diff-nav">
+        <button class="diff-nav-prev" disabled>Previous change</button>
+        <span class="diff-nav-position">Change 0 of 0</span>
+        <button class="diff-nav-next" disabled>Next change</button>
+      </div>
     </div>
     <div class="diff-body">
       <div v-for="(sd, i) in diffBlocks" :key="i" class="diff-section">
-        <div class="diff-row">
+        <div
+          class="diff-title-row"
+          data-change-index=""
+          :data-current-change="i === 0 ? 'true' : undefined"
+        >
+          <div
+            class="diff-title-cell diff-left"
+            :class="sideTint(sd, 'left')"
+            v-html="titleHTML(sd, 'left')"
+          ></div>
+          <div
+            class="diff-title-cell diff-right"
+            :class="sideTint(sd, 'right')"
+            v-html="titleHTML(sd, 'right')"
+          ></div>
+        </div>
+        <div v-for="(pd, j) in paragraphRows(sd)" :key="j" class="diff-row" data-change-index="">
           <div
             class="diff-cell diff-left"
-            :class="{ 'diff-tint-removed': sd.type === 'removed' }"
-            v-html="renderLeftCell(sd)"
+            :class="sideTint(sd, 'left')"
+            v-html="paragraphHTML(pd, 'left')"
           ></div>
           <div
             class="diff-cell diff-right"
-            :class="{ 'diff-tint-added': sd.type === 'added' }"
-            v-html="renderRightCell(sd)"
+            :class="sideTint(sd, 'right')"
+            v-html="paragraphHTML(pd, 'right')"
           ></div>
         </div>
       </div>
@@ -74,6 +102,27 @@ function modifiedTitleLine(sd, side) {
   return `<div class="diff-section-title"><span class="diff-type-tag">${tag}</span>${body}</div>`
 }
 
+function titleHTML(sd, side) {
+  if (sd.type === 'added' && side === 'left') return GAP
+  if (sd.type === 'removed' && side === 'right') return GAP
+  if (sd.type === 'modified') return modifiedTitleLine(sd, side)
+  return sectionTitleLine(sd.section)
+}
+
+function sideTint(sd, side) {
+  if (side === 'left') return sd.type === 'removed' ? 'diff-tint-removed' : ''
+  return sd.type === 'added' ? 'diff-tint-added' : ''
+}
+
+/// The paragraph diffs of one section, normalised so every row carries a
+/// `type` the cell renderer understands. A whole added or removed section
+/// reports all of its paragraphs as added or removed.
+function paragraphRows(sd) {
+  if (sd.type === 'modified') return sd.paragraphDiffs || []
+  const type = sd.type === 'unchanged' ? 'unchanged' : sd.type
+  return (sd.section?.paragraphs || []).map((paragraph) => ({ type, paragraph }))
+}
+
 function plainParagraphHTML(p) {
   return paragraphToHTML(p, { sectionId: null })
 }
@@ -94,54 +143,25 @@ function wordDiffHTML(wordDiff, side) {
   return spans.join('') || '<br>'
 }
 
-function sectionBodyHTML(section) {
-  const title = sectionTitleLine(section)
-  const paras = (section.paragraphs || []).map((p) => plainParagraphHTML(p)).join('')
-  return title + paras
-}
-
-function renderLeftCell(sd) {
-  if (sd.type === 'added') return GAP
-  if (sd.type === 'unchanged') return sectionBodyHTML(sd.section)
-  if (sd.type === 'removed') return sectionBodyHTML(sd.section)
-  // modified
-  let html = modifiedTitleLine(sd, 'left')
-  for (const pd of sd.paragraphDiffs || []) {
-    if (pd.type === 'unchanged') html += plainParagraphHTML(pd.paragraph)
-    else if (pd.type === 'removed') html += `<div class="diff-para-removed">${plainParagraphHTML(pd.paragraph)}</div>`
-    else if (pd.type === 'added') html += GAP
-    else {
-      const words = wordDiffHTML(pd.wordDiff, 'left')
-      html += `<div class="diff-para-modified">${words || plainParagraphHTML(pd.old)}</div>`
-    }
+function paragraphHTML(pd, side) {
+  if (pd.type === 'unchanged') return plainParagraphHTML(pd.paragraph)
+  if (pd.type === 'removed') {
+    return side === 'left' ? `<div class="diff-para-removed">${plainParagraphHTML(pd.paragraph)}</div>` : GAP
   }
-  return html || GAP
-}
-
-function renderRightCell(sd) {
-  if (sd.type === 'removed') return GAP
-  if (sd.type === 'unchanged') return sectionBodyHTML(sd.section)
-  if (sd.type === 'added') return sectionBodyHTML(sd.section)
-  // modified
-  let html = modifiedTitleLine(sd, 'right')
-  for (const pd of sd.paragraphDiffs || []) {
-    if (pd.type === 'unchanged') html += plainParagraphHTML(pd.paragraph)
-    else if (pd.type === 'added') html += `<div class="diff-para-added">${plainParagraphHTML(pd.paragraph)}</div>`
-    else if (pd.type === 'removed') html += GAP
-    else {
-      const words = wordDiffHTML(pd.wordDiff, 'right')
-      html += `<div class="diff-para-modified">${words || plainParagraphHTML(pd.new)}</div>`
-    }
+  if (pd.type === 'added') {
+    return side === 'right' ? `<div class="diff-para-added">${plainParagraphHTML(pd.paragraph)}</div>` : GAP
   }
-  return html || GAP
+  const words = wordDiffHTML(pd.wordDiff, side)
+  const fallback = side === 'left' ? plainParagraphHTML(pd.old) : plainParagraphHTML(pd.new)
+  return `<div class="diff-para-modified">${words || fallback}</div>`
 }
 </script>
 
 <style scoped>
 .diff-view {
   /* Flows inside the App scroll-layer; the page scrolls. Each section is a
-     two-column row, so left/right cells stay aligned row-by-row as the page
-     scrolls. */
+     title row plus one row per paragraph, so left/right cells stay aligned
+     row-by-row as the page scrolls. */
   font-family: var(--editor-font, Georgia, serif);
   font-size: 15px;
   line-height: 1.6;
@@ -169,6 +189,23 @@ function renderRightCell(sd) {
   border-right: 1px solid var(--bg-glass-border, rgba(255, 255, 255, 0.1));
 }
 
+.diff-title-row {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--bg-glass-border, rgba(255, 255, 255, 0.06));
+}
+
+.diff-title-cell {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 16px 4px;
+  word-break: break-word;
+}
+
+.diff-title-cell.diff-left {
+  border-right: 1px solid var(--bg-glass-border, rgba(255, 255, 255, 0.1));
+}
+
 .diff-row {
   display: flex;
   align-items: stretch;
@@ -178,7 +215,7 @@ function renderRightCell(sd) {
 .diff-cell {
   flex: 1;
   min-width: 0;
-  padding: 12px 16px;
+  padding: 6px 16px;
   word-break: break-word;
 }
 
@@ -194,15 +231,17 @@ function renderRightCell(sd) {
   background: rgba(63, 185, 80, 0.08);
 }
 
+.diff-title-cell :deep(.diff-section-title),
 .diff-cell :deep(.diff-section-title) {
   font-weight: 700;
   font-size: 1.2em;
-  margin: 1em 0 0.4em;
+  margin: 0 0 0.4em;
   display: flex;
   gap: 8px;
   align-items: baseline;
 }
 
+.diff-title-cell :deep(.diff-type-tag),
 .diff-cell :deep(.diff-type-tag) {
   font-size: 10px;
   font-weight: 700;
@@ -215,7 +254,7 @@ function renderRightCell(sd) {
   flex-shrink: 0;
 }
 
-.diff-cell :deep(.diff-renamed) {
+.diff-title-cell :deep(.diff-renamed) {
   text-decoration: line-through;
   opacity: 0.7;
 }
@@ -247,7 +286,8 @@ function renderRightCell(sd) {
   border-radius: 2px;
 }
 
-.diff-cell :deep(.diff-gap) {
+.diff-cell :deep(.diff-gap),
+.diff-title-cell :deep(.diff-gap) {
   opacity: 0.35;
   font-style: italic;
   text-align: center;
