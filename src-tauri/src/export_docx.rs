@@ -36,6 +36,11 @@ use tauri::State;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
+/// WordprocessingML measures length in twips: 1/1440 inch, or one twentieth of
+/// a point. Twips are integers, so layout math avoids floating-point drift and
+/// does not depend on screen DPI.
+const TWIPS_PER_INCH: f32 = 1440.0;
+
 /// The page geometry for the exported document, in twips (1/1440 inch). US
 /// Letter (8.5×11in = 12240×15840 twips) with 1in (1440 twip) margins — a
 /// conventional manuscript page. These land in the final `<w:sectPr>` so Word
@@ -202,7 +207,7 @@ fn body_paragraph_xml(paragraph: &crate::document::Paragraph) -> String {
 /// Scale an indent from inches to twips, the WordprocessingML unit: an inch is
 /// 1440 twips, so a half-inch indent writes `w:firstLine="720"`.
 fn inches_to_twips(inches: f32) -> i64 {
-    (inches * 1440.0).round() as i64
+    (inches * TWIPS_PER_INCH).round() as i64
 }
 
 /// One run: the text content wrapped in `<w:r>`, preceded by run properties
