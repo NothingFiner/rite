@@ -3,13 +3,9 @@ import { installTauriIpc, ipcCalls, emitMenu } from './helpers/tauri-ipc.js'
 
 // Tab characters and first-line indent (SPEC.md 5.18), end to end in Chromium.
 //
-// jsdom has no caret, no layout and no key default actions, so everything here
-// needs a real viewport: whether Tab is captured, where the caret lands, how
-// wide a tab renders, and whether the value reaches the document model.
-//
-// Two paragraphs in one section: p-1 is the first paragraph after the title, so
-// the automatic rule gives it indent 0; p-2 follows a body paragraph, so it gets
-// 0.5 in (48 px).
+// jsdom has no caret, no layout and no key default actions, so these need a real
+// viewport: whether Tab is captured, where the caret lands, how wide a tab
+// renders, and whether the value reaches the model.
 
 const textStyle = { bold: false, italic: false, underline: false, fontSize: null }
 const para = (id, text) => ({
@@ -20,6 +16,8 @@ const para = (id, text) => ({
   firstLineIndent: null,
 })
 
+// p-1 follows the section title, so the automatic rule gives it indent 0; p-2
+// follows a body paragraph and gets 0.5 in (48 px).
 const seededDoc = {
   title: 'Untitled',
   author: 'Author Name',
@@ -108,7 +106,6 @@ async function pressCtrlTab(page) {
   })
 }
 
-/// Run `action`, then return the document carried by the next `sync_document`.
 const syncCount = (page) =>
   ipcCalls(page).then((calls) => calls.filter((c) => c.cmd === 'sync_document').length)
 
@@ -118,6 +115,7 @@ async function nextSyncDoc(page, before) {
   return calls[calls.length - 1].args.data
 }
 
+/// Run `action`, then return the document carried by the next `sync_document`.
 async function syncDocAfter(page, action) {
   const before = await syncCount(page)
   await action()
@@ -204,8 +202,8 @@ test.describe('literal tab', () => {
     await page.keyboard.press('Tab')
     await page.keyboard.type('x')
 
-    // Assert the editor before waiting on the debounced sync: without the tab
-    // this is already the failing assertion, not a sync timeout.
+    // Assert the editor first: without the tab this fails here, not as a sync
+    // timeout.
     expect(await textOf(page, 'p-2')).toBe('Second\tx paragraph')
 
     const doc = await nextSyncDoc(page, before)
@@ -343,9 +341,8 @@ test.describe('rendering', () => {
 })
 
 test.describe('undo', () => {
-  // The Rust side is what journals the change; these tests give the app an undo
-  // that returns the document as it was before the edit and assert the editor
-  // reflects it.
+  // The Rust side journals the change; these tests stub `undo` to return the
+  // pre-edit document and assert the editor reflects it.
   test('S-020: one undo removes a Tab-set indent', async ({ page }) => {
     await open(page, (doc) => window.__tauriMock.route('undo', () => doc), seededDoc)
     await caretAt(page, 'p-1', 0)
