@@ -7,22 +7,25 @@
     rendered in modified paragraphs, because per-run styling and per-word spans
     competing in one cell muddies both.
   -->
-  <div class="diff-view">
+  <div ref="diffViewElement" class="diff-view">
     <div class="diff-header">
       <div class="diff-header-cell diff-left">Past version</div>
       <div class="diff-header-cell diff-right">Current</div>
       <div class="diff-nav">
-        <button
-          class="diff-nav-prev"
-          :disabled="!canGoPrevious"
-          @click="goToPreviousChange"
-        >Previous change</button>
-        <span class="diff-nav-position">Change {{ currentChange + 1 }} of {{ changeTargets.total }}</span>
-        <button
-          class="diff-nav-next"
-          :disabled="!canGoNext"
-          @click="goToNextChange"
-        >Next change</button>
+        <span v-if="changeTargets.total === 0" class="diff-nav-empty">No changes</span>
+        <template v-else>
+          <button
+            class="diff-nav-prev"
+            :disabled="!canGoPrevious"
+            @click="goToPreviousChange"
+          >Previous change</button>
+          <span class="diff-nav-position">Change {{ currentChange + 1 }} of {{ changeTargets.total }}</span>
+          <button
+            class="diff-nav-next"
+            :disabled="!canGoNext"
+            @click="goToNextChange"
+          >Next change</button>
+        </template>
       </div>
     </div>
     <div class="diff-body">
@@ -67,12 +70,14 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { paragraphToHTML, escapeHtml } from '../composables/useParagraphHTML.js'
 
 const props = defineProps({
   diffBlocks: { type: Array, default: () => [] },
 })
+
+const diffViewElement = ref(null)
 
 const GAP = '<div class="diff-gap">—</div>'
 
@@ -81,11 +86,12 @@ const GAP = '<div class="diff-gap">—</div>'
 /// uncounted.
 const CHANGED_PARAGRAPH_KINDS = new Set(['modified', 'added', 'removed'])
 
-/// Change targets of the whole diff, numbered from 0 in document order; `total`
-/// is their count. `titleStops[i]` is the value for section i's title row and
-/// `rowStops[i][j]` for its paragraph row j. The nav tests find targets with
-/// the bare `[data-change-index]` selector, which matches an empty value
-/// too. A non-target row must leave the attribute absent.
+/// Change targets of the whole diff, numbered from 0 in document order. The
+/// `total` field is their count. `titleStops[i]` is the value for section
+/// i's title row and `rowStops[i][j]` for its paragraph row j. The nav
+/// tests find targets with the bare `[data-change-index]` selector, which
+/// matches an empty value too. A non-target row must leave the attribute
+/// absent.
 const changeTargets = computed(() => {
   const titleStops = []
   const rowStops = []
@@ -133,15 +139,52 @@ const canGoNext = computed(() => currentChange.value < changeTargets.value.total
 function goToPreviousChange() {
   if (!canGoPrevious.value) return
   currentChange.value -= 1
+  scrollToCurrentChange()
 }
 
 function goToNextChange() {
   if (!canGoNext.value) return
   currentChange.value += 1
+  scrollToCurrentChange()
 }
 
-/// `data-current-change` value for a stop row: `"true"` only when that stop's
-/// index is the current change, so exactly one stop wears the mark and
+/// Brings the just-activated stop row into view after the index moves. The
+/// stop rows render on mount and never unmount, so the element carrying the
+/// new `data-change-index` exists as soon as the ref is updated. The view
+/// stays put on reset and on first render, because SPEC allows scrolling on
+/// navigation only.
+function scrollToCurrentChange() {
+  if (changeTargets.value.total === 0) return
+  const currentRow = diffViewElement.value?.querySelector(
+    `[data-change-index="${currentChange.value}"]`
+  )
+  currentRow?.scrollIntoView()
+}
+
+/// Walks the stops on Alt+ArrowDown and Alt+ArrowUp while a diff is mounted.
+/// The listener lives here, not in `useKeyboardShortcuts.js`, because the
+/// change index exists only in this component.
+function handleNavKeydown(event) {
+  if (!event.altKey) return
+  if (event.key === 'ArrowDown') {
+    goToNextChange()
+    event.preventDefault()
+  } else if (event.key === 'ArrowUp') {
+    goToPreviousChange()
+    event.preventDefault()
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('keydown', handleNavKeydown)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', handleNavKeydown)
+})
+
+/// `data-current-change` for a stop row. It holds `"true"` only when that
+/// stop's index is the current change, so exactly one stop wears the mark and
 /// non-target rows never do.
 function isCurrentChange(target) {
   if (target === undefined) return undefined
