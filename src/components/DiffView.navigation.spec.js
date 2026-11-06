@@ -4,7 +4,8 @@ import { nextTick } from 'vue'
 import DiffView from './DiffView.vue'
 
 // Navigation between the changes of a history diff (SPEC.md 5.12, S-001 … S-012
-// and S-016).
+// and S-016). `e2e/history-diff-nav.spec.js` carries the end-to-end sentences,
+// S-013 … S-015 and S-017.
 //
 // A change is a row, because the diff renders one row per paragraph. Each stop
 // needs an element to mark and to scroll to. These tests read the rows through
