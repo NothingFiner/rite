@@ -15,6 +15,10 @@ import { getSectionIdAtCursor } from './useEditorCursor.js'
 import { groupBlocks, computeFirstLineIndent } from './useSectionBlocks.js'
 import { generateParagraphId, generateSectionId, createParagraph, defaultTextStyle } from '../constants/DocumentModel.js'
 
+// The editor's CSS inch, in px. The renderer writes inches as value × 96 and
+// the readback divides by the same number, so the two stay exact inverses.
+const PX_PER_INCH = 96
+
 /// True for the non-content decorations interleaved with the real blocks — the
 /// page-break <hr>, page-number labels, and the click sentinel. domToBlocks
 /// and the keydown walk skip these so they never become model blocks or nav
@@ -25,30 +29,29 @@ export function isNonContentBlock(el) {
     el.classList?.contains('editor-sentinel')
 }
 
-/// Read a single `.paragraph` div into a Paragraph model. `zoom` is the editor's
-/// current font-size baseline (props.zoom): a run whose computed font-size
-/// differs from both the 16px default AND the zoom level is an explicit
-/// per-run size override worth preserving; one that merely tracks the zoom
-/// baseline is not. getComputedStyle is the per-run cost the localized
-/// syncFromDOM exists to minimize.
+/// Read one `.paragraph` div into a Paragraph model. `zoomPx` is the editor's
+/// current font size: a run whose computed size differs from both the 16px
+/// default and `zoomPx` carries an explicit size override; a run that only
+/// tracks the zoom needs no stored size. These getComputedStyle calls are the
+/// per-run cost the localized syncFromDOM exists to avoid.
 ///
-/// firstLineIndent is CLASSIFIED here (SPEC.md 5.18) and the sync paths no
-/// longer overwrite it: the renderer marks its automatic paragraphs with
-/// data-auto-indent="true" (value derived at render time), so a present marker
-/// reads null; without the marker the writer set something explicit — the
-/// `no-indent` class is explicit 0, else the value lives in the inline
-/// text-indent the renderer writes for explicit paragraphs. The style is read
-/// off child.style (the inline attribute only, NOT getComputedStyle — the
-/// computed style would echo the renderer's own rendering for every
-/// paragraph). A bare element with neither marker, class, nor inline indent is
-/// one the browser created (paste / IME): nothing was ever set, so it reads
-/// null and keeps following the automatic rule.
-export function parseParagraphElement(child, zoom) {
-  const style = window.getComputedStyle(child)
+/// Classify the first-line indent as automatic (`null`) or explicit (a number).
+/// The writer and the automatic rule can both produce 0, and both render as
+/// `.no-indent`, so the class alone says nothing about intent.
+/// `data-auto-indent="true"` means the renderer derived the value: the model
+/// keeps `null` and the next render recomputes it. Without the marker the
+/// writer chose the value: `.no-indent` is an explicit 0, and any other explicit
+/// value is the inline `text-indent`, in px. Read the inline attribute, not the
+/// computed style, because the computed style echoes the renderer's own output
+/// and would make every paragraph look explicit. An element with no marker, no
+/// class and no inline indent came from the browser (paste or IME input):
+/// nothing was set, so it stays automatic.
+export function parseParagraphElement(paragraphEl, zoomPx) {
+  const style = window.getComputedStyle(paragraphEl)
   const leftIndentPx = parseInt(style.marginLeft, 10) || 0
   const rightIndentPx = parseInt(style.marginRight, 10) || 0
   const elements = []
-  for (const run of child.childNodes) {
+  for (const run of paragraphEl.childNodes) {
     if (run.nodeType === Node.TEXT_NODE) {
       if (run.textContent) {
         elements.push({ textRun: { content: run.textContent, textStyle: defaultTextStyle() } })
@@ -64,44 +67,42 @@ export function parseParagraphElement(child, zoom) {
         italic: runStyle.fontStyle === 'italic',
         underline: runStyle.textDecorationLine.includes('underline'),
       })
-      const fs = parseInt(runStyle.fontSize, 10)
-      if (fs && fs !== 16 && fs !== zoom) textStyle.fontSize = fs
+      const fontSizePx = parseInt(runStyle.fontSize, 10)
+      if (fontSizePx && fontSizePx !== 16 && fontSizePx !== zoomPx) textStyle.fontSize = fontSizePx
       elements.push({ textRun: { content: run.innerText || '', textStyle } })
     }
   }
   if (elements.length === 0) {
     elements.push({ textRun: { content: '', textStyle: defaultTextStyle() } })
   }
-  // Classify firstLineIndent from the DOM (SPEC.md 5.18): null = AUTOMATIC
-  // (computeFirstLineIndent decides at render time), a number = EXPLICIT (the
-  // writer set it, including an explicit flush 0). The auto-indent marker wins
-  // over the class and the style; px→in is the exact inverse of the renderer's
-  // ×96 write (Math.round keeps inches at 2 decimals: 96px → 1, 48px → 0.5).
+  // The writer and the automatic rule both produce a flush paragraph, so
+  // `.no-indent` alone cannot distinguish explicit 0 from automatic 0. The
+  // marker decides; see the contract above.
   let firstLineIndent = null
-  if (child.dataset.autoIndent !== 'true') {
-    if (child.classList.contains('no-indent')) {
+  if (paragraphEl.dataset.autoIndent !== 'true') {
+    if (paragraphEl.classList.contains('no-indent')) {
       firstLineIndent = 0
     } else {
-      const rawIndent = child.style.textIndent
-      const px = rawIndent.endsWith('px') ? parseFloat(rawIndent) : NaN
-      if (!Number.isNaN(px)) firstLineIndent = Math.round(px / 96 * 100) / 100
+      const inlineIndentCss = paragraphEl.style.textIndent
+      const indentPx = inlineIndentCss.endsWith('px') ? parseFloat(inlineIndentCss) : NaN
+      // Inline indent is px; the model stores inches at 2 decimals.
+      if (!Number.isNaN(indentPx)) firstLineIndent = Math.round(indentPx / PX_PER_INCH * 100) / 100
     }
   }
-  // Resolve the paragraph id, STAMPING it back onto the DOM when missing. A
-  // paragraph created by the browser (paste / IME composition / an Enter edge
-  // case the keydown handler doesn't catch) can land in the sheet with no
-  // data-para-id; without this write-back the model + Rust get a fresh id while
-  // the DOM keeps none, so `applySearchHighlights` (which locates matches by
-  // [data-para-id]) can never find the paragraph and search matches render with
-  // no highlight. Stamping here keeps the invariant DOM data-para-id === model
-  // paragraph id that the reconciler, the search highlighter, and the Rust
-  // UpdateParagraph delta all depend on.
-  const id = child.dataset.paraId || generateParagraphId()
-  child.dataset.paraId = id
+  // Resolve the paragraph id and write it back to the DOM when missing. The
+  // browser can create a paragraph with no `data-para-id` (paste, IME input, an
+  // Enter edge case the keydown handler misses). Without the write-back the
+  // model and Rust get a fresh id while the DOM keeps none, and
+  // `applySearchHighlights`, which locates matches by `[data-para-id]`, cannot
+  // find the paragraph. The write-back keeps the invariant
+  // DOM data-para-id === model paragraph id that the reconciler, the search
+  // highlighter and the Rust UpdateParagraph delta all depend on.
+  const id = paragraphEl.dataset.paraId || generateParagraphId()
+  paragraphEl.dataset.paraId = id
   return {
     id,
-    leftIndent: leftIndentPx > 0 ? Math.round(leftIndentPx / 96 * 10) / 10 : null,
-    rightIndent: rightIndentPx > 0 ? Math.round(rightIndentPx / 96 * 10) / 10 : null,
+    leftIndent: leftIndentPx > 0 ? Math.round(leftIndentPx / PX_PER_INCH * 10) / 10 : null,
+    rightIndent: rightIndentPx > 0 ? Math.round(rightIndentPx / PX_PER_INCH * 10) / 10 : null,
     firstLineIndent, // null = automatic, number = explicit (SPEC.md 5.18)
     elements,
   }
@@ -120,27 +121,28 @@ export function readSectionTitleText(el) {
 }
 
 /// Walk the editor's flat sibling list (section-title markers interleaved with
-/// paragraph divs) into the block shape groupBlocks understands. `zoom` threads
-/// through to parseParagraphElement. Non-content decorations are skipped.
-export function domToBlocks(root, zoom) {
+/// paragraph divs) into the block shape groupBlocks understands. `zoomPx`
+/// threads through to parseParagraphElement. Non-content decorations are
+/// skipped.
+export function domToBlocks(root, zoomPx) {
   const blocks = []
-  for (const child of Array.from(root.children)) {
-    if (isNonContentBlock(child)) continue
+  for (const blockEl of Array.from(root.children)) {
+    if (isNonContentBlock(blockEl)) continue
 
-    if (child.classList?.contains('section-title')) {
+    if (blockEl.classList?.contains('section-title')) {
       blocks.push({
         kind: 'section-title',
-        sectionId: child.dataset.sectionId || generateSectionId(),
-        sectionType: child.dataset.sectionType || 'section',
-        title: readSectionTitleText(child),
-        hidden: child.dataset.sectionHidden === 'true',
+        sectionId: blockEl.dataset.sectionId || generateSectionId(),
+        sectionType: blockEl.dataset.sectionType || 'section',
+        title: readSectionTitleText(blockEl),
+        hidden: blockEl.dataset.sectionHidden === 'true',
       })
-    } else if (child.classList?.contains('paragraph')) {
+    } else if (blockEl.classList?.contains('paragraph')) {
       blocks.push({
         kind: 'paragraph',
-        sectionId: child.dataset.sectionId,
-        paragraphId: child.dataset.paraId,
-        paragraph: parseParagraphElement(child, zoom),
+        sectionId: blockEl.dataset.sectionId,
+        paragraphId: blockEl.dataset.paraId,
+        paragraph: parseParagraphElement(blockEl, zoomPx),
       })
     }
   }
@@ -201,6 +203,54 @@ export function adjustOffsetForReplace(oldText, newText, offset) {
   return prefix
 }
 
+/// Write the resolved first-line indent into each live paragraph and re-stamp
+/// `data-auto-indent` on automatic ones. The browser creates paragraphs with no
+/// inline style (Enter, paste), so without this they render flush until the next
+/// full render. The marker keeps the next readback reading `null` instead of
+/// freezing the computed number as explicit. `domParagraphs` holds the sheet's
+/// (or one section's) `.paragraph` elements in the same order as the paragraph
+/// blocks in `blocks`.
+function stampResolvedIndents(blocks, domParagraphs) {
+  let paragraphIndex = 0
+  for (let blockIndex = 0; blockIndex < blocks.length; blockIndex++) {
+    if (blocks[blockIndex].kind !== 'paragraph') continue
+    const paragraphEl = domParagraphs[paragraphIndex]
+    paragraphIndex++
+    if (!paragraphEl) continue
+    const parsedIndent = blocks[blockIndex].paragraph.firstLineIndent
+    if (parsedIndent === null) paragraphEl.dataset.autoIndent = 'true'
+    const resolvedIndent = typeof parsedIndent === 'number'
+      ? parsedIndent
+      : computeFirstLineIndent(blocks, blockIndex)
+    paragraphEl.style.textIndent = resolvedIndent > 0
+      ? `${Math.round(resolvedIndent * PX_PER_INCH)}px`
+      : '0px'
+  }
+}
+
+/// Return the blocks the reconciler will compare against, with automatic
+/// paragraphs shown as display copies: the computed number plus `autoIndent`.
+/// The reconciler renders each block to HTML and keeps a block whose HTML
+/// matches, so an automatic paragraph must carry the same baked shape
+/// buildEditorHTML produces; otherwise its HTML would differ on every pass and
+/// an unchanged block would be replaced. Explicit paragraphs already hold a
+/// number and pass through unchanged, so the emitted model keeps the parsed
+/// value (`null` or a number), never the baked one.
+function toDisplayBlocks(blocks) {
+  return blocks.map((block, blockIndex) => {
+    if (block.kind !== 'paragraph') return block
+    if (typeof block.paragraph.firstLineIndent === 'number') return block
+    return {
+      ...block,
+      paragraph: {
+        ...block.paragraph,
+        firstLineIndent: computeFirstLineIndent(blocks, blockIndex),
+        autoIndent: true,
+      },
+    }
+  })
+}
+
 /// Build the two readback entry points bound to the reactive state editorDisplay
 /// owns. `sheetRef` is the contenteditable root; `modelRef` is the current doc
 /// (used for the empty-model guard); `zoomRef` is props.zoom (the font-size
@@ -221,54 +271,24 @@ export function useEditorReadback({ sheetRef, modelRef, zoomRef, lastRenderedBlo
     const blocks = domToBlocks(root, zoomRef.value)
     bakeChapterIndices(blocks)
 
-    // Reflect the DISPLAY indent back into the live DOM so paragraphs created
-    // by the browser (which don't copy inline styles) show the right indent:
-    // an explicit parsed number shows itself, an automatic paragraph shows the
-    // computed rule and is re-stamped data-auto-indent="true" so the next
-    // readback still classifies it as automatic (SPEC.md 5.18). The parsed
-    // value itself is never overwritten here — the emitted sections must carry
-    // what the parser read, null or explicit number, not a derived number.
-    const domParas = Array.from(root.querySelectorAll('.paragraph'))
-    let pIdx = 0
-    for (let i = 0; i < blocks.length; i++) {
-      if (blocks[i].kind !== 'paragraph') continue
-      const dom = domParas[pIdx]
-      pIdx++
-      if (!dom) continue
-      const parsed = blocks[i].paragraph.firstLineIndent
-      if (parsed === null) dom.dataset.autoIndent = 'true'
-      const indent = typeof parsed === 'number' ? parsed : computeFirstLineIndent(blocks, i)
-      dom.style.textIndent = indent > 0 ? `${Math.round(indent * 96)}px` : '0px'
-    }
+    const liveParagraphs = Array.from(root.querySelectorAll('.paragraph'))
+    stampResolvedIndents(blocks, liveParagraphs)
 
-    let sections = groupBlocks(blocks)
+    const sections = groupBlocks(blocks)
     // Defensive: every section must have at least one paragraph to type into.
-    for (const s of sections) {
-      if (!s.paragraphs || s.paragraphs.length === 0) s.paragraphs.push(createParagraph())
+    for (const section of sections) {
+      if (!section.paragraphs || section.paragraphs.length === 0) section.paragraphs.push(createParagraph())
     }
 
-    // Keep the retained block list in sync with the live DOM so a later external
-    // change diffs against reality, not a pre-typing snapshot. The reconciler
-    // string-compares these blocks against model-derived ones carrying the
-    // computeFirstLineIndent number buildEditorHTML bakes on, so an automatic
-    // paragraph (parsed firstLineIndent null) goes in as a display copy: a
-    // shallow copy of the fresh parsed object with the computed number and
-    // autoIndent stamped on. Explicit paragraphs hold numbers already and pass
-    // through untouched, so the sections payload emitted above keeps sharing
-    // the parsed objects (null or number) that model must carry.
-    lastRenderedBlocks.value = blocks.map((b, i) => {
-      if (b.kind !== 'paragraph') return b
-      if (typeof b.paragraph.firstLineIndent === 'number') return b
-      return {
-        ...b,
-        paragraph: {
-          ...b.paragraph,
-          firstLineIndent: computeFirstLineIndent(blocks, i),
-          autoIndent: true,
-        },
-      }
-    })
-    lastSectionCount.value = blocks.filter(b => b.kind === 'section-title').length
+    // Retain the blocks the reconciler compares against on the next external
+    // change. It renders each block to HTML and keeps a block whose HTML
+    // matches. An automatic paragraph therefore goes in with the same baked
+    // number and autoIndent flag buildEditorHTML produces; otherwise its HTML
+    // would differ on every pass and the reconciler would replace an unchanged
+    // block. The emitted sections above keep the parsed null, not the baked
+    // number.
+    lastRenderedBlocks.value = toDisplayBlocks(blocks)
+    lastSectionCount.value = blocks.filter(block => block.kind === 'section-title').length
 
     skipNextWatcher.value = true
     emit('syncSections', sections)
@@ -332,7 +352,7 @@ export function useEditorReadback({ sheetRef, modelRef, zoomRef, lastRenderedBlo
     // re-baking it would need an O(document) chapter walk. (If the section
     // somehow isn't in the baseline the gate above caught it, but guard anyway.)
     const prevTitle = lastRenderedBlocks.value.find(
-      b => b.kind === 'section-title' && b.sectionId === sectionId
+      block => block.kind === 'section-title' && block.sectionId === sectionId
     )
     if (!prevTitle) { fullSyncFromDOM(); return }
     titleBlock.chapterIndex = prevTitle.chapterIndex
@@ -347,67 +367,38 @@ export function useEditorReadback({ sheetRef, modelRef, zoomRef, lastRenderedBlo
       })
     }
 
-    // Reflect the display indent back into this section's live DOM paragraphs
-    // only, exactly as fullSyncFromDOM does for the whole sheet: an explicit
-    // parsed number shows itself, an automatic paragraph (parsed null) shows
-    // the computed rule and keeps data-auto-indent="true" stamped, and nothing
-    // overwrites what parseParagraphElement read — the section payload carries
-    // the parsed values. The local list index IS the block index
-    // computeFirstLineIndent expects (blocks[0] is this section's title), so a
-    // section's indents stay self-contained.
-    let pi = 0
-    for (let i = 0; i < blocks.length; i++) {
-      if (blocks[i].kind !== 'paragraph') continue
-      const dom = paraEls[pi]
-      pi++
-      if (!dom) continue
-      const parsed = blocks[i].paragraph.firstLineIndent
-      if (parsed === null) dom.dataset.autoIndent = 'true'
-      const indent = typeof parsed === 'number' ? parsed : computeFirstLineIndent(blocks, i)
-      dom.style.textIndent = indent > 0 ? `${Math.round(indent * 96)}px` : '0px'
-    }
+    // Same rule as fullSyncFromDOM, for this section only. `computeFirstLineIndent`
+    // reads the list the block sits in, and blocks[0] is this section's title,
+    // so the section's indents stay self-contained.
+    stampResolvedIndents(blocks, paraEls)
 
     // Group this section's blocks back into a Section (defensive ≥1 paragraph).
     const sections = groupBlocks(blocks)
-    const s = sections[0]
-    if (!s) { fullSyncFromDOM(); return }
-    if (!s.paragraphs || s.paragraphs.length === 0) s.paragraphs.push(createParagraph())
+    const section = sections[0]
+    if (!section) { fullSyncFromDOM(); return }
+    if (!section.paragraphs || section.paragraphs.length === 0) section.paragraphs.push(createParagraph())
 
     // Splice the section's blocks into the retained list, replacing its old
-    // title + paragraphs in place. Section-title count is unchanged by a
-    // within-section edit, so lastSectionCount stays correct without recompute.
-    const all = lastRenderedBlocks.value
-    const startIdx = all.findIndex(
-      b => b.kind === 'section-title' && b.sectionId === sectionId
+    // title and paragraphs in place. A within-section edit does not change the
+    // section-title count, so lastSectionCount stays correct without a recompute.
+    const baseline = lastRenderedBlocks.value
+    const startIdx = baseline.findIndex(
+      block => block.kind === 'section-title' && block.sectionId === sectionId
     )
     if (startIdx === -1) { fullSyncFromDOM(); return }
     let endIdx = startIdx + 1
-    while (endIdx < all.length && all[endIdx].kind !== 'section-title') endIdx++
-    // Same display-copy rule as fullSyncFromDOM: automatic paragraphs (parsed
-    // null) are spliced in as shallow copies carrying the computed number +
-    // autoIndent, keeping the reconciler's string compare consistent; explicit
-    // parsed paragraphs splice as-is (fresh objects, not the store's reactive
-    // ones). The syncSection emitted above shares the parsed objects itself,
-    // so the model keeps the parsed values, never baked computed numbers.
-    const baselineBlocks = all.slice(0, startIdx).concat(
-      blocks.map((b, i) => {
-        if (b.kind !== 'paragraph') return b
-        if (typeof b.paragraph.firstLineIndent === 'number') return b
-        return {
-          ...b,
-          paragraph: {
-            ...b.paragraph,
-            firstLineIndent: computeFirstLineIndent(blocks, i),
-            autoIndent: true,
-          },
-        }
-      }),
-      all.slice(endIdx)
+    while (endIdx < baseline.length && baseline[endIdx].kind !== 'section-title') endIdx++
+    // Same display-copy rule as fullSyncFromDOM: the reconciler compares
+    // rendered HTML, so an automatic paragraph must carry the baked number and
+    // autoIndent. The emitted section keeps the parsed values.
+    const baselineBlocks = baseline.slice(0, startIdx).concat(
+      toDisplayBlocks(blocks),
+      baseline.slice(endIdx)
     )
     lastRenderedBlocks.value = baselineBlocks
 
     skipNextWatcher.value = true
-    emit('syncSection', { id: s.id, title: s.title, sectionType: s.sectionType, hidden: s.hidden, paragraphs: s.paragraphs })
+    emit('syncSection', { id: section.id, title: section.title, sectionType: section.sectionType, hidden: section.hidden, paragraphs: section.paragraphs })
   }
 
   return { syncFromDOM, fullSyncFromDOM }
