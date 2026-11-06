@@ -50,9 +50,9 @@ export function buildEditorHTML(sections, { freshSectionId, formatChapter } = {}
 
   for (let i = 0; i < blocks.length; i++) {
     if (blocks[i].kind !== 'paragraph') continue
-    // An automatic indent (`null`) is computed onto the copy and flagged there.
-    // The store keeps `null` (SPEC.md 5.18). An explicit number is the writer's
-    // own value, so the renderer neither recomputes it nor flags it.
+    // The store keeps `null` (SPEC.md 5.18). Writing the computed number back
+    // would freeze an automatic indent into an explicit one. The copy carries
+    // the flag, and `paragraphToHTML` turns that into the marker.
     if (blocks[i].paragraph.firstLineIndent == null) {
       blocks[i].paragraph.firstLineIndent = computeFirstLineIndent(blocks, i)
       blocks[i].paragraph.autoIndent = true
