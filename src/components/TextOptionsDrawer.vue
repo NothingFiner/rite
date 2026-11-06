@@ -285,6 +285,14 @@ const palette = []
   padding-right: 24px;
 }
 
+/* S-017: clickable controls show the pointer cursor, as the zoom buttons
+   already do. Each control's browser default says otherwise. */
+.color-swatch,
+.theme-preset,
+.drawer-input {
+  cursor: pointer;
+}
+
 /* The swatch and preset rows wrap: a full palette overflows a fixed-width
    drawer. */
 .swatch-row,
@@ -302,6 +310,14 @@ const palette = []
   /* UA button padding would dwarf a 16px tint box. */
   padding: 0;
   appearance: none;
+}
+
+/* S-016: aria-current alone changes nothing on screen. The outline gives the
+   chosen swatch a visible mark, and the offset leaves a gap, so the ring stays
+   readable against any swatch's fill. */
+.color-swatch[aria-current="true"] {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .theme-preset {
