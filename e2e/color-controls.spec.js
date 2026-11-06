@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { installTauriIpc } from './helpers/tauri-ipc.js'
 
-// Colour controls in the Text Options drawer (SPEC.md 5.13, S-007, S-008 and
+// Color controls in the Text Options drawer (SPEC.md 5.13, S-007, S-008 and
 // S-015), in real Chromium.
 //
 // The unit layer (src/components/TextOptionsDrawer.spec.js and
@@ -31,7 +31,7 @@ function paragraph(id, body) {
 }
 
 const DOC = {
-  title: 'Colour',
+  title: 'Color',
   author: 'Author Name',
   authorContact: '',
   hasTOC: false,
@@ -83,14 +83,14 @@ test('S-007: the Forest preset repaints the sheet with the drawer still open', a
 test('S-008: a mixed background and text paint the sheet, and the background survives the text pick', async ({ page }) => {
   await openTextOptions(page)
 
-  await expect(swatch(page, 'Background Sky')).toBeVisible()
-  await swatch(page, 'Background Sky').click()
+  await expect(swatch(page, 'Background Sky background')).toBeVisible()
+  await swatch(page, 'Background Sky background').click()
 
   await expect(sheet(page)).toHaveCSS('background-color', 'rgb(219, 225, 241)')
   await expect(sheet(page)).toHaveCSS('color', 'rgb(81, 83, 89)')
 
-  await expect(swatch(page, 'Text Sepia')).toBeVisible()
-  await swatch(page, 'Text Sepia').click()
+  await expect(swatch(page, 'Text Sepia text')).toBeVisible()
+  await swatch(page, 'Text Sepia text').click()
 
   await expect(sheet(page)).toHaveCSS('color', 'rgb(102, 75, 71)')
   await expect(sheet(page)).toHaveCSS('background-color', 'rgb(219, 225, 241)')
@@ -99,16 +99,16 @@ test('S-008: a mixed background and text paint the sheet, and the background sur
 test('S-015: Tab reaches the swatches and Enter applies the focused one', async ({ page }) => {
   await openTextOptions(page)
 
-  // The manuscript format select is the last control before the colour rows.
+  // The manuscript format select is the last control before the color rows.
   await page.locator('.text-options select').last().focus()
   await page.keyboard.press('Tab')
 
-  expect(await focusedName(page)).toBe('Background Mist')
+  expect(await focusedName(page)).toBe('Background Mist background')
 
-  // The text and accent rows already hold two of the Mist colours, which
+  // The text and accent rows already hold two of the Mist colors, which
   // disables them. A browser tab order skips a disabled button.
   await page.keyboard.press('Tab')
-  expect(await focusedName(page)).toBe('Background Sepia')
+  expect(await focusedName(page)).toBe('Background Sepia background')
 
   await page.keyboard.press('Enter')
 

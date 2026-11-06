@@ -37,7 +37,7 @@ export function useTheme(viewModeRef) {
 
   const currentTheme = computed(() => themes[clampThemeIndex(editorTheme.value)])
 
-  // Stub (SPEC 5.13). The colour refs start on the first preset and the preset
+  // Stub (SPEC 5.13). The color refs start on the first preset and the preset
   // match tracks the index. The three setters are empty.
   const editorBg = ref(themes[0].bg)
   const editorText = ref(themes[0].text)
