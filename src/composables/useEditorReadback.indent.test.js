@@ -4,11 +4,9 @@ import { useEditorReadback } from './useEditorReadback.js'
 
 // First-line indent after a DOM→model readback (SPEC.md 5.18, S-004/S-005).
 //
-// `null` means "automatic" (the renderer decides from the paragraph's position),
-// a number means the writer set it. The renderer marks an automatic paragraph
-// with data-auto-indent="true" so the readback can tell the two apart; an
-// explicit indent lives in the inline text-indent the renderer already emits,
-// and an explicit 0 keeps the existing `no-indent` class.
+// `null` means automatic, a number means the writer set it. The renderer marks
+// automatic paragraphs with `data-auto-indent="true"`; an explicit indent lives
+// in the inline `text-indent`, and an explicit 0 keeps the `no-indent` class.
 
 describe('first-line indent readback', () => {
   let root

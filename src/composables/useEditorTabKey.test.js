@@ -1,10 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { resolveTabAction } from './useEditorTabKey.js'
 
-// The Tab key's meaning (SPEC.md 5.18). These are the rules that cannot be
-// observed in jsdom because they depend on a real caret and real editing; the
-// helper reduces them to a pure decision, and the e2e layer proves the editor
-// performs the decision.
+// The Tab key's meaning (SPEC.md 5.18), reduced to a pure decision. jsdom cannot
+// exercise a real caret; the e2e layer proves the editor performs the decision.
 
 const base = {
   key: 'Tab',
@@ -29,8 +27,7 @@ describe('resolveTabAction', () => {
   it('S-011: Shift+Tab deletes the tab before the caret and otherwise does nothing', () => {
     expect(resolveTabAction({ ...base, shiftKey: true, tabBeforeCaret: true }))
       .toEqual({ type: 'delete-tab' })
-    // Not at a paragraph start and no tab to its left: no text may change and
-    // the indent must not move.
+    // No tab to the left and not at a paragraph start: nothing may change.
     expect(resolveTabAction({ ...base, shiftKey: true, atParagraphStart: false, tabBeforeCaret: false }))
       .toEqual({ type: 'none' })
   })

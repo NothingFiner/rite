@@ -1,9 +1,8 @@
 //! Tab characters and first-line indent in the exports (SPEC.md 5.18,
 //! S-017…S-019).
 //!
-//! The exporters are pure (`document_to_docx` / `document_to_epub`), so the
-//! tests render a document and read the package back with the same `zip` crate
-//! the exporters write it with — the same pattern as `tests/epub_export.rs`.
+//! The exporters are pure, so each test renders a document and reads the package
+//! back with the same `zip` crate that wrote it, as `tests/epub_export.rs` does.
 
 use rite_lib::document::{Document, Element, Paragraph, Section, SectionType, TextRun, TextStyle};
 use rite_lib::export_docx::document_to_docx;
@@ -93,7 +92,7 @@ fn s_018_docx_export_writes_the_first_line_indent_in_twips() {
     let package = entries(document_to_docx(&sample_document()));
     let document_xml = entry(&package, "word/document.xml");
 
-    // 0.5 in = 720 twentieths of a point.
+    // 0.5 in = 720 twips.
     assert!(
         document_xml.contains("w:firstLine=\"720\""),
         "expected <w:ind w:firstLine=\"720\"/> in word/document.xml"
