@@ -1,18 +1,19 @@
 import { test, expect } from '@playwright/test'
 import { emitMenu, installTauriIpc } from './helpers/tauri-ipc.js'
 
-// Navigating the changes of a history diff (SPEC.md 5.12, S-013 … S-015, S-017).
+// The history diff's change navigation, end to end (SPEC.md 5.12, S-013 … S-015,
+// S-017).
 //
-// The unit specs next door cover the marking, the counter and the ends guards
-// through the component's public data attributes. What only a real page can show
-// is that the pieces reach the user end to end: opening a version's diff lands
-// on the first change, Next really moves the mark down a long manuscript, and
-// the Alt+Arrow shortcut is wired while a diff is mounted.
+// `src/components/DiffView.navigation.spec.js` covers the marking, the counter
+// and the ends guards through the component's public data attributes. Those
+// sentences run in jsdom, which has no layout, and that file mocks
+// `scrollIntoView` to observe it. The sentences here need the real thing: a
+// laid-out page, a scrolling ancestor, and key events delivered to `document`.
 //
-// The backend is mocked, so `diff_against_current` returns a hand-built
-// `Vec<SectionDiff>` in the shape `src-tauri/src/diff.rs` serialises: `type` is
-// the tag on each block, paragraph diffs carry `type` too, and a modified
-// paragraph's word spans are `{ kind, text }`.
+// `diff_against_current` is mocked, so the specs build `SectionDiff` by hand in
+// the shape `src-tauri/src/diff.rs` serialises. A block and a paragraph diff
+// each carry `type` as their tag. A modified paragraph carries its word spans
+// as `{ kind, text }`.
 
 function paragraph(id, text) {
   return {
@@ -62,7 +63,7 @@ const DOC = {
 
 const HISTORY_ENTRIES = [{ timestamp: '2026-11-03T21-05-00-000', kind: 'delta', label: 'Autosave' }]
 
-/// Three paragraph edits inside one section: three stops, no unchanged rows.
+/// Three paragraph edits, so the diff holds the three stops S-013 expects.
 function threeChanges() {
   return [
     {
@@ -81,8 +82,8 @@ function threeChanges() {
   ]
 }
 
-/// A manuscript long enough that the second stop starts below the fold: forty
-/// unchanged paragraphs, one edit, forty more, then a second edit.
+/// Forty unchanged paragraphs push the second stop below the fold, which S-014
+/// needs in order to show that Next scrolls at all.
 function twoChangesFarApart() {
   const rows = []
   for (let i = 0; i < 40; i += 1) rows.push(unchangedPara(`lead-${i}`, `Lead paragraph ${i}.`))
@@ -102,8 +103,8 @@ function twoChangesFarApart() {
   ]
 }
 
-/// Open a document that has a sidecar path (the version list hides itself
-/// otherwise), select the version, and switch the canvas to its diff.
+/// Opens one version's diff. The version list needs a sidecar path, so the test
+/// opens a document before it enters the History view.
 async function openVersionDiff(page, diffBlocks) {
   await installTauriIpc(page, { doc: DOC, openPaths: ['/tmp/novel.rite'] })
   await page.addInitScript(
@@ -151,8 +152,8 @@ test('S-014: Next marks the second changed paragraph current and brings it into 
   await expect(position(page)).toHaveText('Change 1 of 2')
 
   const second = page.locator('[data-change-index="1"]')
-  // The second stop is far down the manuscript, so it cannot already be on
-  // screen — otherwise "brought into view" would pass without scrolling.
+  // The second stop sits far below the fold. If it were already on screen, the
+  // assertion after Next would pass without any scrolling.
   await expect(second).not.toBeInViewport()
 
   await page.locator('.diff-nav-next').click()
@@ -169,8 +170,8 @@ test('S-015: Previous is disabled on the first change and pressing it changes no
   await expect(previous).toBeDisabled()
   await expect(position(page)).toHaveText('Change 1 of 3')
 
-  // A disabled button ignores activation; force the click so the assertion is
-  // about the state that follows, not about Playwright's actionability wait.
+  // Playwright waits for a disabled button to become enabled, so force the
+  // click. The assertion then covers the state that follows the activation.
   await previous.click({ force: true })
 
   await expect(position(page)).toHaveText('Change 1 of 3')

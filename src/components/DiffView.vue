@@ -7,8 +7,8 @@
     the left tinted red. Added (new since that version) appears on the right
     tinted green. A modified paragraph renders word-level spans: deleted words
     struck through on the left, inserted words highlighted on the right.
-    Run-level styling (bold/italic) is not rendered in modified paragraphs —
-    the diff is about text changes, and mixing per-run styling with per-word
+    Run-level styling (bold/italic) is not rendered in modified paragraphs.
+    The diff is about text changes, and mixing per-run styling with per-word
     spans muddies both.
   -->
   <div class="diff-view">
@@ -16,11 +16,10 @@
       <div class="diff-header-cell diff-left">Past version</div>
       <div class="diff-header-cell diff-right">Current</div>
       <!--
-        STUB (SPEC 5.12). The controls are present so the navigation tests reach
-        their assertions instead of failing on a missing element; none of the
-        behaviour behind them exists yet. `data-change-index` is deliberately
-        empty and `data-current-change` is pinned to the first section's title
-        row — both are placeholders, not an enumeration of changes.
+        STUB (SPEC 5.12). These controls exist so the navigation tests reach
+        their assertions instead of failing on a missing element. No behaviour
+        stands behind them. `data-change-index` is empty on every row.
+        `data-current-change` is pinned to the first section's title row.
       -->
       <div class="diff-nav">
         <button class="diff-nav-prev" disabled>Previous change</button>
@@ -159,7 +158,7 @@ function paragraphHTML(pd, side) {
 
 <style scoped>
 .diff-view {
-  /* Flows inside the App scroll-layer; the page scrolls. Each section is a
+  /* Flows inside the App scroll-layer, so the page scrolls. Each section is a
      title row plus one row per paragraph, so left/right cells stay aligned
      row-by-row as the page scrolls. */
   font-family: var(--editor-font, Georgia, serif);

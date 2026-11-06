@@ -6,11 +6,10 @@ import DiffView from './DiffView.vue'
 // Navigation between the changes of a history diff (SPEC.md 5.12, S-001 … S-012
 // and S-016).
 //
-// A change is a row: the diff renders one row per paragraph, so each stop has an
-// element to mark and scroll to. These tests read those rows through the public
-// `data-change-index` / `data-current-change` contract rather than through
-// component internals, so the implementation is free to compute targets however
-// it likes.
+// A change is a row, because the diff renders one row per paragraph. Each stop
+// needs an element to mark and to scroll to. These tests read the rows through
+// `data-change-index` and `data-current-change`, so the implementation may
+// compute targets however it likes.
 
 function paragraph(id, content) {
   return {
@@ -129,7 +128,7 @@ describe('DiffView change targets', () => {
       ]),
     ])
 
-    // Every row still renders — the unchanged ones are simply not stops.
+    // Every row renders. The unchanged ones are simply not stops.
     expect(wrapper.findAll('.diff-row').length).toBeGreaterThan(1)
     expect(indices(wrapper)).toEqual(['0'])
   })
