@@ -81,13 +81,32 @@ impl HistoryRecord {
 /// The on-disk `.rite` file: the live document plus its embedded history.
 /// `history` defaults to empty so a hand-written or partially-migrated file
 /// without a history array still deserializes.
+///
+/// `schema_version` tags the on-disk format generation the file was written
+/// with. It is stamped on every write (see `write_rite_file`) and checked on
+/// every read so a future breaking format change can be detected and migrated
+/// rather than silently misread. `#[serde(default)]` makes the field default to
+/// `0` when it is absent from the JSON — every `.rite` written before this field
+/// existed is a legacy version-0 file, and must still open. `CURRENT_RITE_SCHEMA_VERSION`
+/// is what a freshly written file is stamped with today; bump it the moment the
+/// on-disk shape changes in a way old builds can't understand.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct RiteFile {
     pub document: Document,
     #[serde(default)]
     pub history: Vec<HistoryRecord>,
+    #[serde(default)]
+    pub schema_version: u32,
 }
+
+/// The `.rite` schema version this build writes and understands. A file whose
+/// `schemaVersion` is higher than this is from a newer Rite and is rejected on
+/// read (see `read_rite_file` / `migrate_rite_file`) rather than parsed as if
+/// it were today's shape — guessing at an unknown format would silently
+/// corrupt the user's document. Bump this only when the on-disk structure
+/// changes; pair it with a migration step in `migrate_rite_file`.
+pub const CURRENT_RITE_SCHEMA_VERSION: u32 = 2;
 
 /// A sortable, filesystem-safe UTC timestamp with millisecond precision.
 /// Format: `2026-07-19T10-00-00-123`. Fixed width means `String::cmp` orders
@@ -97,8 +116,11 @@ pub fn current_timestamp() -> String {
 }
 
 /// Write `content` to `path` via a sibling `.tmp` file then atomic rename, so a
-/// crash mid-write cannot leave a half-written `.rite`.
-fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
+/// crash mid-write cannot leave a half-written file. Generic over `AsRef<[u8]>`
+/// so it serves both the text exports (a `&str` / `&String`) and the binary DOCX
+/// export (a `&[u8]`); `&str` satisfies `AsRef<[u8]>` via its byte view, so the
+/// existing text callers are unchanged.
+pub(crate) fn atomic_write(path: &Path, content: impl AsRef<[u8]>) -> Result<(), String> {
     let tmp = format!("{}.tmp", path.to_string_lossy());
     fs::write(&tmp, content).map_err(|e| e.to_string())?;
     fs::rename(&tmp, path).map_err(|e| e.to_string())?;
@@ -106,8 +128,19 @@ fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
 }
 
 /// Serialize a `RiteFile` to pretty JSON and atomically write it to `path`.
-pub fn write_rite_file(path: &Path, file: &RiteFile) -> Result<(), String> {
-    let json = serde_json::to_string_pretty(file).map_err(|e| e.to_string())?;
+///
+/// This is the single authority that stamps `schema_version` on every written
+/// file: it takes ownership of the `RiteFile`, overwrites `schema_version`
+/// with `CURRENT_RITE_SCHEMA_VERSION`, and only then serializes. Making the
+/// writer the authority — rather than stamping in `build_rite_file` — means
+/// nothing can bypass the stamp on the way to disk. Every call site that
+/// constructs a `RiteFile` and hands it to `write_rite_file` is covered
+/// automatically, and a caller that builds a `RiteFile` for some other purpose
+/// (a test, an in-memory clone) is not forced to remember the stamp. The
+/// `mut`/move signature makes the overwrite intentional and visible.
+pub fn write_rite_file(path: &Path, mut file: RiteFile) -> Result<(), String> {
+    file.schema_version = CURRENT_RITE_SCHEMA_VERSION;
+    let json = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
     atomic_write(path, &json)
 }
 
@@ -116,15 +149,77 @@ pub fn write_rite_file(path: &Path, file: &RiteFile) -> Result<(), String> {
 /// pre-embedding bare-`Document` shape (a top-level `Document` with no
 /// wrapper) and wraps it with empty history. Either way the result is a
 /// self-contained `RiteFile`.
+///
+/// A file whose parsed `schema_version` is *higher* than
+/// `CURRENT_RITE_SCHEMA_VERSION` is from a newer build of Rite than this one,
+/// and is rejected with a clear error rather than parsed as if it were today's
+/// shape — reading an unknown format by guesswork would silently corrupt the
+/// user's document. The bare-`Document` fallback path predates the field
+/// entirely, so it is constructed as a version-0 (legacy) file and is allowed.
 pub fn read_rite_file(json: &str) -> Result<RiteFile, String> {
     if let Ok(file) = serde_json::from_str::<RiteFile>(json) {
+        if file.schema_version > CURRENT_RITE_SCHEMA_VERSION {
+            return Err(format!(
+                "unsupported .rite schema version {} (this build of rite supports up to version {}); update rite to open this file",
+                file.schema_version, CURRENT_RITE_SCHEMA_VERSION
+            ));
+        }
         return Ok(file);
     }
+    // Pre-embedding `.rite`: a top-level `Document` with no wrapper. It
+    // predates `schema_version` too, so it is a legacy version-0 file.
     let document: Document = serde_json::from_str(json).map_err(|e| e.to_string())?;
     Ok(RiteFile {
         document,
         history: Vec::new(),
+        schema_version: 0,
     })
+}
+
+/// Apply any forward migrations a loaded `RiteFile` needs before it is handed
+/// to the app. Intended to be called immediately after `read_rite_file` on the
+/// open path (see `commands::open_document`), so the rest of the app only ever
+/// sees a file at the current schema.
+///
+/// v2 (5.10) removed the document-level epigram fields and added
+/// `Section.hidden`. Neither needs a data migration: serde ignores the stale
+/// `hasEpigram`/`epigramText` keys in old files, `hidden` defaults to `false`
+/// for sections written before the field, and old files whose embedded
+/// history contained epigram metadata deltas already failed deserialization
+/// in `read_rite_file` (the epigram feature removal is a deliberate break —
+/// the user re-imports affected documents fresh). A version *higher* than
+/// this build knows about is a hard error for the same reason as in
+/// `read_rite_file`: an unknown format must not be guessed at.
+pub fn migrate_rite_file(mut file: RiteFile) -> Result<RiteFile, String> {
+    match file.schema_version {
+        0 => {
+            // Legacy: no migration needed, the v0 shape already deserializes
+            // into the current `RiteFile`. Leave the version as-is so a
+            // subsequent save stamps the current version via `write_rite_file`.
+            Ok(file)
+        }
+        1 => {
+            // v1 deserializes directly into the v2 shape (see the doc
+            // comment); a resave stamps the current version via
+            // `write_rite_file`.
+            let _ = &mut file; // no migration steps needed; keep the binding
+                               // mutable so future arms can mutate in place.
+            Ok(file)
+        }
+        2 => {
+            // Current: nothing to do.
+            let _ = &mut file;
+            Ok(file)
+        }
+        v if v > CURRENT_RITE_SCHEMA_VERSION => Err(format!(
+            "unsupported .rite schema version {} (this build of rite supports up to version {}); update rite to open this file",
+            v, CURRENT_RITE_SCHEMA_VERSION
+        )),
+        _ => Err(format!(
+            "unsupported .rite schema version {} (this build of rite supports up to version {}); update rite to open this file",
+            file.schema_version, CURRENT_RITE_SCHEMA_VERSION
+        )),
+    }
 }
 
 // --- Legacy sidecar migration ----------------------------------------------
@@ -367,12 +462,11 @@ mod tests {
             author: "A".to_string(),
             author_contact: "C".to_string(),
             has_toc: false,
-            has_epigram: false,
-            epigram_text: String::new(),
             sections: vec![Section {
                 id: "s1".to_string(),
                 title: String::new(),
                 section_type: SectionType::Section,
+                hidden: false,
                 paragraphs: vec![create_paragraph("p1", text)],
             }],
         }
@@ -412,6 +506,7 @@ mod tests {
         let file = RiteFile {
             document: doc_text("hello"),
             history: vec![snapshot(0, "hello"), delta(5, "hello", "hello world")],
+            schema_version: CURRENT_RITE_SCHEMA_VERSION,
         };
         let json = serde_json::to_string_pretty(&file).unwrap();
         let back: RiteFile = serde_json::from_str(&json).unwrap();
@@ -421,25 +516,32 @@ mod tests {
     #[test]
     fn write_then_read_rite_file_roundtrips() {
         let tmp = TempDir::new("write_read");
+        // Build a file with a stale version (0); write_rite_file is the
+        // authority and must stamp the current version on the way to disk.
         let file = RiteFile {
             document: doc_text("hello"),
             history: vec![snapshot(0, "hello")],
+            schema_version: 0,
         };
-        write_rite_file(&tmp.base(), &file).unwrap();
+        write_rite_file(&tmp.base(), file.clone()).unwrap();
         let json = fs::read_to_string(&tmp.base()).unwrap();
         let back = read_rite_file(&json).unwrap();
-        assert_eq!(back, file);
+        assert_eq!(back.schema_version, CURRENT_RITE_SCHEMA_VERSION);
+        assert_eq!(back.document, file.document);
+        assert_eq!(back.history, file.history);
     }
 
     #[test]
     fn read_rite_file_falls_back_to_bare_document() {
         // A pre-embedding .rite is a bare Document (no `document`/`history`
         // wrapper). read_rite_file must accept it and wrap it with empty
-        // history so old files still open.
+        // history so old files still open. It also predates `schema_version`,
+        // so the result is a legacy version-0 file.
         let bare = serde_json::to_string_pretty(&doc_text("legacy")).unwrap();
         let file = read_rite_file(&bare).unwrap();
         assert_eq!(para_text(&file.document), "legacy");
         assert!(file.history.is_empty());
+        assert_eq!(file.schema_version, 0);
     }
 
     #[test]
@@ -631,5 +733,156 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_millis(2));
         let b = current_timestamp();
         assert!(a < b, "{} should sort before {}", a, b);
+    }
+
+    // --- schema versioning -----------------------------------------------------
+
+    /// A helper that builds a minimal `RiteFile` with `make_`-prefixed test-only
+    /// builder naming (per the user's convention). `version` lets each test
+    /// pin the schema version without repeating the whole struct literal.
+    fn make_rite_file(version: u32) -> RiteFile {
+        RiteFile {
+            document: doc_text("hello"),
+            history: vec![snapshot(0, "hello")],
+            schema_version: version,
+        }
+    }
+
+    #[test]
+    fn write_rite_file_stamps_current_schema_version() {
+        // A file built with a stale/unknown version must come off disk stamped
+        // with the current version — write_rite_file is the single authority.
+        let tmp = TempDir::new("stamp");
+        let file = make_rite_file(0);
+        write_rite_file(&tmp.base(), file).unwrap();
+        let json = fs::read_to_string(&tmp.base()).unwrap();
+        // The on-disk JSON literally carries the stamped camelCase field.
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["schemaVersion"], CURRENT_RITE_SCHEMA_VERSION);
+        // And reading it back yields the same stamped version.
+        let back = read_rite_file(&json).unwrap();
+        assert_eq!(back.schema_version, CURRENT_RITE_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn read_rite_file_legacy_json_without_schema_version_deserializes_to_zero() {
+        // A .rite written before schema_version existed has no `schemaVersion`
+        // field. `#[serde(default)]` must make it deserialize to 0 (legacy)
+        // and the file must still open.
+        let legacy = serde_json::json!({
+            "document": doc_text("legacy"),
+            "history": [],
+        })
+        .to_string();
+        let file = read_rite_file(&legacy).unwrap();
+        assert_eq!(file.schema_version, 0);
+        assert_eq!(para_text(&file.document), "legacy");
+    }
+
+    #[test]
+    fn read_rite_file_rejects_future_schema_version() {
+        // A file from a newer Rite (version 2) must be rejected with a clear
+        // error naming both the file's version and the max this build supports,
+        // rather than silently misreading the unknown format.
+        let future = serde_json::json!({
+            "document": doc_text("future"),
+            "history": [],
+            "schemaVersion": CURRENT_RITE_SCHEMA_VERSION + 1,
+        })
+        .to_string();
+        let err = read_rite_file(&future).unwrap_err();
+        assert!(
+            err.contains(&format!("version {}", CURRENT_RITE_SCHEMA_VERSION + 1)),
+            "error should name the file's version: {}",
+            err
+        );
+        assert!(
+            err.contains("update rite"),
+            "error should tell the user to update: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn migrate_rite_file_passes_current_and_legacy_through_unchanged() {
+        // A current (v2) file passes through migrate untouched.
+        let current = make_rite_file(CURRENT_RITE_SCHEMA_VERSION);
+        let migrated = migrate_rite_file(current.clone()).unwrap();
+        assert_eq!(migrated, current);
+
+        // A v1 file (pre-5.10: no Section.hidden, document-level epigram
+        // fields) also passes through — it deserializes directly into the
+        // current shape (`hidden` defaults to false; stale epigram keys are
+        // ignored), and a resave stamps v2 via write_rite_file.
+        let v1 = make_rite_file(1);
+        let migrated = migrate_rite_file(v1.clone()).unwrap();
+        assert_eq!(migrated, v1);
+
+        // A legacy (v0) file also passes through — v0 already deserializes
+        // into the current shape.
+        let legacy = make_rite_file(0);
+        let migrated = migrate_rite_file(legacy.clone()).unwrap();
+        assert_eq!(migrated, legacy);
+    }
+
+    #[test]
+    fn v1_file_without_epigram_history_deltas_still_reads() {
+        // The deliberate 5.10 break is narrower than "all old files": only v1
+        // files whose EMBEDDED HISTORY holds epigram metadata deltas fail (the
+        // MetadataField variants are gone). A v1 file with ordinary deltas —
+        // and stale `hasEpigram`/`epigramText` keys inside `document`, plus
+        // sections with no `hidden` key — must still open.
+        let v1_json = serde_json::json!({
+            "document": {
+                "title": "T",
+                "author": "A",
+                "authorContact": "C",
+                "hasTOC": false,
+                "hasEpigram": true,
+                "epigramText": "stale",
+                "sections": [{
+                    "id": "s1",
+                    "title": "One",
+                    "sectionType": "section",
+                    "paragraphs": [{
+                        "id": "p1",
+                        "elements": [{ "textRun": {
+                            "content": "hello",
+                            "textStyle": {},
+                        }}],
+                        "leftIndent": null,
+                        "rightIndent": null,
+                        "firstLineIndent": null,
+                    }],
+                }],
+            },
+            "history": [
+                { "kind": "delta",
+                  "timestamp": "2026-01-01T00-00-00-000",
+                  "ops": [{ "type": "rename_section",
+                            "id": "s1", "old_title": "Old", "new_title": "One" }] },
+            ],
+            "schemaVersion": 1,
+        })
+        .to_string();
+        let file = read_rite_file(&v1_json).unwrap();
+        let file = migrate_rite_file(file).unwrap();
+        assert_eq!(file.document.sections[0].hidden, false);
+        assert_eq!(file.document.sections[0].title, "One");
+        let migrated = migrate_rite_file(file).unwrap();
+        assert_eq!(migrated.schema_version, 1);
+    }
+
+    #[test]
+    fn migrate_rite_file_errors_on_future_version() {
+        // A file from a newer Rite must not be migrated by guesswork; it errors
+        // with the same clear message as read_rite_file.
+        let future = make_rite_file(CURRENT_RITE_SCHEMA_VERSION + 1);
+        let err = migrate_rite_file(future).unwrap_err();
+        assert!(
+            err.contains(&format!("version {}", CURRENT_RITE_SCHEMA_VERSION + 1)),
+            "error should name the file's version: {}",
+            err
+        );
     }
 }

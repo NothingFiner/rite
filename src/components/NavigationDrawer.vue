@@ -3,13 +3,21 @@
     <div class="drawer-content">
       <div class="drawer-section">
         <h3 class="drawer-heading">Sections</h3>
-        <ul class="nav-tree">
+        <ul class="nav-tree" ref="navTreeRef">
           <li
             v-for="item in sections"
             :key="item.id"
             class="nav-section"
-            :class="{ active: props.activeId === item.id }"
-            @click="selectSection(item.id)"
+            :class="{
+              active: props.activeId === item.id,
+              dragging: draggingId === item.id,
+              'section-hidden': item.hidden,
+              'drop-above': dropTarget?.id === item.id && dropTarget.half === 'before',
+              'drop-below': dropTarget?.id === item.id && dropTarget.half === 'after',
+            }"
+            :data-nav-id="item.id"
+            @click="onRowClick(item.id)"
+            @pointerdown="onPointerDown($event, item)"
           >
             <span v-if="editingIds.has(item.id)" class="nav-edit-row">
               <input
@@ -22,20 +30,43 @@
               />
               <button class="nav-confirm" @click.stop="confirmRename(item)">&#10003;</button>
             </span>
-            <span v-else class="nav-title">
-              {{ item.displayTitle }}
-              <button
-                v-if="props.activeId === item.id"
-                class="nav-edit"
-                @click.stop="startRename(item)"
-                :title="item.sectionType === 'chapter' ? 'Rename subtitle' : 'Rename section'"
-              >&#9998;</button>
-              <button
-                v-if="props.activeId === item.id"
-                class="nav-delete"
-                @click.stop="onDelete(item.id)"
-              >&#10005;</button>
-            </span>
+            <!-- The row control (S-001): a native <button> named by the display
+                 title via aria-label (SPEC decision 8), carrying the list's
+                 single roving tab stop (SPEC decision 2) and the row id, so the
+                 control itself answers [data-nav-id][aria-current="true"] for
+                 focus/current lookups (the li keeps its own data-nav-id for
+                 drag targeting). Enter activates the button and the click
+                 bubbles to the row, selecting exactly once as a pointer click
+                 does; Space is intercepted in onRowKeydown so it selects
+                 without the row-click scroll. -->
+            <!-- aria-current (S-002): only the active section is the current item — SPEC decision 7. -->
+            <button
+              v-else
+              class="nav-row-control"
+              type="button"
+              :aria-label="item.displayTitle"
+              :tabindex="rowTabindex(item)"
+              :aria-current="props.activeId === item.id ? 'true' : undefined"
+              :data-nav-id="item.id"
+              @keydown="onRowKeydown($event, item)"
+            >
+              <span class="nav-title">{{ item.displayTitle }}</span>
+            </button>
+            <!-- Rename/delete sit AFTER the row control, not inside it: a
+                 button inside a button is invalid HTML and Enter would fire
+                 both (SPEC decision 5). @click.stop keeps them from also
+                 selecting the section. -->
+            <button
+              v-if="!editingIds.has(item.id) && props.activeId === item.id"
+              class="nav-edit"
+              @click.stop="startRename(item)"
+              :title="item.sectionType === 'chapter' ? 'Rename subtitle' : 'Rename section'"
+            >&#9998;</button>
+            <button
+              v-if="!editingIds.has(item.id) && props.activeId === item.id"
+              class="nav-delete"
+              @click.stop="onDelete(item.id)"
+            >&#10005;</button>
             <button
               class="nav-type-toggle"
               :class="{ chapter: item.sectionType === 'chapter' }"
@@ -44,6 +75,14 @@
                 ? 'Chapter (auto-numbered). Click to make a freeform Section.'
                 : 'Section (freeform title). Click to make an auto-numbered Chapter.'"
             >{{ item.sectionType === 'chapter' ? 'Ch' : '§' }}</button>
+            <button
+              class="nav-hidden-toggle"
+              :class="{ hidden: item.hidden }"
+              @click.stop="toggleHidden(item)"
+              :title="item.hidden
+                ? 'Hidden: no heading in the manuscript or its TOC (body still renders, own page). Click to show the heading.'
+                : 'Shown. Click to hide this heading from the manuscript and its TOC.'"
+            ><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16"><path d="M16 8s-3-5.5-8-5.5S0 8 0 8s3 5.5 8 5.5S16 8 16 8z"/><circle cx="8" cy="8" r="2.2" class="nav-hidden-pupil" fill="var(--input-bg)"/></svg></button>
             <span class="nav-page">p. {{ item.page }}</span>
           </li>
         </ul>
@@ -71,7 +110,8 @@
 </template>
 
 <script setup>
-import { ref, computed, nextTick, watch } from 'vue'
+import { ref, computed, nextTick, watch, onBeforeUnmount } from 'vue'
+import { dropHalf, toAfterIdFor, reorderedIds } from '../composables/useOutlineDrag.js'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -80,7 +120,7 @@ const props = defineProps({
   activeId: { type: String, default: null },
 })
 
-const emit = defineEmits(['scrollTo', 'insertSection', 'renameSection', 'changeSectionType', 'update:expanded', 'select', 'deleteItem'])
+const emit = defineEmits(['scrollTo', 'insertSection', 'renameSection', 'changeSectionType', 'toggleHidden', 'moveSection', 'update:expanded', 'select', 'deleteItem'])
 
 const sectionInput = ref(null)
 const editingIds = ref(new Set())
@@ -104,13 +144,256 @@ function addSection() {
   emit('insertSection', 'section')
 }
 
-function selectSection(id) {
-  emit('select', id)
-  emit('scrollTo', id)
-}
-
 function onDelete(id) {
   emit('deleteItem', id)
+}
+
+// Roving tabindex (SPEC decision 2): the section list is ONE tab stop — the
+// active row is in the tab order; with no active section the first row
+// carries it. The other rows stay reachable via focus movement inside the
+// list, not Tab.
+function rowTabindex(item) {
+  if (props.activeId === null) {
+    return item.id === sections.value[0]?.id ? 0 : -1
+  }
+  return item.id === props.activeId ? 0 : -1
+}
+
+// Row keyboard handling (S-004/S-005/S-006): one handler that reads e.key —
+// no template .prevent modifiers, no Vue key-alias trust.
+// - Space (S-005): keydown preventDefault cancels the native button
+//   activation, so no bubbled click reaches the row and onRowClick's scrollTo
+//   (scrollIntoView on the editor) never runs — page and .scroll-layer stay
+//   put. The select is emitted from here instead.
+// - Enter (S-004): deliberately NOT handled — the native activation bubbles a
+//   click to the row, so Enter selects and scrolls exactly as a pointer click
+//   does.
+// - ArrowDown/ArrowUp (S-006): focus moves one .nav-row-control forward or
+//   back in DOM order, CLAMPED at the first/last row (no wrap), with
+//   preventDefault so the arrow does not also scroll the drawer content
+//   mid-gesture. Arrows never select (SPEC decision 3) and never touch the
+//   roving tabindex — it stays anchored on the active row (rowTabindex).
+function onRowKeydown(e, item) {
+  if (e.key === ' ') {
+    e.preventDefault()
+    emit('select', item.id)
+    return
+  }
+  const delta = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0
+  if (delta === 0) return
+  e.preventDefault()
+  const controls = navTreeRef.value
+    ? Array.from(navTreeRef.value.querySelectorAll('.nav-row-control'))
+    : []
+  const index = controls.indexOf(e.currentTarget)
+  if (index === -1) return
+  const next = controls[Math.min(controls.length - 1, Math.max(0, index + delta))]
+  next?.focus({ preventScroll: true })
+}
+
+// --- drag-to-reorder (roadmap 5.5) --------------------------------------------
+// CUSTOM pointer-event drag — deliberately NOT native HTML5 drag-and-drop.
+// Two rounds of real-WKWebView testing showed WebKit's drag sessions are
+// unreliable in this embedded webview: a dragstart with no dataTransfer
+// payload gets cancelled/downgraded to a text-selection drag, and once that
+// was fixed, the dragover/drop events were misrouted (a hover over chapter 3
+// delivered events — with coordinates that were not the pointer's — a
+// scroll-offset away, so nothing moved). Chromium can't reproduce either,
+// so no e2e would ever have caught them. Pointer events are the plain
+// machinery the editor's caret placement already relies on; they arrive
+// correctly in WKWebView. The gesture: pointerdown arms a drag CANDIDATE,
+// movement past a 4px threshold starts the drag (a plain click keeps
+// working), pointermove over the list paints the insertion line, pointerup
+// emits the move. Everything is handled at the DOCUMENT level, and the
+// hovered row is computed from the POINTER COORDINATES against each row's
+// real rect — the dragged id lives in a component ref and never crosses the
+// wire; Rust identifies the section and destination by id.
+
+const draggingId = ref(null)
+// { id, startX, startY } between pointerdown and the movement threshold. A
+// pointerup while this is still set is a plain click, not a drag.
+const dragCandidate = ref(null)
+// { id, half } of the row under the pointer while dragging — drives the
+// insertion-line CSS classes. Null when the pointer is off the list, over
+// the dragged row itself, or over a row mid-rename.
+const dropTarget = ref(null)
+// The <ul> — the geometry source for drop targeting.
+const navTreeRef = ref(null)
+
+// A completed drag ends with pointerup inside the row, and the browser then
+// fires a CLICK on it — which must not also select/scroll the editor to the
+// dragged section. One clean swallow; the flag resets on the next pointerdown.
+let suppressNextClick = false
+
+// The pill that follows the pointer while dragging. It is appended to <body>
+// (outside this component's scoped-style reach — hence inline styles) and
+// never intercepts the pointer.
+let dragGhost = null
+
+function makeDragGhost(item, clientX, clientY) {
+  removeDragGhost()
+  dragGhost = document.createElement('div')
+  dragGhost.className = 'nav-drag-ghost'
+  dragGhost.textContent = item.displayTitle
+  const style = dragGhost.style
+  style.position = 'fixed'
+  style.padding = '4px 10px'
+  style.borderRadius = '4px'
+  style.background = 'var(--accent)'
+  style.color = '#fff'
+  style.fontSize = '13px'
+  style.fontWeight = '600'
+  style.whiteSpace = 'nowrap'
+  style.pointerEvents = 'none'
+  style.zIndex = '100'
+  document.body.appendChild(dragGhost)
+  positionDragGhost(clientX, clientY)
+}
+
+function positionDragGhost(clientX, clientY) {
+  if (!dragGhost) return
+  dragGhost.style.left = clientX + 12 + 'px'
+  dragGhost.style.top = clientY + 12 + 'px'
+}
+
+function removeDragGhost() {
+  if (dragGhost) {
+    dragGhost.remove()
+    dragGhost = null
+  }
+}
+
+// The row { id, half } under the pointer, from geometry WE read (never the
+// event's target — see the block comment above). Returns null off the list,
+// or when the list has no rows.
+function dropTargetUnder(clientX, clientY) {
+  const list = navTreeRef.value
+  if (!list) return null
+  const listRect = list.getBoundingClientRect()
+  // Pointer outside the list's box (over the editor, the toolbar, ...): no
+  // target — the document listeners fire for the whole page, so the line
+  // must not paint when the pointer merely shares the drawer's Y range.
+  if (clientX < listRect.left || clientX > listRect.right) return null
+  const rowEls = list.querySelectorAll('.nav-section')
+  let lastEl = null
+  for (const el of rowEls) {
+    const rect = el.getBoundingClientRect()
+    // At or above this row's bottom edge: inside it, or in the 2px gap
+    // above it — both mean "this row". dropHalf's midpoint rule sorts out
+    // which side (a point above the row's top is also above its midpoint).
+    if (clientY <= rect.bottom) {
+      return { id: el.dataset.navId, half: dropHalf(rect, clientY) }
+    }
+    lastEl = el
+  }
+  // Below every row (the list's padding area under the last entry): after
+  // the last row.
+  return lastEl ? { id: lastEl.dataset.navId, half: 'after' } : null
+}
+
+function onPointerDown(e, item) {
+  // Right/middle clicks and the context menu are not drags.
+  if (e.button !== 0) return
+  // Touch drags would fight the drawer's scroll gesture; this is a desktop
+  // app, so mouse/pen only.
+  if (e.pointerType === 'touch') return
+  // A pointerdown on interactive row controls is their gesture, not a drag
+  // start — the rename input, the confirm, and the four action buttons keep
+  // their clicks. The row control itself is NOT excluded: it covers the
+  // title, and a real-mouse press there must still arm a drag
+  // (e2e/outline-drag.spec.js presses the row at its centre). A row being
+  // renamed is never draggable.
+  if (e.target.closest('button, input') && !e.target.closest('.nav-row-control')) return
+  if (editingIds.value.has(item.id)) return
+  dragCandidate.value = { id: item.id, startX: e.clientX, startY: e.clientY }
+  suppressNextClick = false
+  // Capture guarantees the pointerup arrives even if it happens outside the
+  // webview window; captured events still bubble to document. Optional-
+  // chained: jsdom elements have no capture API (and synthetic events pass
+  // no pointerId).
+  if (e.pointerId !== undefined) e.currentTarget.setPointerCapture?.(e.pointerId)
+  if (!documentPointerListenersActive) {
+    document.addEventListener('pointermove', onDocumentPointerMove)
+    document.addEventListener('pointerup', onDocumentPointerUp)
+    document.addEventListener('pointercancel', cleanupDrag)
+    documentPointerListenersActive = true
+  }
+}
+
+function onDocumentPointerMove(e) {
+  if (!dragCandidate.value && !draggingId.value) return
+  if (dragCandidate.value && !draggingId.value) {
+    // Not a drag until the pointer moves past the threshold — otherwise no
+    // row click (selection) would ever work.
+    const candidate = dragCandidate.value
+    const movedFarEnough =
+      Math.abs(e.clientX - candidate.startX) > 4 || Math.abs(e.clientY - candidate.startY) > 4
+    if (!movedFarEnough) return
+    const item = sections.value.find((s) => s.id === candidate.id)
+    if (!item) {
+      dragCandidate.value = null
+      return
+    }
+    draggingId.value = candidate.id
+    dragCandidate.value = null
+    makeDragGhost(item, e.clientX, e.clientY)
+  }
+  positionDragGhost(e.clientX, e.clientY)
+  const target = dropTargetUnder(e.clientX, e.clientY)
+  // The dragged row itself and rows mid-rename are never valid targets (a
+  // rename row hosts a text input the drag would fight).
+  dropTarget.value =
+    target && target.id !== draggingId.value && !editingIds.value.has(target.id)
+      ? target
+      : null
+}
+
+function onDocumentPointerUp(e) {
+  if (draggingId.value) {
+    suppressNextClick = true
+    const target = dropTargetUnder(e.clientX, e.clientY)
+    if (target && target.id !== draggingId.value && !editingIds.value.has(target.id)) {
+      const targetIndex = sections.value.findIndex((s) => s.id === target.id)
+      const toAfterId = toAfterIdFor(sections.value, targetIndex, target.half)
+      const currentIds = sections.value.map((s) => s.id)
+      // A drop back onto the row's own position is a no-op — skip the invoke
+      // entirely (reorderedIds returns null when the order wouldn't change).
+      if (reorderedIds(currentIds, draggingId.value, toAfterId)) {
+        emit('moveSection', draggingId.value, toAfterId)
+      }
+    }
+  }
+  cleanupDrag()
+}
+
+let documentPointerListenersActive = false
+
+function cleanupDrag() {
+  draggingId.value = null
+  dragCandidate.value = null
+  dropTarget.value = null
+  removeDragGhost()
+  if (documentPointerListenersActive) {
+    document.removeEventListener('pointermove', onDocumentPointerMove)
+    document.removeEventListener('pointerup', onDocumentPointerUp)
+    document.removeEventListener('pointercancel', cleanupDrag)
+    documentPointerListenersActive = false
+  }
+}
+
+// If the component unmounts mid-drag (view switch), the document listeners
+// must not outlive it — their closures hold refs into this component.
+onBeforeUnmount(cleanupDrag)
+
+// Row click = select + scroll to the section (unless this click is the tail
+// of a just-completed drag).
+function onRowClick(id) {
+  if (suppressNextClick) {
+    suppressNextClick = false
+    return
+  }
+  emit('select', id)
+  emit('scrollTo', id)
 }
 
 // Toggle a section between auto-numbered Chapter and freeform Section. The
@@ -118,6 +401,13 @@ function onDelete(id) {
 function toggleType(item) {
   const newType = item.sectionType === 'chapter' ? 'section' : 'chapter'
   emit('changeSectionType', item.id, newType)
+}
+
+// Toggle a section's hidden flag (5.10): hidden = no heading in the
+// manuscript, exports, or printed TOC (body still renders, own page). The
+// round-trip set_section_hidden command is undoable, same as the type toggle.
+function toggleHidden(item) {
+  emit('toggleHidden', item.id, !item.hidden)
 }
 
 function startRename(item) {
@@ -143,13 +433,42 @@ function confirmRename(item) {
   delete draftTitles.value[item.id]
 }
 
+// Opening the drawer is the keyboard entry point (S-006): until something moves
+// focus into the list, the single roving tab stop is unreachable by keyboard —
+// no e2e arrow press can land on a row while focus stays on the button that
+// opened the drawer. On open, after the DOM settles, focus lands on the active
+// row's control, falling back to the FIRST row's control when there is no
+// active row or the active row has no control (mid-rename rows render an
+// input, not a control). preventScroll so entering the drawer never yanks the
+// page or the .scroll-layer. Bail when the component is unmounted or has no
+// row controls. No wrap-around, no select. The closing branch is untouched —
+// its emits are depended on by the HistoryView and close flows.
 watch(() => props.open, (v) => {
-  if (!v) {
+  if (v) {
+    nextTick(focusEntryRow)
+  } else {
     emit('update:expanded', false)
     emit('select', null)
     editingIds.value.clear()
   }
 })
+
+function focusEntryRow() {
+  const list = navTreeRef.value
+  if (!list) return
+  const controls = list.querySelectorAll('.nav-row-control')
+  if (controls.length === 0) return
+  // The active row is matched by its data-nav-id in the DOM (equivalent to the
+  // ".nav-section[data-nav-id=…] .nav-row-control" selector) — dataset
+  // comparison avoids building an interpolated attribute selector from a
+  // store-supplied id.
+  const activeRow = props.activeId
+    ? Array.from(list.querySelectorAll('.nav-section')).find(
+        (row) => row.dataset.navId === props.activeId
+      )
+    : null
+  ;(activeRow?.querySelector('.nav-row-control') ?? controls[0]).focus({ preventScroll: true })
+}
 
 watch(sections, () => {
   nextTick(() => {
@@ -167,7 +486,13 @@ watch(sections, () => {
   top: 38px;
   bottom: 36px;
   width: 260px;
-  transition: transform 0.25s ease;
+  /* S-018: a closed drawer keeps its slide animation but leaves the tab
+     order — visibility flips to hidden 0.25s AFTER the close starts (the
+     slide stays on screen) and back to visible instantly on open. Keep the
+     values identical to App.vue's .drawer base rule (its scoped rule also
+     reaches this component's root element). */
+  visibility: hidden;
+  transition: transform 0.25s ease, visibility 0s linear 0.25s;
   z-index: 25;
 }
 
@@ -178,6 +503,9 @@ watch(sections, () => {
 
 .drawer.left.open {
   transform: translateX(0);
+  /* S-018: open state — visible immediately, no visibility delay. */
+  visibility: visible;
+  transition: transform 0.25s ease, visibility 0s;
 }
 
 .drawer-content {
@@ -224,11 +552,56 @@ watch(sections, () => {
   color: var(--text-primary);
   transition: background 0.15s;
   margin-bottom: 2px;
+  /* No text selection on rows: a press-drag over row text must never start
+     a selection (it would fight the custom pointer drag and drag-select
+     editor text through the glass). The rename input opts back in. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.nav-section .nav-input {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .nav-section:hover,
 .nav-section.active {
   background: var(--hover-bg);
+}
+
+/* Source row while its drag is in flight. */
+.nav-section.dragging {
+  opacity: 0.4;
+}
+
+/* Insertion line at the hovered row's top/bottom edge while dragging — the
+   drop preview. Inset box-shadow (not border) so the row's height and layout
+   don't shift as the pointer moves, which would flicker the half-detection. */
+.nav-section.drop-above {
+  box-shadow: inset 0 2px 0 0 var(--accent);
+}
+
+.nav-section.drop-below {
+  box-shadow: inset 0 -2px 0 0 var(--accent);
+}
+
+/* The row control (S-001): a native <button> is the keyboard contract, but the
+   row must look and behave exactly like the bare title span it replaces — so
+   the default button chrome is reset and the title span's flex slot moves up
+   onto the button. The .nav-title ellipsis still applies inside it, and the
+   row's user-select: none still holds (the button inherits from the row). */
+.nav-row-control {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
 }
 
 .nav-title {
@@ -275,6 +648,44 @@ watch(sections, () => {
 .nav-type-toggle.chapter {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* Hidden-section toggle badge (5.10) — same chrome as the type toggle. The
+   drawer still LISTS hidden sections (the only way to reach/rename/re-toggle
+   them), so the row itself dims to signal the state. */
+.nav-hidden-toggle {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 1px solid var(--bg-glass-border);
+  background: var(--input-bg);
+  color: var(--text-secondary);
+  font-size: 10px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 4px;
+  opacity: 0.55;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
+}
+
+.nav-hidden-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  opacity: 1;
+}
+
+.nav-hidden-toggle.hidden {
+  border-color: var(--accent);
+  color: var(--accent);
+  opacity: 1;
+}
+
+/* The hidden row's title reads dimmed, matching the editor marker heading. */
+.nav-section.section-hidden .nav-title {
+  opacity: 0.5;
 }
 
 .nav-edit {

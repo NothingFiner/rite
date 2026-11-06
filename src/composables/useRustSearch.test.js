@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useRustSearch } from './useRustSearch.js'
 
-vi.mock('@tauri-apps/api/tauri', () => ({
+vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }))
 
-import { invoke } from '@tauri-apps/api/tauri'
+import { invoke } from '@tauri-apps/api/core'
 
 describe('useRustSearch', () => {
   beforeEach(() => {
@@ -30,8 +30,8 @@ describe('useRustSearch', () => {
 
   it('finds text via Rust backend', async () => {
     invoke.mockResolvedValue([
-      { paragraph_id: 'p1', start_offset: 0, end_offset: 5 },
-      { paragraph_id: 'p2', start_offset: 3, end_offset: 8 },
+      { paragraphId: 'p1', startOffset: 0, endOffset: 5 },
+      { paragraphId: 'p2', startOffset: 3, endOffset: 8 },
     ])
 
     const search = useRustSearch()
@@ -54,30 +54,40 @@ describe('useRustSearch', () => {
 
   it('advances to next match with wrapping', async () => {
     invoke.mockResolvedValue([
-      { paragraph_id: 'p1', start_offset: 0, end_offset: 3 },
-      { paragraph_id: 'p1', start_offset: 4, end_offset: 7 },
+      { paragraphId: 'p1', startOffset: 0, endOffset: 3 },
+      { paragraphId: 'p1', startOffset: 4, endOffset: 7 },
     ])
 
     const search = useRustSearch()
     await search.findText('foo')
     expect(search.currentIndex.value).toBe(0)
-    search.findNext()
+    // findNext must RETURN the updated state — useSearchPanel.onSearchNext
+    // reads result.matches / result.currentIndex, so an undefined return
+    // (the pre-fix bug) throws a TypeError and the highlight never updates.
+    let result = search.findNext()
     expect(search.currentIndex.value).toBe(1)
-    search.findNext()
+    expect(result.matches).toHaveLength(2)
+    expect(result.currentIndex).toBe(1)
+    result = search.findNext()
     expect(search.currentIndex.value).toBe(0)
+    expect(result.currentIndex).toBe(0)
   })
 
   it('findNext does nothing with no matches', () => {
     const search = useRustSearch()
-    search.findNext()
+    const result = search.findNext()
     expect(search.currentIndex.value).toBe(-1)
+    // No matches → an empty result, NOT undefined, so the caller's
+    // applySearchHighlights(result.matches, …) is a safe no-op.
+    expect(result.matches).toEqual([])
+    expect(result.currentIndex).toBe(-1)
   })
 
   it('goes to previous match with wrapping', async () => {
     invoke.mockResolvedValue([
-      { paragraph_id: 'p1', start_offset: 0, end_offset: 3 },
-      { paragraph_id: 'p1', start_offset: 4, end_offset: 7 },
-      { paragraph_id: 'p1', start_offset: 8, end_offset: 11 },
+      { paragraphId: 'p1', startOffset: 0, endOffset: 3 },
+      { paragraphId: 'p1', startOffset: 4, endOffset: 7 },
+      { paragraphId: 'p1', startOffset: 8, endOffset: 11 },
     ])
 
     const search = useRustSearch()
@@ -85,8 +95,11 @@ describe('useRustSearch', () => {
     search.findNext()
     search.findNext()
     expect(search.currentIndex.value).toBe(2)
-    search.findPrev()
+    // findPrev must return the updated state too (mirrors findNext).
+    const result = search.findPrev()
     expect(search.currentIndex.value).toBe(1)
+    expect(result.matches).toHaveLength(3)
+    expect(result.currentIndex).toBe(1)
     search.findPrev()
     search.findPrev()
     expect(search.currentIndex.value).toBe(2)
@@ -94,12 +107,14 @@ describe('useRustSearch', () => {
 
   it('findPrev does nothing with no matches', () => {
     const search = useRustSearch()
-    search.findPrev()
+    const result = search.findPrev()
     expect(search.currentIndex.value).toBe(-1)
+    expect(result.matches).toEqual([])
+    expect(result.currentIndex).toBe(-1)
   })
 
   it('clears search state', async () => {
-    invoke.mockResolvedValue([{ paragraph_id: 'p1', start_offset: 0, end_offset: 3 }])
+    invoke.mockResolvedValue([{ paragraphId: 'p1', startOffset: 0, endOffset: 3 }])
     const search = useRustSearch()
     await search.findText('foo')
     expect(search.matchCount.value).toBe(1)
@@ -112,12 +127,12 @@ describe('useRustSearch', () => {
 
   it('replaces current match via Rust backend', async () => {
     invoke.mockResolvedValueOnce([
-      { paragraph_id: 'p1', start_offset: 0, end_offset: 3 },
-      { paragraph_id: 'p1', start_offset: 4, end_offset: 7 },
+      { paragraphId: 'p1', startOffset: 0, endOffset: 3 },
+      { paragraphId: 'p1', startOffset: 4, endOffset: 7 },
     ])
     invoke.mockResolvedValueOnce({
-      matches: [{ paragraph_id: 'p1', start_offset: 4, end_offset: 7 }],
-      current_index: 0,
+      matches: [{ paragraphId: 'p1', startOffset: 4, endOffset: 7 }],
+      currentIndex: 0,
     })
 
     const search = useRustSearch()
@@ -152,8 +167,8 @@ describe('useRustSearch', () => {
 
   it('replaceAll replaces all via Rust backend', async () => {
     invoke.mockResolvedValueOnce([
-      { paragraph_id: 'p1', start_offset: 0, end_offset: 3 },
-      { paragraph_id: 'p1', start_offset: 4, end_offset: 7 },
+      { paragraphId: 'p1', startOffset: 0, endOffset: 3 },
+      { paragraphId: 'p1', startOffset: 4, endOffset: 7 },
     ])
     invoke.mockResolvedValueOnce(2)
 
@@ -174,7 +189,7 @@ describe('useRustSearch', () => {
   })
 
   it('replaceAll returns 0 on failure', async () => {
-    invoke.mockResolvedValueOnce([{ paragraph_id: 'p1', start_offset: 0, end_offset: 3 }])
+    invoke.mockResolvedValueOnce([{ paragraphId: 'p1', startOffset: 0, endOffset: 3 }])
     invoke.mockRejectedValueOnce(new Error('replace error'))
 
     const search = useRustSearch()

@@ -1,0 +1,111 @@
+import { save, message } from '@tauri-apps/plugin-dialog'
+import { invoke } from '@tauri-apps/api/core'
+import { useDocumentStore } from '../stores/document.js'
+
+/// Export the live document to a plain-text (.txt) or Markdown (.md) file.
+///
+/// The Rust `export_text` command reads the document straight from `AppState`
+/// (the single source of truth), so this composable does not need to pass the
+/// document over the wire — only the chosen `path` and `format`. A Tauri
+/// native `save()` dialog picks the path with a format-appropriate extension
+/// filter; a cancelled dialog returns early. Errors surface via a Tauri
+/// `message()` error dialog, mirroring `useFileIO.openFile`'s pattern (a toast
+/// system is being built separately; until it lands we use the same native
+/// dialog the rest of the file I/O uses).
+export function useExport() {
+  const store = useDocumentStore()
+
+  /// The base filename proposed in the save dialog. Falls back to "Untitled"
+  /// when the document has no title, matching `useFileIO.saveFile`.
+  function defaultFileName(extension) {
+    const base = (store.doc?.title || 'Untitled').trim() || 'Untitled'
+    return `${base}.${extension}`
+  }
+
+  /// `format` is the Rust `ExportFormat` discriminator — `'plainText'` or
+  /// `'markdown'` (camelCase, matching the `#[serde(rename_all = "camelCase")]`
+  /// on the Rust enum).
+  async function exportFile(format) {
+    const isMarkdown = format === 'markdown'
+    const extension = isMarkdown ? 'md' : 'txt'
+    const filterName = isMarkdown ? 'Markdown' : 'Plain Text'
+
+    const path = await save({
+      filters: [{ name: filterName, extensions: [extension] }],
+      defaultPath: defaultFileName(extension),
+    })
+    if (!path) return // cancelled
+
+    try {
+      await invoke('export_text', { path, format })
+    } catch (e) {
+      console.error('Failed to export:', e)
+      await message('Failed to export document: ' + (e?.message || String(e)), {
+        title: 'Rite',
+        type: 'error',
+      })
+    }
+  }
+
+  async function exportPlainText() {
+    await exportFile('plainText')
+  }
+
+  async function exportMarkdown() {
+    await exportFile('markdown')
+  }
+
+  /// Export the live document as a Word `.docx`. Unlike the text exports, the
+  /// Rust `export_docx` command takes only a `path` (there is no format
+  /// discriminator — DOCX is the one format it produces), so this is a separate
+  /// path rather than another `exportFile(format)` branch. The Rust side reads
+  /// the document from `AppState`, so again only the path crosses the wire.
+  /// The bytes are written atomically on the Rust side (temp file + rename),
+  /// so a crash mid-export cannot leave a half-written `.docx`.
+  async function exportDocx() {
+    const extension = 'docx'
+    const path = await save({
+      filters: [{ name: 'Word Document', extensions: [extension] }],
+      defaultPath: defaultFileName(extension),
+    })
+    if (!path) return // cancelled
+
+    try {
+      await invoke('export_docx', { path })
+    } catch (e) {
+      console.error('Failed to export docx:', e)
+      await message('Failed to export document: ' + (e?.message || String(e)), {
+        title: 'Rite',
+        type: 'error',
+      })
+    }
+  }
+
+  /// Export the live document as an EPUB `.epub`. Like `exportDocx`, the Rust
+  /// `export_epub` command takes only a `path` (the EPUB is rendered from the
+  /// document in `AppState`), so that alone crosses the wire. The save dialog
+  /// is filtered to `epub` with a title-derived default filename (falling back
+  /// to `Untitled` via `defaultFileName`), a cancelled dialog returns early,
+  /// and invoke failures surface through the same Tauri `message()` error
+  /// dialog the other exporters use.
+  async function exportEpub() {
+    const extension = 'epub'
+    const path = await save({
+      filters: [{ name: 'EPUB', extensions: [extension] }],
+      defaultPath: defaultFileName(extension),
+    })
+    if (!path) return // cancelled
+
+    try {
+      await invoke('export_epub', { path })
+    } catch (e) {
+      console.error('Failed to export epub:', e)
+      await message('Failed to export document: ' + (e?.message || String(e)), {
+        title: 'Rite',
+        type: 'error',
+      })
+    }
+  }
+
+  return { exportFile, exportPlainText, exportMarkdown, exportDocx, exportEpub }
+}

@@ -19,7 +19,10 @@ export function isSceneBreak(p) {
 /// Render a body paragraph to HTML.
 ///   manuscript: true → <p class="ms-para [scene-break] [no-indent]">…</p>
 ///   manuscript: false → <div class="paragraph [no-indent]" data-para-id
-///                              data-section-id style>…</div>
+///                              data-section-id [data-auto-indent] style>…</div>
+/// `data-auto-indent="true"` marks an automatic (renderer-derived) indent, the
+/// one the model stores as `null` (SPEC.md 5.18). The writer's explicit number
+/// never gets the marker.
 /// `sectionId` is required for the editor branch so the flat DOM can map a
 /// paragraph back to its owning section during DOM-sync.
 export function paragraphToHTML(p, options = {}) {
@@ -61,13 +64,18 @@ export function paragraphToHTML(p, options = {}) {
   }
   const paraStyleAttr = paraStyles.length ? ` style="${paraStyles.join(';')}"` : ''
   const sectionAttr = sectionId ? ` data-section-id="${sectionId}"` : ''
+  // An automatic indent keeps its `null` through a readback, because
+  // `parseParagraphElement` turns this marker back into `null`. Only the editor
+  // branch emits it. The manuscript `<p class="ms-para">` never reads the DOM
+  // back into the model.
+  const autoIndentAttr = p.autoIndent === true ? ' data-auto-indent="true"' : ''
 
   let className = 'paragraph'
   if (typeof p.firstLineIndent === 'number' && p.firstLineIndent === 0) {
     className += ' no-indent'
   }
 
-  return `<div class="${className}"${idAttr}${sectionAttr}${paraStyleAttr}>${content}</div>`
+  return `<div class="${className}"${idAttr}${sectionAttr}${autoIndentAttr}${paraStyleAttr}>${content}</div>`
 }
 
 export function paragraphsToHTML(paragraphs, options = {}) {
@@ -75,11 +83,16 @@ export function paragraphsToHTML(paragraphs, options = {}) {
 }
 
 /// Render a section title (the heading). A Chapter shows a locked, render-
-/// derived prefix ("Chapter 3: ") followed by an editable subtitle span; a
-/// Section shows its full title as one editable span. The chapter NUMBER is
-/// never stored — it is derived from `chapterIndex` (1-based position among
-/// Chapter-type sections) and baked into the prefix here, so inserting/deleting
-/// a chapter renumbers all chapters with zero delta churn.
+/// derived prefix ("Chapter 3: ") followed by a subtitle span when the
+/// chapter HAS a subtitle; a subtitle-less chapter renders just "Chapter 3"
+/// (the ': ' separator is stripped — the subtitle is optional data and
+/// emptiness IS the off state, 5.9). The one exception: a FRESH chapter
+/// (editor, just inserted) keeps the colon and renders the empty subtitle
+/// span so the user can type the subtitle inline. A Section shows its full
+/// title as one editable span. The chapter NUMBER is never stored — it is
+/// derived from `chapterIndex` (1-based position among Chapter-type
+/// sections) and baked into the prefix here, so inserting/deleting a
+/// chapter renumbers all chapters with zero delta churn.
 ///
 ///   chapterPrefix: pre-formatted "Chapter 3: " string for a Chapter (the
 ///     caller computes it via useSectionFormat so this module stays Vue-free).
@@ -91,10 +104,34 @@ export function sectionTitleToHTML(section, chapterIndex, chapterPrefix, options
   const { manuscript = false, fresh = false } = options
   const idAttr = ` data-section-id="${section.id}"`
   const typeAttr = ` data-section-type="${section.sectionType}"`
+  // Hidden sections (5.10): the editor renders the title div as a DIMMED
+  // MARKER (never omitted — the drift gate counts `.section-title`s and the
+  // nav/scroll machinery queries them), stamped with `data-section-hidden` so
+  // the DOM→model readback can carry the flag back. When NOT hidden these
+  // must stay byte-identical to the pre-5.10 output (the reconciler decides
+  // keep-vs-replace by a single string compare).
+  const hiddenClass = section.hidden ? ' section-hidden' : ''
+  const hiddenAttr = section.hidden ? ' data-section-hidden="true"' : ''
 
   if (manuscript) {
+    // The manuscript renders NO heading text for a hidden section — but never
+    // `''`: the pagination measurer collects `.ms-para` elements positionally
+    // and indexes them against the block list, so a dropped element would
+    // shift every later height. The empty element measures height 0 and the
+    // page break comes from the section loop, not heading height; the page
+    // render then `display: none`s it. `data-section-id` stays so
+    // msScrollToSection can still land on it.
+    if (section.hidden) {
+      return `<p class="ms-para section-hidden"${idAttr}></p>`
+    }
     if (section.sectionType === 'chapter') {
-      const text = escapeHtml(chapterPrefix || '') + escapeHtml(section.title || '')
+      // The ': ' trailing on chapterPrefix exists to join prefix and
+      // subtitle; a subtitle-less chapter has nothing to join, so it
+      // renders as just "Chapter 2" (the subtitle is optional data —
+      // emptiness IS the off state). Same strip idiom as the nav rows'
+      // displayTitleFor.
+      const prefixText = section.title ? chapterPrefix : (chapterPrefix || '').replace(/: $/, '')
+      const text = escapeHtml(prefixText || '') + escapeHtml(section.title || '')
       return `<p class="ms-para chapter"${idAttr}>${text || '<br>'}</p>`
     }
     return `<p class="ms-para section"${idAttr}>${escapeHtml(section.title || '') || '<br>'}</p>`
@@ -104,14 +141,22 @@ export function sectionTitleToHTML(section, chapterIndex, chapterPrefix, options
 
   if (section.sectionType === 'chapter') {
     const subtitle = section.title || ''
+    // Show the subtitle span when there is one, or while the section is
+    // fresh (the empty span is the inline type-a-subtitle affordance —
+    // on blur it renders clean). Otherwise render ONLY the prefix.
+    const showSubtitle = Boolean(subtitle) || fresh
+    if (!showSubtitle) {
+      const prefixText = (chapterPrefix || '').replace(/: $/, '')
+      return `<div class="section-title chapter${hiddenClass}"${idAttr}${typeAttr}${hiddenAttr} contenteditable="${editable}"><span class="chapter-prefix" contenteditable="false">${escapeHtml(prefixText)}</span></div>`
+    }
     const subtitleHtml = subtitle ? escapeHtml(subtitle) : '<br>'
     // The prefix span is always contenteditable=false — the derived number is
     // never user-editable. The subtitle span inherits editability from the
     // (fresh) parent div.
-    return `<div class="section-title chapter"${idAttr}${typeAttr} contenteditable="${editable}"><span class="chapter-prefix" contenteditable="false">${escapeHtml(chapterPrefix || '')}</span><span class="section-subtitle">${subtitleHtml}</span></div>`
+    return `<div class="section-title chapter${hiddenClass}"${idAttr}${typeAttr}${hiddenAttr} contenteditable="${editable}"><span class="chapter-prefix" contenteditable="false">${escapeHtml(chapterPrefix || '')}</span><span class="section-subtitle">${subtitleHtml}</span></div>`
   }
 
   const title = section.title || ''
   const titleHtml = title ? escapeHtml(title) : '<br>'
-  return `<div class="section-title"${idAttr}${typeAttr} contenteditable="${editable}"><span class="section-title-text">${titleHtml}</span></div>`
+  return `<div class="section-title${hiddenClass}"${idAttr}${typeAttr}${hiddenAttr} contenteditable="${editable}"><span class="section-title-text">${titleHtml}</span></div>`
 }

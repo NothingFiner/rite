@@ -139,11 +139,29 @@ describe('useParagraphHTML', () => {
       expect(html).toContain('The Arrival')
     })
 
-    it('renders a chapter subtitle as <br> when empty', () => {
+    it('renders a subtitle-less chapter as just the prefix — no colon, no subtitle span (5.9)', () => {
       const section = { id: 's1', title: '', sectionType: 'chapter' }
       const html = sectionTitleToHTML(section, 3, 'Chapter 3: ', { fresh: false })
+      // "Chapter 3" clean: the ': ' separator joins prefix+subtitle — with
+      // no subtitle there is nothing to join, so nothing else renders.
+      expect(html).toContain('Chapter 3')
+      expect(html).not.toContain(':')
+      expect(html).not.toContain('section-subtitle')
+      expect(html).toContain('contenteditable="false"')
+    })
+
+    it('keeps the colon + editable empty subtitle span for a FRESH chapter (inline typing)', () => {
+      const section = { id: 's1', title: '', sectionType: 'chapter' }
+      const html = sectionTitleToHTML(section, 3, 'Chapter 3: ', { fresh: true })
       expect(html).toContain('Chapter 3: ')
       expect(html).toContain('<span class="section-subtitle"><br></span>')
+    })
+
+    it('renders a chapter WITH a subtitle exactly as before (colon + span regression guard)', () => {
+      const section = { id: 's1', title: 'The Arrival', sectionType: 'chapter' }
+      const html = sectionTitleToHTML(section, 1, 'Chapter 1: ', { fresh: false })
+      expect(html).toContain('Chapter 1: ')
+      expect(html).toContain('<span class="section-subtitle">The Arrival</span>')
     })
 
     it('renders a freeform section with one editable title span', () => {
@@ -170,11 +188,67 @@ describe('useParagraphHTML', () => {
       expect(html).toContain('Chapter 1: The Arrival')
     })
 
+    it('renders a manuscript-mode subtitle-less chapter as just "Chapter N"', () => {
+      const section = { id: 's1', title: '', sectionType: 'chapter' }
+      const html = sectionTitleToHTML(section, 1, 'Chapter 1: ', { manuscript: true })
+      expect(html).toContain('class="ms-para chapter"')
+      expect(html).toContain('Chapter 1')
+      expect(html).not.toContain(':')
+      expect(html).not.toContain('<br>')
+    })
+
     it('renders a manuscript-mode section as one styled ms-para line', () => {
       const section = { id: 's2', title: 'Prologue', sectionType: 'section' }
       const html = sectionTitleToHTML(section, null, '', { manuscript: true })
       expect(html).toContain('class="ms-para section"')
       expect(html).toContain('Prologue')
+    })
+  })
+
+  describe('sectionTitleToHTML hidden (5.10)', () => {
+    it('marks a hidden editor chapter with section-hidden class + data attr, keeping its text', () => {
+      const section = { id: 's1', title: 'The Arrival', sectionType: 'chapter', hidden: true }
+      const html = sectionTitleToHTML(section, 1, 'Chapter 1: ', { fresh: false })
+      expect(html).toContain('class="section-title chapter section-hidden"')
+      expect(html).toContain('data-section-hidden="true"')
+      // The marker still renders the text so it can be read/renamed.
+      expect(html).toContain('The Arrival')
+    })
+
+    it('marks a hidden freeform editor section too', () => {
+      const section = { id: 's2', title: 'Epigram', sectionType: 'section', hidden: true }
+      const html = sectionTitleToHTML(section, null, '', { fresh: false })
+      expect(html).toContain('class="section-title section-hidden"')
+      expect(html).toContain('data-section-hidden="true"')
+      expect(html).toContain('Epigram')
+    })
+
+    it('is byte-identical for a non-hidden section with and without the hidden field', () => {
+      // hidden:false and NO hidden key at all must render the same string —
+      // the reconciler decides keep-vs-replace by one string compare, so a
+      // falsey flag can never perturb the output.
+      const withFalse = { id: 's1', title: 'X', sectionType: 'chapter', hidden: false }
+      const without = { id: 's1', title: 'X', sectionType: 'chapter' }
+      expect(sectionTitleToHTML(withFalse, 1, 'Chapter 1: ', { fresh: false }))
+        .toBe(sectionTitleToHTML(without, 1, 'Chapter 1: ', { fresh: false }))
+      expect(sectionTitleToHTML(withFalse, 1, 'Chapter 1: ', { manuscript: true }))
+        .toBe(sectionTitleToHTML(without, 1, 'Chapter 1: ', { manuscript: true }))
+    })
+
+    it('renders a hidden manuscript heading as an EMPTY ms-para (never omitted)', () => {
+      // The pagination measurer collects `.ms-para` elements positionally and
+      // indexes against the block list — an omitted element would shift every
+      // later height. The empty element keeps the indices aligned (and the
+      // page render display:none's it).
+      const section = { id: 's1', title: 'Epigram', sectionType: 'section', hidden: true }
+      const html = sectionTitleToHTML(section, null, '', { manuscript: true })
+      expect(html).toBe('<p class="ms-para section-hidden" data-section-id="s1"></p>')
+    })
+
+    it('renders a hidden manuscript chapter heading the same empty way', () => {
+      const section = { id: 's9', title: 'Cut Scene', sectionType: 'chapter', hidden: true }
+      const html = sectionTitleToHTML(section, 2, 'Chapter 2: ', { manuscript: true })
+      expect(html).toBe('<p class="ms-para section-hidden" data-section-id="s9"></p>')
     })
   })
 })

@@ -1,6 +1,7 @@
-import { open, save, ask, message } from '@tauri-apps/api/dialog'
-import { readBinaryFile } from '@tauri-apps/api/fs'
+import { open, save, ask, message } from '@tauri-apps/plugin-dialog'
+import { invoke } from '@tauri-apps/api/core'
 import { useDocumentStore } from '../stores/document.js'
+import { useToastsStore } from '../stores/toasts.js'
 import { importDocx, importOdt } from './useImport.js'
 import { isEmptyParagraph } from '../constants/ParagraphStyle.js'
 
@@ -23,7 +24,7 @@ export function useFileIO() {
       try {
         await store.saveDocument(store.lastPath)
       } catch (e) {
-        console.error('Failed to save:', e)
+        useToastsStore().pushToast({ type: 'error', message: e?.message || String(e) })
       }
       return
     }
@@ -36,7 +37,39 @@ export function useFileIO() {
     try {
       await store.saveDocument(filePath)
     } catch (e) {
-      console.error('Failed to save:', e)
+      useToastsStore().pushToast({ type: 'error', message: e?.message || String(e) })
+    }
+  }
+
+  /// Save a COPY of the current document to a new path, then switch to it
+  /// (Fix 3, non-destructive "Save As"). Unlike `saveFile`, this ALWAYS shows
+  /// the save dialog — it never silently writes to `lastPath`. The old file
+  /// stays on disk untouched (we never delete it); `saveDocument` then updates
+  /// `lastPath` + title + saveState so subsequent quick-saves go to the NEW
+  /// file. This is `saveFile` with the `lastPath` short-circuit removed and the
+  /// dialog path always taken — split out so "Save" stays a one-click save to
+  /// the current file and "Save As" is the explicit copy/rename-to-new-path.
+  async function saveFileAs() {
+    // SPEC.md decision 3: the Save As dialog proposes the current filename when
+    // the document has a path (its basename, extension kept), and the title
+    // only when it does not — 'Untitled' when there is no title either (''
+    // title, no path). After the title became independent of the filename,
+    // seeding the dialog from the title would propose a misleading name for an
+    // existing document (a doc titled "Chapter One" living in draft-v2.rite
+    // should offer draft-v2.rite, not Chapter One.rite).
+    const defaultPath = store.lastPath
+      ? store.lastPath.split(/[\\/]/).pop()
+      : (store.doc?.title || 'Untitled') + '.rite'
+
+    const filePath = await save({
+      filters: [{ name: 'Rite Document', extensions: ['rite'] }],
+      defaultPath,
+    })
+    if (!filePath) return
+    try {
+      await store.saveDocument(filePath)
+    } catch (e) {
+      useToastsStore().pushToast({ type: 'error', message: e?.message || String(e) })
     }
   }
 
@@ -90,8 +123,8 @@ export function useFileIO() {
     })
     if (!filePath) return
     try {
-      const data = await readBinaryFile(filePath)
-      const arrayBuffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
+      const bytes = await invoke('read_import_bytes', { path: filePath })
+      const arrayBuffer = new Uint8Array(bytes).buffer
       const lower = filePath.toLowerCase()
       let sections
       if (lower.endsWith('.docx')) {
@@ -109,8 +142,6 @@ export function useFileIO() {
         author: '',
         authorContact: '',
         hasTOC: false,
-        hasEpigram: false,
-        epigramText: '',
         sections,
       })
       store.lastPath = null
@@ -122,5 +153,28 @@ export function useFileIO() {
     }
   }
 
-  return { saveFile, openFile, importFile }
+  /// Guard the start of a new document. If the current doc has real unsaved
+  /// content, offer to save it first (same `ask` dialog + sectionListIsEmpty
+  /// check importFile uses). Returns once the guard is satisfied; the caller
+  /// (App.vue) then opens the name-prompt modal. The actual fresh-doc creation
+  /// lives in the store's `newDocument(title)` action, called after the user
+  /// enters a name — the name is the whole point of 1.8, so it can't be decided
+  /// here.
+  async function newFile() {
+    if (
+      store.isModified &&
+      store.doc?.sections?.length > 0 &&
+      !sectionListIsEmpty(store.doc.sections)
+    ) {
+      const shouldSave = await ask('You have unsaved changes. Save before starting a new document?', {
+        title: 'Rite',
+        type: 'warning',
+      })
+      if (shouldSave) {
+        await saveFile()
+      }
+    }
+  }
+
+  return { saveFile, saveFileAs, openFile, importFile, newFile }
 }

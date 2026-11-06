@@ -1,0 +1,169 @@
+# Per-project config. This is the ONLY file (plus TESTING.md and the Dockerfile)
+# that changes when you point the workflow at a different stack.
+# Assumes npm (this repo ships package-lock.json). Swap the commands if you use
+# pnpm/yarn.
+
+base_branch: development
+
+# The platform the app is shipped on, and therefore the only one a green verdict
+# may be claimed for. Rite is macOS-only (WKWebView, `macos-private-api`, an
+# `objc` NSUserDefaults flip for continuous spellcheck), so a Linux run compiles
+# the `#[cfg(not(target_os = "macos"))]` stand-ins and never sees the macOS half
+# of the crate. That is not hypothetical: 5.15 came back green from the Linux
+# container while its macOS spell-check module did not compile at all.
+#
+# A run that reaches green on any other platform exits 6 (`wrong_platform`) with
+# the reason rather than reporting a green build nobody ships. Set
+# `allow_offplatform_green: true` only for a deliberate smoke test.
+target_platform: macos
+
+# Runs once at the start of a headless run (inside the container).
+setup: npm ci && npx playwright install chromium
+
+# Each layer: a command, plus how to read its results.
+#   parser: junit      -> reads `report` (path relative to repo root, so make the command write there)
+#   parser: cargo-text -> parses `test name ... ok|FAILED|ignored` lines from stdout (stable cargo test has no junit)
+test_layers:
+  - name: unit
+    cmd: npx vitest run --reporter=junit --outputFile=.workflow-out/unit.xml
+    parser: junit
+    report: .workflow-out/unit.xml
+
+  - name: rust
+    cwd: src-tauri
+    cmd: cargo test
+    parser: cargo-text
+
+  - name: e2e
+    cmd: PLAYWRIGHT_JUNIT_OUTPUT_FILE=.workflow-out/e2e.xml npx playwright test --reporter=junit
+    parser: junit
+    report: .workflow-out/e2e.xml
+
+# Globs the coding agent may never change (create, edit, delete). Checked by the
+# orchestrator after every iteration; violations are reverted and counted.
+# `**` crosses directories, `*` does not.
+protected_paths:
+  # Colocated tests. This repo keeps vitest tests next to the code they cover
+  # (`src/**/*.test.js`, `src/components/*.spec.js`), which is fine for the path
+  # lock: the test file and the implementation file are DIFFERENT files, so the
+  # lock separates them cleanly. (Rust is the exception — its inline test module
+  # shares the file, which is what `test_regions` below exists for.) The globs
+  # are extension-agnostic on purpose: adding a .ts test later is protected for
+  # free.
+  - "**/*.test.js"
+  - "**/*.test.ts"
+  - "**/*.spec.js"
+  - "**/*.spec.ts"
+  - "tests/**"
+  - "e2e/**"
+  - "src-tauri/tests/**"
+  - "vitest.config.js"
+  - "playwright.config.js"
+  - ".github/**"
+  - ".workflow/**"
+  - "SPEC.md"
+
+# Sub-file test locks, for files the coder MUST edit but which also hold
+# regression tests. Rust's idiom is a `#[cfg(test)] mod tests` block at the
+# bottom of the module under test, so `protected_paths` cannot cover it without
+# blocking the work entirely — and leaving it open lets an agent weaken an
+# assertion while keeping the test's name and its passing state, which neither
+# the path lock nor the baseline-name diff can see.
+#
+# Everything from `marker` to end of file is hashed at the start commit and must
+# not change. Edits above the marker (the implementation) are free. A change is
+# reverted and counts as a tampering offence, same as a protected path.
+test_regions:
+  - glob: "src-tauri/src/*.rs"
+    marker: "#[cfg(test)]"
+
+# Paths mounted read-only into the container (defense in depth on top of the check
+# above). Directories and single files only, no globs. Missing paths are skipped.
+readonly_mounts:
+  - ".workflow"
+  - "tests"
+  - "e2e"
+  - "src-tauri/tests"
+  - "vitest.config.js"
+  - "playwright.config.js"
+  - ".github"
+
+# Coding standards the coder reads before it writes code.
+# The rules tree lives outside this repo (Eliot's standards-mcp) and is COPIED
+# into .workflow-out/standards/ at the start of every run, so the coder always
+# sees the current rules and nothing is vendored here to drift. `.workflow-out`
+# is gitignored and excluded from the review diff.
+# Files compose in order: later files win conflicts (that repo's own rule).
+standards:
+  enabled: true
+  dir: ~/Projects/standards-mcp/rules     # override with STANDARDS_DIR in the environment
+  files:
+    - universal.md
+    - css.md
+    - projects/rite.md
+
+limits:
+  max_iterations: 8
+  goose_timeout_min: 45     # per goose invocation
+  test_timeout_min: 15      # per test layer
+  escalate_after: 2         # same failing set N iterations in a row -> use models.strong
+  strong_attempts: 2        # iterations allowed on the strong model before giving up
+
+  # How many failures ONE iteration is told to fix, from ONE layer. The planner is
+  # briefed on these and told the rest are deferred; the orchestrator still runs
+  # every layer and still requires the whole suite for green. So this changes
+  # convergence, not the verdict.
+  #
+  # Why: an iteration given eight failures across three languages produced eight
+  # half-fixes, two work units that both "implemented the full spec", and a
+  # needs_human objection — measured, not hypothetical. One layer is one language
+  # is one work unit is one coder call, and the model calls are ~86% of an
+  # iteration's wall clock (all three layers together are ~94 s).
+  #
+  # Selection is by cohesion, not ease: the largest S-ID family first, because
+  # tests that share a sentence tend to share a helper. Two guards keep it honest —
+  # a layer red and unselected for 2 iterations is forced next, and an iteration
+  # that clears nothing drops the next scope to a single test.
+  #
+  # Set 0 to disable scoping: every failure reaches the planner, exactly as it did
+  # before this key existed. That is the control arm if you ever want to compare.
+  failures_in_scope: 3
+
+# A layer that cannot be a coherent unit of work while another layer is red. Every
+# e2e failure is a symptom of a vue or rust defect, and playwright is the slowest
+# thing to boot, so it is never the iteration that gets scoped first.
+scope_depends_on:
+  e2e: [unit, rust]
+
+# Set via GOOSE_MODEL for each goose invocation. Blank = whatever goose is already configured with.
+# The orchestrator escalates to `strong` after `escalate_after` iterations on the same failures.
+models:
+  default: "glm-5.3-flash"
+  strong: "glm-5.3"
+
+# Pull-request description. On success the orchestrator runs this recipe once, against
+# the finished diff, to write a body that explains the code change. The container has
+# no GitHub token, so it writes .workflow-out/pr-description.md (+ pr-title.txt) and the
+# host applies them with `gh pr edit`.
+pr_description:
+  enabled: true
+  recipe: .workflow/recipes/describe-changes.yaml
+  # Blank/absent falls back to models.default. This is a read-and-explain job, so it
+  # does not need the strong model.
+  model: ""
+  # How much patch to hand over. The diffstat is always complete; past this the agent
+  # is told to read the files instead. Raise it for changes with many small hunks.
+  max_patch_kb: 120
+  # Writing standard for the description and title: ASD-STE100 Simplified Technical
+  # English. The target is a majority, not perfection — STE is a controlled language
+  # with a ~900-word dictionary, and forcing a coding agent into it hides the change.
+  style:
+    standard: asd-ste100
+    # Fraction of prose sentences that must pass the mechanical STE checks (sentence
+    # length, active voice, no contractions, no nominalisations, no filler). The
+    # orchestrator measures the agent's prose and logs the score either way.
+    target_compliance: 0.8
+    max_words_per_sentence: 25
+    # One rewrite, only when the draft misses the target, and only accepted when it
+    # scores better. Costs one extra call in that case.
+    retry_below_target: true

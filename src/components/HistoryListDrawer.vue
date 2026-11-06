@@ -17,12 +17,22 @@
         <p v-if="history.error" class="history-error">{{ history.error }}</p>
 
         <ul class="history-list" v-if="hasLastPath">
+          <!-- Each entry li IS the control (role=button, tabbable): the accessible
+               name spells the kind out ("Snapshot"/"Delta") rather than leaving the
+               S/Δ glyph to be read, and aria-current marks exactly the selected
+               version (SPEC 5.7). Enter/Space activate through onRowKeydown, so a
+               focused row selects exactly as a pointer click does (S-009). -->
           <li
             v-for="entry in history.entries"
             :key="entry.timestamp"
             class="history-row"
             :class="{ active: history.selectedTimestamp === entry.timestamp }"
+            role="button"
+            tabindex="0"
+            :aria-label="`${entryKindName(entry.kind)} ${formatHistoryTimestamp(entry.timestamp)}`"
+            :aria-current="history.selectedTimestamp === entry.timestamp ? 'true' : undefined"
             @click="onSelect(entry.timestamp)"
+            @keydown="onRowKeydown($event, entry.timestamp)"
           >
             <span class="history-kind" :class="entry.kind" :title="entry.kind === 'snapshot' ? 'Snapshot (full save)' : 'Delta (autosave)'">
               {{ entry.kind === 'snapshot' ? 'S' : 'Δ' }}
@@ -67,7 +77,7 @@
 </template>
 
 <script setup>
-import { ask } from '@tauri-apps/api/dialog'
+import { ask } from '@tauri-apps/plugin-dialog'
 import { formatHistoryTimestamp } from '../composables/useVersionHistory.js'
 
 const props = defineProps({
@@ -79,6 +89,12 @@ const props = defineProps({
   hasLastPath: { type: Boolean, default: false },
 })
 
+// The accessible name must spell the kind ("Snapshot"/"Delta"); the on-screen
+// S/Δ glyph is not something a screen reader can announce as a kind.
+function entryKindName(kind) {
+  return kind === 'snapshot' ? 'Snapshot' : 'Delta'
+}
+
 function onSelect(timestamp) {
   // If a diff is open for this same version, just drop the diff back to preview
   // instead of re-reconstructing. Otherwise load the preview for the newly
@@ -88,6 +104,17 @@ function onSelect(timestamp) {
     return
   }
   props.history.selectVersion(timestamp)
+}
+
+// Entry activation (S-009): the row is an li with role="button", not a native
+// button, so Enter fires no click and Space would scroll the drawer content.
+// One handler reads e.key (no template modifiers, as in NavigationDrawer) and
+// routes both activation keys through the same onSelect a pointer click uses,
+// so keyboard selection loads the preview exactly like clicking.
+function onRowKeydown(e, timestamp) {
+  if (e.key !== 'Enter' && e.key !== ' ') return
+  e.preventDefault()
+  onSelect(timestamp)
 }
 
 async function onRestore() {
@@ -123,7 +150,13 @@ function onDiff() {
   top: 38px;
   bottom: 36px;
   width: 260px;
-  transition: transform 0.25s ease;
+  /* S-018: a closed drawer keeps its slide animation but leaves the tab
+     order — visibility flips to hidden 0.25s AFTER the close starts (the
+     slide stays on screen) and back to visible instantly on open. Keep the
+     values identical to App.vue's .drawer base rule (its scoped rule also
+     reaches this component's root element). */
+  visibility: hidden;
+  transition: transform 0.25s ease, visibility 0s linear 0.25s;
   z-index: 25;
 }
 
@@ -134,6 +167,9 @@ function onDiff() {
 
 .drawer.left.open {
   transform: translateX(0);
+  /* S-018: open state — visible immediately, no visibility delay. */
+  visibility: visible;
+  transition: transform 0.25s ease, visibility 0s;
 }
 
 .drawer-content {

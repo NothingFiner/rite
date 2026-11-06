@@ -2,6 +2,9 @@
   <div
     class="editor-sheet"
     contenteditable="true"
+    spellcheck="true"
+    autocorrect="off"
+    autocapitalize="off"
     ref="sheetRef"
     :style="editorStyles"
     @input="onInput"
@@ -14,17 +17,37 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, nextTick, watch, computed, toRef } from 'vue'
-import { paragraphToHTML, sectionTitleToHTML, escapeHtml } from '../../composables/useParagraphHTML.js'
-import { flattenSections, groupBlocks, computeFirstLineIndent } from '../../composables/useSectionBlocks.js'
-import { computeReconcileOps, blockKey } from '../../composables/useEditorReconcile.js'
-import { usePagination } from '../../composables/usePagination.js'
+import { flattenSections, computeFirstLineIndent, AUTO_FIRST_LINE_INDENT } from '../../composables/useSectionBlocks.js'
+import { computeReconcileOps, blockKey, renderBlockHTML } from '../../composables/useEditorReconcile.js'
+import { buildEditorHTML } from '../../composables/useEditorRender.js'
 import { applySearchHighlights, clearSearchHighlights } from '../../composables/useSearchHighlights.js'
+import {
+  blockSelector, bookmarkSelection, restoreSelection, editableSpanOf,
+  getParagraphAtCursor, getSectionTitleAtCursor, getSectionIdAtCursor,
+  isCaretAtStart, isCaretAtEnd, placeCursorAtStart, selectLine,
+  getSelectionText as selectionTextWithin,
+} from '../../composables/useEditorCursor.js'
+import {
+  layoutPageBreaks as layoutPageBreaksInSheet,
+  navigatePage as navigatePageInSheet,
+  navigateSectionPage as navigateSectionPageInSheet,
+  scrollToPage as scrollToPageInSheet,
+  getCurrentPage as getCurrentPageInSheet,
+} from '../../composables/useEditorPageNav.js'
+import {
+  useEditorReadback, PX_PER_INCH,
+  blockPlainText, adjustOffsetForReplace, isNonContentBlock, readSectionTitleText,
+} from '../../composables/useEditorReadback.js'
+import { resolveTabAction } from '../../composables/useEditorTabKey.js'
 import { THEMES } from '../../constants/themes.js'
-import { generateParagraphId, generateSectionId, createSection, createParagraph, defaultTextStyle } from '../../constants/DocumentModel.js'
+import { generateParagraphId, createSection } from '../../constants/DocumentModel.js'
 import { useSectionFormat } from '../../composables/useSectionFormat.js'
 
 const props = defineProps({
   modelValue: Object,
+  // One shared `usePagination` lives in App.vue (roadmap 2.5); a per-editor copy
+  // would measure cold. Each entry is a block index that starts a new page.
+  pageBreaks: { type: Array, default: () => [] },
   theme: { type: Number, default: 0 },
   zoom: { type: Number, default: 16 },
   margin: { type: String, default: 'compact' },
@@ -32,39 +55,33 @@ const props = defineProps({
 const emit = defineEmits(['syncSections', 'syncSection', 'update', 'deleteSection'])
 
 const sheetRef = ref(null)
-// The id of a just-inserted section whose title the user is editing inline. While
-// set, that one .section-title stays contenteditable; every other section-title
-// is locked. Cleared by Enter/Escape/click-away (see lockFreshSection). This is the
-// old `freshHeadingId` mechanism retargeted at section titles.
+// The section the writer is naming inline. While set, only that title is
+// editable; Enter, Escape or a click elsewhere locks it.
 const freshSectionId = ref(null)
 const skipNextWatcher = ref(false)
-// The flat block list (with baked firstLineIndent) matching the CURRENT live
-// DOM. Maintained as an invariant across all three DOM-producing paths:
-// renderEditor (full rebuild), syncFromDOM (edit readback), and reconcileEditor
-// (surgical patch). reconcileEditor diffs this against the new model to compute
-// the minimal patch; if it ever disagrees with the actual DOM it falls back to
-// a full renderEditor (see the drift gate).
+// The block list the live DOM was rendered from, indents baked. `reconcileEditor`
+// diffs against it, and the drift gate compares it back to the DOM.
 const lastRenderedBlocks = ref(null)
-// Number of `.section-title` blocks in `lastRenderedBlocks`. The localized
-// syncFromDOM uses this as a cheap structural gate: if the live DOM's
-// section-title count differs, an edit crossed a section boundary (which the
-// keydown/beforeinput handlers are meant to block, but a browser edge case
-// could allow) and we fall back to the full readback. Maintained wherever
-// lastRenderedBlocks is set on the full-render/reconcile paths; a within-
-// section typing edit doesn't change it, so the localized path leaves it alone.
+// Section titles in `lastRenderedBlocks`. A different live count means an edit
+// crossed a section boundary, so the localized readback falls back to the full one.
 const lastSectionCount = ref(0)
-// The last selection that was inside the editor sheet, captured continuously
-// while the editor is focused and stashed on focus loss. External changes
-// triggered from outside the editor (nav-drawer rename, toolbar, undo/redo)
-// move focus out of the sheet BEFORE the model-watcher fires reconcileEditor,
-// so the live bookmarkSelection returns null — without this stash there would
-// be nothing to restore and the caret would jump. See reconcileEditor's
-// fallback to this value. Cleared when its target node is destroyed (drift-gate
-// fallback to renderEditor) so it can never point at a missing block.
+// The last selection inside the sheet. An external change moves focus out before
+// `reconcileEditor` runs, so `bookmarkSelection` returns null and this stash is
+// what puts the caret back.
 const lastEditorSelection = ref(null)
-const docRef = toRef(props, 'modelValue')
-const { pageBreaks } = usePagination(docRef)
+// True while the sheet holds a non-empty selection, so the Assistant panel can
+// scope a critique to it live (roadmap 3.2).
+const hasSelection = ref(false)
+const pageBreaks = toRef(props, 'pageBreaks')
+// Handles the readback factory reads through; this component owns the state.
+const modelRef = toRef(props, 'modelValue')
+const zoomRef = toRef(props, 'zoom')
 const sectionFormat = useSectionFormat()
+
+// Only `syncFromDOM` is used here; `fullSyncFromDOM` is its internal fallback.
+const { syncFromDOM } = useEditorReadback({
+  sheetRef, modelRef, zoomRef, lastRenderedBlocks, lastSectionCount, skipNextWatcher, emit,
+})
 
 function editorApplySearchHighlights(matches, currentIndex) {
   applySearchHighlights(sheetRef.value, matches, currentIndex)
@@ -82,19 +99,15 @@ const editorStyles = computed(() => {
     background: t.bg,
     color: t.text,
     padding: pad,
-    // Drives the trailing page-break <hr> color (set in layoutPageBreaks) via
-    // var(--page-break-color). Keeping it here — inside the reactive computed
-    // bound to :style — means a theme change updates the <hr> color live without
-    // the full innerHTML rebuild the old watch(props.theme) performed.
+// A theme change recolours the page-break rules through the computed, with no
+// `innerHTML` rebuild.
     '--page-break-color': t.text,
   }
 })
 
 // --- Section-title locking ---------------------------------------------------
-// Section titles are structural markers, not body text: they are locked
-// (contenteditable=false) except for the one section currently being
-// inserted/renamed inline (freshSectionId). The derived "Chapter N: " prefix
-// is ALWAYS locked — the number is render-derived, never user-editable.
+// Titles are locked except the one being named inline; the derived "Chapter N: "
+// prefix is never editable.
 
 function applySectionTitleLocks() {
   const root = sheetRef.value
@@ -114,496 +127,45 @@ function lockFreshSection() {
   const root = sheetRef.value
   if (root) {
     const el = root.querySelector(`[data-section-id="${freshSectionId.value}"]`)
-    if (el) el.setAttribute('contenteditable', 'false')
+    if (el) {
+      el.setAttribute('contenteditable', 'false')
+// 5.9: an untitled chapter loses the colon and empty subtitle span on lock, or
+// the fresh DOM would keep "Chapter 1: " forever. Nothing re-renders it: the
+// section insert skips the watcher.
+      if (el.dataset.sectionType === 'chapter' && !readSectionTitleText(el)) {
+        const subtitleSpan = el.querySelector('.section-subtitle')
+        if (subtitleSpan) subtitleSpan.remove()
+        const prefixSpan = el.querySelector('.chapter-prefix')
+        if (prefixSpan) prefixSpan.textContent = prefixSpan.textContent.replace(/: $/, '')
+      }
+    }
   }
   freshSectionId.value = null
 }
 
-// --- DOM → model -------------------------------------------------------------
-// The editor's contenteditable is a FLAT sibling list: .section-title markers
-// interleaved with .paragraph divs. domToBlocks walks that flat list into the
-// block shape groupBlocks understands; groupBlocks then rebuilds the nested
-// Section[] the store holds. Section-titles are read back from their editable
-// span only (the chapter-prefix span is derived and never read).
-
-function isNonContentBlock(el) {
-  return el.classList?.contains('page-break-line') ||
-    el.classList?.contains('page-number-label') ||
-    el.classList?.contains('epigram-block') ||
-    el.classList?.contains('editor-sentinel')
-}
-
-function parseParagraphElement(child) {
-  const style = window.getComputedStyle(child)
-  const leftIndentPx = parseInt(style.marginLeft, 10) || 0
-  const rightIndentPx = parseInt(style.marginRight, 10) || 0
-  const elements = []
-  for (const run of child.childNodes) {
-    if (run.nodeType === Node.TEXT_NODE) {
-      if (run.textContent) {
-        elements.push({ textRun: { content: run.textContent, textStyle: defaultTextStyle() } })
-      }
-    } else if (run.nodeType === Node.ELEMENT_NODE) {
-      if (run.classList?.contains('search-highlight') || run.classList?.contains('search-current')) {
-        elements.push({ textRun: { content: run.textContent || '', textStyle: defaultTextStyle() } })
-        continue
-      }
-      const runStyle = window.getComputedStyle(run)
-      const textStyle = defaultTextStyle({
-        bold: runStyle.fontWeight === '700' || runStyle.fontWeight === 'bold',
-        italic: runStyle.fontStyle === 'italic',
-        underline: runStyle.textDecorationLine.includes('underline'),
-      })
-      const fs = parseInt(runStyle.fontSize, 10)
-      if (fs && fs !== 16 && fs !== props.zoom) textStyle.fontSize = fs
-      elements.push({ textRun: { content: run.innerText || '', textStyle } })
-    }
-  }
-  if (elements.length === 0) {
-    elements.push({ textRun: { content: '', textStyle: defaultTextStyle() } })
-  }
-  return {
-    id: child.dataset.paraId || generateParagraphId(),
-    leftIndent: leftIndentPx > 0 ? Math.round(leftIndentPx / 96 * 10) / 10 : null,
-    rightIndent: rightIndentPx > 0 ? Math.round(rightIndentPx / 96 * 10) / 10 : null,
-    firstLineIndent: null, // recomputed in syncFromDOM
-    elements,
-  }
-}
-
-function readSectionTitleText(el) {
-  const sectionType = el.dataset.sectionType
-  const span = sectionType === 'chapter'
-    ? el.querySelector('.section-subtitle')
-    : el.querySelector('.section-title-text')
-  const text = span ? (span.textContent || '') : ''
-  return text.replace(/ /g, ' ').trim()
-}
-
-function domToBlocks(root) {
-  const blocks = []
-  for (const child of Array.from(root.children)) {
-    if (isNonContentBlock(child)) continue
-
-    if (child.classList?.contains('section-title')) {
-      blocks.push({
-        kind: 'section-title',
-        sectionId: child.dataset.sectionId || generateSectionId(),
-        sectionType: child.dataset.sectionType || 'section',
-        title: readSectionTitleText(child),
-      })
-    } else if (child.classList?.contains('paragraph')) {
-      blocks.push({
-        kind: 'paragraph',
-        sectionId: child.dataset.sectionId,
-        paragraphId: child.dataset.paraId,
-        paragraph: parseParagraphElement(child),
-      })
-    }
-  }
-  return blocks
-}
-
-/// Stamp the render-derived `chapterIndex` onto each section-title block (1-based
-/// running count of chapters; null for non-chapters). `flattenSections` already
-/// does this for model-sourced blocks, but `domToBlocks` (the DOM readback path)
-/// does not — so blocks built from the DOM must be baked here to match. The
-/// reconciler renders a block via this index to reproduce the "Chapter N: "
-/// prefix; without it, every chapter title would falsely diff as changed after
-/// an edit. Idempotent: re-baking a flattenSections list yields the same values.
-function bakeChapterIndices(blocks) {
-  let chapterIndex = 0
-  for (const block of blocks) {
-    if (block.kind === 'section-title') {
-      block.chapterIndex = block.sectionType === 'chapter' ? ++chapterIndex : null
-    }
-  }
-}
-
-/// Read back the whole sheet into the model and emit the full sections array.
-/// This is the FALLBACK for the localized syncFromDOM: used when an edit can't
-/// be confidently confined to one section (no selection, no section id, or the
-/// section structure looks changed) and on the first paint. It is the
-/// pre-localization behavior verbatim. O(document) — the localized path is
-/// what makes typing feel good; this only runs on structural ambiguity.
-function fullSyncFromDOM() {
-  const root = sheetRef.value
-  if (!root || !props.modelValue) return
-  const blocks = domToBlocks(root)
-  bakeChapterIndices(blocks)
-
-  // Compute and bake section-aware first-line indents.
-  for (let i = 0; i < blocks.length; i++) {
-    if (blocks[i].kind !== 'paragraph') continue
-    blocks[i].paragraph.firstLineIndent = computeFirstLineIndent(blocks, i)
-  }
-
-  // Reflect computed indents back into the live DOM so paragraphs created by
-  // the browser (which don't copy inline styles) show the right indent.
-  const domParas = Array.from(root.querySelectorAll('.paragraph'))
-  let pIdx = 0
-  for (const block of blocks) {
-    if (block.kind !== 'paragraph') continue
-    const dom = domParas[pIdx]
-    pIdx++
-    if (!dom) continue
-    const indent = block.paragraph.firstLineIndent
-    dom.style.textIndent = indent > 0 ? `${Math.round(indent * 96)}px` : '0px'
-  }
-
-  let sections = groupBlocks(blocks)
-  // Defensive: every section must have at least one paragraph to type into.
-  for (const s of sections) {
-    if (!s.paragraphs || s.paragraphs.length === 0) s.paragraphs.push(createParagraph())
-  }
-
-  // Keep the retained block list in sync with the live DOM so a later external
-  // change diffs against reality, not a pre-typing snapshot.
-  lastRenderedBlocks.value = blocks
-  lastSectionCount.value = blocks.filter(b => b.kind === 'section-title').length
-
-  skipNextWatcher.value = true
-  emit('syncSections', sections)
-}
-
-/// Read back ONLY the cursor's section into the model and emit that one
-/// section. Every onInput edit is confined to one section — cross-section
-/// backspace/delete is preventDefault'd (onKeydown) and locked section-titles
-/// block input (onBeforeinput) — so the whole-sheet readback fullSyncFromDOM
-/// performs is unnecessary on the typing path. That readback called
-/// window.getComputedStyle() per paragraph AND per styled run
-/// (parseParagraphElement): an O(document) layout read per keystroke, which is
-/// the typing lag at 51k words. Reading one section makes it O(section) — a
-/// handful of getComputedStyle calls. Falls back to fullSyncFromDOM whenever it
-/// can't confidently localize (worst case = today's behavior).
-function syncFromDOM() {
-  const root = sheetRef.value
-  if (!root || !props.modelValue) return
-
-  const sectionId = getSectionIdAtCursor()
-  const titleEls = root.querySelectorAll('.section-title')
-  // Structural gate: if the live section-title count differs from the retained
-  // baseline, an edit crossed a section boundary (added/removed/merged a
-  // section) — a localized read would miss the other side. Fall back to the
-  // full readback. O(section-titles) DOM walk, no layout reads.
-  if (!sectionId || !lastRenderedBlocks.value || titleEls.length !== lastSectionCount.value) {
-    fullSyncFromDOM()
-    return
-  }
-
-  // Locate this section's title element within the titles we already walked.
-  let titleEl = null
-  for (const el of titleEls) {
-    if (el.dataset.sectionId === sectionId) { titleEl = el; break }
-  }
-  if (!titleEl) { fullSyncFromDOM(); return }
-  // Collect this section's paragraphs POSITIONALLY — the consecutive
-  // `.paragraph` siblings after the title, up to the next `.section-title` (or
-  // a trailing decoration / end). This matches groupBlocks' positional logic,
-  // NOT an attribute match: a paragraph created by execCommand('insertParagraph')
-  // (the Enter handler) is a fresh <div> that may not carry data-section-id, so
-  // querying by attribute would miss it and silently drop the just-split
-  // paragraph. Walking siblings by class is robust to that.
-  const paraEls = []
-  let sibling = titleEl.nextElementSibling
-  while (sibling && sibling.classList.contains('paragraph')) {
-    paraEls.push(sibling)
-    sibling = sibling.nextElementSibling
-  }
-
-  // Build the section's block list: one title block + its paragraph blocks.
-  const titleBlock = {
-    kind: 'section-title',
-    sectionId,
-    sectionType: titleEl.dataset.sectionType || 'section',
-    title: readSectionTitleText(titleEl),
-  }
-  // Preserve the render-derived chapterIndex from the retained baseline — a
-  // typing edit doesn't change the title or type, so the index is unchanged and
-  // re-baking it would need an O(document) chapter walk. (If the section
-  // somehow isn't in the baseline the gate above caught it, but guard anyway.)
-  const prevTitle = lastRenderedBlocks.value.find(
-    b => b.kind === 'section-title' && b.sectionId === sectionId
-  )
-  if (!prevTitle) { fullSyncFromDOM(); return }
-  titleBlock.chapterIndex = prevTitle.chapterIndex
-
-  const blocks = [titleBlock]
-  for (const el of paraEls) {
-    blocks.push({
-      kind: 'paragraph',
-      sectionId,
-      paragraphId: el.dataset.paraId,
-      paragraph: parseParagraphElement(el),
-    })
-  }
-
-  // Compute and bake first-line indents within this section only. The title is
-  // blocks[0]; computeFirstLineIndent looks back only to the previous block in
-  // this local list, so a section's indents are self-contained.
-  for (let i = 0; i < blocks.length; i++) {
-    if (blocks[i].kind !== 'paragraph') continue
-    blocks[i].paragraph.firstLineIndent = computeFirstLineIndent(blocks, i)
-  }
-
-  // Reflect computed indents back into this section's live DOM paragraphs only.
-  let pi = 0
-  for (const block of blocks) {
-    if (block.kind !== 'paragraph') continue
-    const dom = paraEls[pi]
-    pi++
-    if (!dom) continue
-    const indent = block.paragraph.firstLineIndent
-    dom.style.textIndent = indent > 0 ? `${Math.round(indent * 96)}px` : '0px'
-  }
-
-  // Group this section's blocks back into a Section (defensive ≥1 paragraph).
-  const sections = groupBlocks(blocks)
-  const s = sections[0]
-  if (!s) { fullSyncFromDOM(); return }
-  if (!s.paragraphs || s.paragraphs.length === 0) s.paragraphs.push(createParagraph())
-
-  // Splice the section's blocks into the retained list, replacing its old
-  // title + paragraphs in place. Section-title count is unchanged by a
-  // within-section edit, so lastSectionCount stays correct without recompute.
-  const all = lastRenderedBlocks.value
-  const startIdx = all.findIndex(
-    b => b.kind === 'section-title' && b.sectionId === sectionId
-  )
-  if (startIdx === -1) { fullSyncFromDOM(); return }
-  let endIdx = startIdx + 1
-  while (endIdx < all.length && all[endIdx].kind !== 'section-title') endIdx++
-  lastRenderedBlocks.value = all.slice(0, startIdx).concat(blocks, all.slice(endIdx))
-
-  skipNextWatcher.value = true
-  emit('syncSection', { id: s.id, title: s.title, paragraphs: s.paragraphs })
-}
-
 // --- Page-break layout -------------------------------------------------------
-// pageBreaks (from usePagination) are indices into the flattened block
-// sequence (section-titles + paragraphs, no epigram). layoutPageBreaks walks
-// the live DOM content blocks in that same order and stamps data-page-start on
-// whichever block begins a page. CSS targets [data-page-start] generally, so a
-// page can begin on either a section-title or a paragraph.
-
 function layoutPageBreaks() {
-  const root = sheetRef.value
-  if (!root) return
-
-  root.querySelectorAll('.page-break-line').forEach(el => el.remove())
-  root.querySelectorAll('.editor-sentinel').forEach(el => el.remove())
-  root.querySelectorAll('[data-page-start]').forEach(el => el.removeAttribute('data-page-start'))
-
-  const blocks = flattenSections(props.modelValue?.sections || [])
-  if (blocks.length === 0) return
-
-  const breaks = pageBreaks.value
-  let blockIndex = 0
-  let pageNum = 1
-  let lastContentNode = null
-  let lastParagraphNode = null
-  let currentNode = root.firstElementChild
-
-  while (currentNode) {
-    const isContent = currentNode.classList?.contains('section-title') ||
-      currentNode.classList?.contains('paragraph')
-    if (!isContent) {
-      currentNode = currentNode.nextElementSibling
-      continue
-    }
-
-    if (blockIndex === 0 || breaks.includes(blockIndex)) {
-      if (blockIndex !== 0) pageNum++
-      currentNode.setAttribute('data-page-start', String(pageNum))
-    }
-
-    lastContentNode = currentNode
-    if (currentNode.classList.contains('paragraph')) lastParagraphNode = currentNode
-    blockIndex++
-    currentNode = currentNode.nextElementSibling
-  }
-
-  // Trailing page-break line + sentinel for visual closure and to absorb
-  // clicks below the last page break (same purpose as the old code).
-  if (lastContentNode) {
-    const hr = document.createElement('hr')
-    hr.className = 'page-break-line'
-    hr.setAttribute('contenteditable', 'false')
-    hr.style.cssText = `border:none;border-top:1px dashed var(--page-break-color);opacity:0.25;margin:1.2em 0;`
-    root.insertBefore(hr, lastContentNode.nextSibling)
-
-    const sentinel = document.createElement('div')
-    sentinel.className = 'editor-sentinel'
-    sentinel.setAttribute('contenteditable', 'false')
-    sentinel.style.cssText = 'height:48px;user-select:none;'
-    const focusTarget = lastParagraphNode || lastContentNode
-    sentinel.addEventListener('click', (e) => {
-      e.preventDefault()
-      if (focusTarget) {
-        const range = document.createRange()
-        range.selectNodeContents(focusTarget)
-        range.collapse(false)
-        const sel = window.getSelection()
-        sel.removeAllRanges()
-        sel.addRange(range)
-      }
-    })
-    root.appendChild(sentinel)
-  }
+  return layoutPageBreaksInSheet(sheetRef.value, props.modelValue?.sections || [], pageBreaks.value)
 }
 
 // --- Reconciliation (external model changes) ---------------------------------
-// When the model changes outside the editor (undo, rename, delete, type-change,
-// restore), patch the live DOM surgically by stable block id instead of the
-// full `innerHTML` rebuild renderEditor performs — so the cursor and scroll
-// stay where the user left them. The pure op computation lives in
-// useEditorReconcile.js; this function owns the DOM application, cursor
-// save/restore, the epigram, and a drift-gate fallback to renderEditor.
+// Supplies the sheet, sections and pageBreaks the module needs, so its call
+// sites stay arg-less.
 
-/// `[data-section-id="…"]` / `[data-para-id="…"]` selector for a block key.
-function blockSelector(key) {
-  if (key.startsWith('title:')) return `[data-section-id="${key.slice(6)}"]`
-  return `[data-para-id="${key.slice(5)}"]`
-}
-
-/// Render a single block to its full outer HTML, matching renderEditor's
-/// rendering byte-for-byte so an unchanged block is `keep`, not a false
-/// `replace`. Uses the block's baked `chapterIndex` (set by flattenSections or
-/// bakeChapterIndices) for the render-derived chapter prefix.
-function renderBlockHTML(block) {
-  if (block.kind === 'section-title') {
-    const idx = block.chapterIndex
-    const chapterPrefix = idx != null ? sectionFormat.formatChapter(idx) : ''
-    return sectionTitleToHTML(
-      { id: block.sectionId, title: block.title, sectionType: block.sectionType },
-      idx,
-      chapterPrefix,
-      { fresh: block.sectionId === freshSectionId.value }
-    )
-  }
-  return paragraphToHTML(block.paragraph, { sectionId: block.sectionId })
-}
-
-/// Snapshot the selection so it can be restored after the DOM patch. Returns
-/// `{ key, kind, offset }` where offset is the character count from the start
-/// of the editable unit (the paragraph, or the editable title span) to the
-/// caret, or null when the selection is outside the sheet.
-function bookmarkSelection(root) {
-  const sel = window.getSelection()
-  if (!sel || !sel.rangeCount) return null
-  const anchor = sel.anchorNode
-  if (!anchor || !root.contains(anchor)) return null
-  let blockEl = anchor.nodeType === 3 ? anchor.parentElement : anchor
-  while (blockEl && blockEl !== root && !blockEl.classList?.contains('paragraph') && !blockEl.classList?.contains('section-title')) {
-    blockEl = blockEl.parentElement
-  }
-  if (!blockEl || blockEl === root) return null
-  const kind = blockEl.classList.contains('paragraph') ? 'paragraph' : 'section-title'
-  // For a section-title the editable unit is its inner span (the chapter prefix
-  // is locked); for a paragraph it is the paragraph itself.
-  const unit = kind === 'section-title' ? editableSpanOf(blockEl) : blockEl
-  const key = kind === 'paragraph'
-    ? 'para:' + blockEl.dataset.paraId
-    : 'title:' + blockEl.dataset.sectionId
-  // Character offset from the start of the unit to the caret.
-  const range = sel.getRangeAt(0).cloneRange()
-  const probe = document.createRange()
-  probe.selectNodeContents(unit)
-  probe.setEnd(range.startContainer, range.startOffset)
-  return { key, kind, offset: probe.toString().length }
-}
-
-/// Restore the caret saved by bookmarkSelection. If the block was removed by
-/// the patch, leave the cursor where the browser placed it (acceptable for v1).
-function restoreSelection(root, bookmark) {
-  if (!bookmark) return
-  const sel = window.getSelection()
-  if (!sel) return
-  const blockEl = root.querySelector(blockSelector(bookmark.key))
-  if (!blockEl) return
-  const unit = bookmark.kind === 'section-title' ? editableSpanOf(blockEl) : blockEl
-  // Walk text nodes to place the caret at the (clamped) character offset.
-  let remaining = Math.max(0, bookmark.offset)
-  const walker = document.createTreeWalker(unit, NodeFilter.SHOW_TEXT)
-  let node = walker.nextNode()
-  while (node) {
-    const len = node.textContent.length
-    if (remaining <= len) {
-      const range = document.createRange()
-      range.setStart(node, remaining)
-      range.collapse(true)
-      sel.removeAllRanges()
-      sel.addRange(range)
-      return
-    }
-    remaining -= len
-    node = walker.nextNode()
-  }
-  // Offset at/past the end: collapse to the end of the unit.
-  const range = document.createRange()
-  range.selectNodeContents(unit)
-  range.collapse(false)
-  sel.removeAllRanges()
-  sel.addRange(range)
-}
-
-/// The visible text of an editable block — the same string the DOM renders and
-/// `bookmarkSelection` measures offsets against. Paragraph runs are joined with
-/// no separator (useParagraphHTML.js), and a title's editable unit is its
-/// subtitle/title span, whose text is `block.title`. Used to shift a bookmarked
-/// caret by the character delta when a block's text changes on undo/redo.
-function blockPlainText(block) {
-  if (block.kind === 'section-title') return block.title || ''
-  return (block.paragraph?.elements || []).map(e => e.textRun?.content || '').join('')
-}
-
-/// Map a caret offset measured in `oldText` to the corresponding offset in
-/// `newText`. The two are assumed to differ by a single replaced middle region
-/// (the common case for undo/redo of typing within one paragraph): a common
-/// prefix and common suffix flank the change. A caret in the unchanged prefix
-/// or suffix is shifted by the net length change of the middle; a caret that sat
-/// inside the replaced region lands at its start. This is why undoing "big dog"
-/// (typed before "specifications") moves the caret from "after big dog" back to
-/// the insertion point instead of 7 characters deep into "specifications".
-function adjustOffsetForReplace(oldText, newText, offset) {
-  if (oldText === newText) return offset
-  const oldLen = oldText.length
-  const newLen = newText.length
-  if (offset <= 0) return 0
-  let prefix = 0
-  while (prefix < oldLen && prefix < newLen && oldText[prefix] === newText[prefix]) prefix++
-  if (offset <= prefix) return offset
-  let suffix = 0
-  while (
-    suffix < oldLen - prefix && suffix < newLen - prefix &&
-    oldText[oldLen - 1 - suffix] === newText[newLen - 1 - suffix]
-  ) suffix++
-  const oldChangeEnd = oldLen - suffix
-  const newChangeEnd = newLen - suffix
-  if (offset >= oldChangeEnd) return offset - oldChangeEnd + newChangeEnd
-  return prefix
-}
-
-/// Track the in-editor selection continuously so an external change triggered
-/// from OUTSIDE the editor (nav-drawer rename, toolbar, undo/redo) can still
-/// restore the caret. Those triggers move focus out of the sheet before the
-/// model-watcher fires reconcileEditor, at which point bookmarkSelection
-/// returns null; lastEditorSelection holds the last in-editor caret this
-/// stashed. Only updates while the sheet is focused — when focus leaves, we
-/// leave the stash alone (do NOT null it) so it survives as the fallback.
-/// Per-keystroke cost is one bookmarkSelection (O(paragraph offset), no layout
-/// reads) — negligible next to the localized syncFromDOM.
+/// Keeps the caret bookmark fresh while the sheet has focus. The stash must
+/// survive focus loss, or `reconcileEditor` has nothing to restore.
 function onSelectionChange() {
   const root = sheetRef.value
   if (!root) return
   if (!root.contains(document.activeElement)) return
   const bm = bookmarkSelection(root)
   if (bm) lastEditorSelection.value = bm
+  // Only while focused, so a selection blurred by clicking into the Assistant
+  // panel still reads as present.
+  hasSelection.value = getSelectionText() !== ''
 }
 
-/// Patch the live DOM to match the new model, preserving the cursor. Falls
-/// back to a full renderEditor when there is no retained baseline or the DOM
-/// has drifted from it (worst case = today's behavior).
+/// Patch the live DOM to match the new model, preserving the cursor.
 function reconcileEditor() {
   const root = sheetRef.value
   if (!root || !props.modelValue) return
@@ -624,9 +186,7 @@ function reconcileEditor() {
     )
   }
   if (liveNodes.length !== oldBlocks.length || liveByKey.size !== liveNodes.length) {
-    // The DOM has drifted from the retained baseline — a full rebuild will
-    // destroy the bookmarked block, so drop the stash to avoid ever restoring
-    // to a node that no longer exists.
+    // A rebuild destroys the bookmarked block, so drop the stash first.
     lastEditorSelection.value = null
     renderEditor(); return
   }
@@ -648,39 +208,26 @@ function reconcileEditor() {
   }
 
   let bookmark = bookmarkSelection(root)
-  // External changes triggered from OUTSIDE the editor (nav-drawer rename,
-  // toolbar, undo/redo) move focus out of the sheet before this watcher fires,
-  // so the live bookmark is null. Fall back to the last selection captured
-  // while the editor WAS focused (lastEditorSelection) so the caret returns to
-  // where the user was — not wherever the browser drops it after the patch.
+// An external change from outside the editor (nav-drawer rename, toolbar,
+// undo/redo) moves focus out of the sheet before the model watcher runs. The
+// live bookmark is then null. Fall back to the last selection captured while the
+// editor had focus (`lastEditorSelection`). The caret then returns to where the
+// writer was, not to wherever the browser drops it after the patch.
   if (!bookmark) bookmark = lastEditorSelection.value
 
   // Clear the trailing decorations layoutPageBreaks owns; it re-adds them.
   root.querySelectorAll('.page-break-line').forEach(el => el.remove())
   root.querySelectorAll('.editor-sentinel').forEach(el => el.remove())
 
-  // Epigram: a non-content block at the very front, not part of flattenSections.
-  const wantEpigram = !!(props.modelValue.hasEpigram && props.modelValue.epigramText)
-  let epigramNode = root.querySelector('.epigram-block')
-  if (wantEpigram) {
-    const epigramHtml = `<div class="epigram-block">${escapeHtml(props.modelValue.epigramText).replace(/\n/g, '<br>')}</div>`
-    if (!epigramNode) {
-      epigramNode = document.createElement('div')
-      root.insertBefore(epigramNode, root.firstChild)
-    }
-    if (epigramNode.outerHTML !== epigramHtml) epigramNode.outerHTML = epigramHtml
-    epigramNode = root.querySelector('.epigram-block')
-  } else if (epigramNode) {
-    epigramNode.remove()
-    epigramNode = null
-  }
-
-  const { ops, removedKeys } = computeReconcileOps(oldBlocks, newBlocks, renderBlockHTML)
+  const { ops, removedKeys } = computeReconcileOps(
+    oldBlocks, newBlocks,
+    (block) => renderBlockHTML(block, { freshSectionId: freshSectionId.value, formatChapter: sectionFormat.formatChapter })
+  )
 
   // Apply ops in new order, keeping a prevNode cursor so each block lands in the
-  // right place. Content blocks live after the epigram (if any); the hr/sentinel
-  // are gone, so epigram + content are the only children while we patch.
-  let prevNode = epigramNode || null
+  // right place. The trailing decorations are gone, so the content blocks are
+  // the only children while we patch.
+  let prevNode = null
   for (const op of ops) {
     let node
     if (op.op === 'keep') {
@@ -694,14 +241,12 @@ function reconcileEditor() {
       else root.insertAdjacentHTML('afterbegin', op.html)
       node = root.querySelector(blockSelector(op.key))
     }
-    const expectedNext = prevNode
-      ? prevNode.nextSibling
-      : (epigramNode ? epigramNode.nextSibling : root.firstChild)
+    const expectedNext = prevNode ? prevNode.nextSibling : root.firstChild
     if (node && node !== expectedNext) root.insertBefore(node, expectedNext)
     prevNode = node
   }
 
-  // Remove deleted blocks (still present from the old DOM).
+// Remove blocks that the patch deleted but that still exist in the DOM.
   for (const key of removedKeys) {
     const node = liveByKey.get(key)
     if (node && root.contains(node)) node.remove()
@@ -710,13 +255,12 @@ function reconcileEditor() {
   applySectionTitleLocks()
   nextTick(() => layoutPageBreaks())
 
-  // Positional fallback: if the bookmarked block was removed by this patch
-  // (e.g. restoring an older version that lacked the paragraph the caret was
-  // in), restoreSelection would silently bail and the caret would jump to the
-  // browser default. Instead snap to the block now occupying the bookmark's
-  // former position. oldBlocks → newBlocks is order-preserving (no moves), so
-  // the survivor at the same index — or the nearest preceding surviving block
-  // — is the sensible landing spot.
+// Positional fallback. The patch may remove the bookmarked block, for example
+// when restoring an older version that lacked the caret's paragraph. In that case
+// `restoreSelection` would bail and the caret would jump to the browser default.
+// Snap to the block that occupies the bookmark's former position instead.
+// `oldBlocks` to `newBlocks` preserves order, so the survivor at that index, or
+// the nearest preceding survivor, is the right landing spot.
   let restoreBookmark = bookmark
   if (bookmark && !root.querySelector(blockSelector(bookmark.key))) {
     const oldIdx = oldBlocks.findIndex(b => blockKey(b) === bookmark.key)
@@ -726,8 +270,8 @@ function reconcileEditor() {
         const k = blockKey(newBlocks[j])
         if (root.querySelector(blockSelector(k))) { fallbackKey = k; break }
       }
-      // If nothing at/before the old position survived (the removed block was
-      // near the front), fall forward to the next surviving block.
+// If nothing at or before the previous position survived, the removed block was
+// near the front. Fall forward to the next surviving block.
       if (!fallbackKey) {
         for (let j = Math.min(oldIdx, newBlocks.length - 1) + 1; j < newBlocks.length; j++) {
           const k = blockKey(newBlocks[j])
@@ -745,13 +289,12 @@ function reconcileEditor() {
       }
     }
   }
-  // Shift the caret by the character delta of its block's text change. On
-  // undo/redo of typing the bookmarked offset was measured against the pre-patch
-  // text (longer or shorter); restoring it literally into the patched text lands
-  // mid-word. Map the offset through the common prefix/suffix so it tracks the
-  // content change. Only when the bookmarked block survived the patch (same key)
-  // — the positional-fallback branch above already resets offset to 0 because it
-  // targets a different editable unit.
+// Shift the caret by the character delta of its block's text change. On undo or
+// redo of typing, the bookmarked offset was measured against the pre-patch text,
+// which may be longer or shorter. Restoring it literally lands mid-word, so map
+// it through the common prefix and suffix. This branch applies only when the
+// bookmarked block survived with the same key. The positional fallback above
+// resets the offset to 0 because it targets a different editable unit.
   if (restoreBookmark && restoreBookmark.key === bookmark?.key) {
     const oldBlock = oldBlocks.find(b => blockKey(b) === restoreBookmark.key)
     const newBlock = newBlocks.find(b => blockKey(b) === restoreBookmark.key)
@@ -776,41 +319,17 @@ function renderEditor() {
   const root = sheetRef.value
   if (!root) return
 
-  // Shallow-copy paragraph blocks so baking computed indents does not mutate
-  // the store's reactive paragraphs.
-  const blocks = flattenSections(props.modelValue?.sections || []).map(b => {
-    if (b.kind === 'paragraph') return { ...b, paragraph: { ...b.paragraph } }
-    return b
-  })
-
-  for (let i = 0; i < blocks.length; i++) {
-    if (blocks[i].kind !== 'paragraph') continue
-    blocks[i].paragraph.firstLineIndent = computeFirstLineIndent(blocks, i)
-  }
-  // Record the baked block list so a later external change can diff against it
-  // instead of rebuilding the whole sheet.
-  lastRenderedBlocks.value = blocks
-  lastSectionCount.value = blocks.filter(b => b.kind === 'section-title').length
-
-  let chapterIndex = 0
-  let html = blocks.map(b => {
-    if (b.kind === 'section-title') {
-      const idx = b.sectionType === 'chapter' ? ++chapterIndex : null
-      const chapterPrefix = idx != null ? sectionFormat.formatChapter(idx) : ''
-      return sectionTitleToHTML(
-        { id: b.sectionId, title: b.title, sectionType: b.sectionType },
-        idx,
-        chapterPrefix,
-        { fresh: b.sectionId === freshSectionId.value }
-      )
+// The build returns the baked blocks that become the next reconcile baseline.
+  const { html, blocks, sectionCount } = buildEditorHTML(
+    props.modelValue?.sections || [],
+    {
+      freshSectionId: freshSectionId.value,
+      formatChapter: sectionFormat.formatChapter,
     }
-    return paragraphToHTML(b.paragraph, { sectionId: b.sectionId })
-  }).join('')
+  )
 
-  if (props.modelValue?.hasEpigram && props.modelValue?.epigramText) {
-    const epigramHtml = `<div class="epigram-block">${escapeHtml(props.modelValue.epigramText).replace(/\n/g, '<br>')}</div>`
-    html = epigramHtml + html
-  }
+  lastRenderedBlocks.value = blocks
+  lastSectionCount.value = sectionCount
 
   root.innerHTML = html
   applySectionTitleLocks()
@@ -822,173 +341,29 @@ function onInput() {
 }
 
 // --- Cursor / block helpers --------------------------------------------------
-
-function getParagraphAtCursor() {
-  const sel = window.getSelection()
-  if (!sel.rangeCount) return null
-  let node = sel.anchorNode
-  if (!node) return null
-  let el = node.nodeType === 3 ? node.parentElement : node
-  while (el && !el.classList?.contains('paragraph')) {
-    el = el.parentElement
-  }
-  return el || null
-}
-
-function getSectionTitleAtCursor() {
-  const sel = window.getSelection()
-  if (!sel.rangeCount) return null
-  let node = sel.anchorNode
-  if (!node) return null
-  let el = node.nodeType === 3 ? node.parentElement : node
-  while (el && !el.classList?.contains('section-title')) {
-    el = el.parentElement
-  }
-  return el || null
-}
-
-function getSectionIdAtCursor() {
-  const el = getParagraphAtCursor() || getSectionTitleAtCursor()
-  if (!el) return null
-  return el.dataset.sectionId || null
-}
-
-function isCaretAtStart(range, element) {
-  const temp = range.cloneRange()
-  temp.selectNodeContents(element)
-  temp.collapse(true)
-  return range.compareBoundaryPoints(Range.START_TO_START, temp) === 0
-}
-
-function isCaretAtEnd(range, element) {
-  const temp = range.cloneRange()
-  temp.selectNodeContents(element)
-  temp.collapse(false)
-  return range.compareBoundaryPoints(Range.END_TO_END, temp) === 0
-}
-
-// The editable span inside a section-title: .section-subtitle for a Chapter
-// (the prefix is locked), .section-title-text for a Section (the whole title).
-function editableSpanOf(sectionEl) {
-  return sectionEl.querySelector('.section-subtitle') ||
-    sectionEl.querySelector('.section-title-text') ||
-    sectionEl
-}
-
-// --- Page/line navigation (exposed to the parent for keyboard shortcuts) -----
-
-function placeCursorAtStart(el) {
-  const range = document.createRange()
-  range.setStart(el, 0)
-  range.collapse(true)
-  const sel = window.getSelection()
-  sel.removeAllRanges()
-  sel.addRange(range)
-}
-
-/// Return the plain text of the current selection within the editor sheet, or
-/// '' when nothing is selected or the selection lies outside the sheet. Used by
-/// the Assistant panel's `selection` scope — the model reads the writer's
-/// selected text as context.
+// `getSelectionText` is the one helper that needs the root, so the module takes it
+// as an argument; this wrapper supplies it for the arg-less parent surface.
 function getSelectionText() {
-  const sel = window.getSelection()
-  if (!sel || sel.isCollapsed || !sel.rangeCount) return ''
-  const text = sel.toString()
-  if (!text) return ''
-  // Confirm the selection is within this editor sheet so we don't capture
-  // selections made in other UI (e.g. the nav drawer).
-  const root = sheetRef.value
-  if (!root) return text
-  let node = sel.anchorNode
-  let el = node?.nodeType === 3 ? node.parentElement : node
-  while (el && el !== root) el = el.parentElement
-  return el === root ? text : ''
+  return selectionTextWithin(sheetRef.value)
 }
 
-function selectLine() {
-  const sel = window.getSelection()
-  if (!sel.rangeCount) return
-  const para = getParagraphAtCursor()
-  if (!para) return
-  const range = sel.getRangeAt(0)
-  const endPara = range.endContainer.nodeType === 3
-    ? range.endContainer.parentElement.closest('.paragraph')
-    : range.endContainer.closest('.paragraph')
-  if (endPara && endPara.nextElementSibling && endPara.nextElementSibling.classList.contains('paragraph')) {
-    const next = endPara.nextElementSibling
-    range.setEndAfter(next.lastChild || next)
-    sel.removeAllRanges()
-    sel.addRange(range)
-  } else {
-    const r = document.createRange()
-    r.selectNodeContents(para)
-    sel.removeAllRanges()
-    sel.addRange(r)
-  }
-}
-
-// Current page number at the cursor: walk back from the cursor's block to the
-// nearest [data-page-start] marker. (Mid-page blocks have no marker of their
-// own, so reading the cursor block's own data-page-start would wrongly default
-// to 1 — this walk finds the page-start block that owns the current page.)
-function currentPageAtCursor() {
-  const sheet = sheetRef.value
-  if (!sheet) return 1
-  const current = getParagraphAtCursor() || getSectionTitleAtCursor()
-  if (!current) return 1
-  let walk = current
-  while (walk) {
-    if (walk.dataset?.pageStart) return parseInt(walk.dataset.pageStart, 10)
-    walk = walk.previousElementSibling
-  }
-  return 1
-}
-
-// Place the cursor on the first paragraph of the page whose start block is
-// `startEl` (a section-title or paragraph). If the page starts with a
-// section-title, drop into the first paragraph after it.
-function focusPageStart(startEl) {
-  let target = startEl
-  if (startEl.classList.contains('section-title')) {
-    let next = startEl.nextElementSibling
-    while (next && !next.classList.contains('paragraph') && !next.classList.contains('section-title')) {
-      next = next.nextElementSibling
-    }
-    if (next && next.classList.contains('paragraph')) target = next
-  }
-  placeCursorAtStart(target)
-  target.scrollIntoView({ behavior: 'smooth', block: 'start' })
-}
-
+// --- Page navigation ---------------------------------------------------------
+// The four wrappers below inject the sheet root, so App.vue and useNavigation keep
+// an arg-less surface.
 function navigatePage(direction) {
-  const sheet = sheetRef.value
-  if (!sheet) return
-  const currentPage = currentPageAtCursor()
-  const targetPage = currentPage + direction
-  if (targetPage < 1) return
-  const startEl = sheet.querySelector(`[data-page-start="${targetPage}"]`)
-  if (!startEl) return
-  focusPageStart(startEl)
+  return navigatePageInSheet(sheetRef.value, direction)
 }
 
-// Jump the cursor to the first paragraph of the next/previous page that begins
-// with a section-title (the section-aware replacement for navigateHeadingPage).
+function scrollToPage(n) {
+  return scrollToPageInSheet(sheetRef.value, n, props.modelValue?.sections || [], pageBreaks.value)
+}
+
+function getCurrentPage() {
+  return getCurrentPageInSheet(sheetRef.value)
+}
+
 function navigateSectionPage(direction) {
-  const sheet = sheetRef.value
-  if (!sheet) return
-  const currentPage = currentPageAtCursor()
-  const sectionTitles = Array.from(sheet.querySelectorAll('.section-title[data-page-start]'))
-  const sectionPages = sectionTitles.map(el => parseInt(el.dataset.pageStart, 10))
-  let targetPage
-  if (direction > 0) {
-    targetPage = sectionPages.find(p => p > currentPage)
-  } else {
-    targetPage = [...sectionPages].reverse().find(p => p < currentPage)
-  }
-  if (!targetPage) return
-  const startEl = sheet.querySelector(`.section-title[data-page-start="${targetPage}"]`)
-  if (!startEl) return
-  focusPageStart(startEl)
+  return navigateSectionPageInSheet(sheetRef.value, direction)
 }
 
 // --- Keyboard / input handling ----------------------------------------------
@@ -1000,9 +375,8 @@ function onKeydown(e) {
     const inFresh = sectionEl && sectionEl.dataset.sectionId === freshSectionId.value
 
     if (inFresh) {
-      // Commit the fresh title: lock it, focus the section's first paragraph,
-      // and sync the edited title back into the model (local — captured on the
-      // next autosave delta as a RenameSection, no in-memory undo entry).
+// Lock the title, focus the first paragraph, and sync. The rename reaches undo as
+// an autosave delta, not an in-memory entry.
       const sectionId = sectionEl.dataset.sectionId
       lockFreshSection()
       let next = sectionEl.nextElementSibling
@@ -1016,17 +390,13 @@ function onKeydown(e) {
 
     document.execCommand('defaultParagraphSeparator', false, 'div')
     document.execCommand('insertParagraph', false, null)
-    // The browser often copies text-indent from the previous paragraph. New
-    // paragraphs start flush so the user controls the indent explicitly.
-    // It also often copies `data-para-id` from the split paragraph — giving the
-    // two halves DUPLICATE ids — or drops it entirely. A duplicate id makes the
-    // undo delta (UpdateParagraph matched by id) ambiguous now that typing is
-    // journaled, and a missing id churns a new id on every keystroke readback.
-    // Give the new paragraph a fresh stable id and pin its section id so the
-    // localized readback (positional sibling walk) and the Rust delta both see
-    // one unambiguous paragraph.
+// Return always produces an automatic paragraph. The browser copies the inline
+// indent, the `no-indent` class and the marker state from the paragraph it
+// splits. Clear all three, then mark the new paragraph automatic. A fresh id
+// plus its section id keep the undo-delta keys unambiguous.
     const sectionId = getSectionIdAtCursor()
     const sel2 = window.getSelection()
+    let createdPara = null
     if (sel2.rangeCount) {
       let node = sel2.anchorNode
       let para = node.nodeType === 3 ? node.parentElement : node
@@ -1034,12 +404,28 @@ function onKeydown(e) {
         para = para.parentElement
       }
       if (para) {
-        para.style.textIndent = '0px'
+        para.style.textIndent = ''
+        para.classList.remove('no-indent')
+        para.dataset.autoIndent = 'true'
         para.dataset.paraId = generateParagraphId()
         if (sectionId) para.dataset.sectionId = sectionId
+        createdPara = para
       }
     }
     syncFromDOM()
+// Without this, the readback leaves the new paragraph at 0px, because an empty
+// paragraph reads as a spacer. Return promises the continuation indent instead,
+// 0.5 inch below a text paragraph. The marker above keeps the model automatic
+// either way.
+    if (createdPara && !createdPara.textContent?.trim()) {
+      let prevBlock = createdPara.previousElementSibling
+      while (prevBlock && isNonContentBlock(prevBlock)) {
+        prevBlock = prevBlock.previousElementSibling
+      }
+      if (prevBlock && prevBlock.classList?.contains('paragraph') && prevBlock.textContent?.trim()) {
+        createdPara.style.textIndent = `${Math.round(AUTO_FIRST_LINE_INDENT * PX_PER_INCH)}px`
+      }
+    }
     return
   }
 
@@ -1052,9 +438,8 @@ function onKeydown(e) {
 
     if (sectionEl) {
       if (sectionEl.dataset.sectionId === freshSectionId.value) {
-        // Fresh section-title: allow text editing, but never let Backspace/Delete
-        // cross the editable span's boundaries (which would eat the locked
-        // chapter-prefix or merge into the previous block).
+// Keep Backspace and Delete inside the editable span, or they eat the locked
+// chapter prefix.
         const span = editableSpanOf(sectionEl)
         if (e.key === 'Backspace' && isCaretAtStart(range, span)) { e.preventDefault(); return }
         if (e.key === 'Delete' && isCaretAtEnd(range, span)) { e.preventDefault(); return }
@@ -1102,6 +487,106 @@ function onKeydown(e) {
       return
     }
   }
+
+  if (e.key === 'Tab') {
+    const sel = window.getSelection()
+    if (!sel.rangeCount) return
+    const range = sel.getRangeAt(0)
+    const para = getParagraphAtCursor()
+// Titles are not a Tab surface (decision 6); the browser keeps its focus movement.
+    if (!para) return
+
+    const hasSelection = !sel.isCollapsed
+
+// The text between the paragraph start and the caret. `isCaretAtStart` misses a
+// caret at (text-node, 0) rather than (paragraph, 0), so an empty prefix is the
+// real offset-0 test (decision 1). The same range answers Shift+Tab's "is there a
+// tab to my left".
+    let prefixBeforeCaret = null
+    if (sel.isCollapsed) {
+      prefixBeforeCaret = range.cloneRange()
+      prefixBeforeCaret.selectNodeContents(para)
+      prefixBeforeCaret.setEnd(range.startContainer, range.startOffset)
+    }
+    const atParagraphStart = sel.isCollapsed &&
+      (isCaretAtStart(range, para) || prefixBeforeCaret.toString() === '')
+
+// The paragraph's effective indent, automatic rule resolved. A paragraph the
+// baseline does not know came from the browser, so derive the rule from its DOM
+// neighbours instead.
+    const baseline = lastRenderedBlocks.value
+    const baselineIdx = baseline
+      ? baseline.findIndex(b => b.kind === 'paragraph' && b.paragraph.id === para.dataset.paraId)
+      : -1
+    let indent = 0
+    if (baselineIdx !== -1) {
+      const bakedIndent = baseline[baselineIdx].paragraph.firstLineIndent
+      indent = typeof bakedIndent === 'number'
+        ? bakedIndent
+        : computeFirstLineIndent(baseline, baselineIdx)
+    } else {
+      let prev = para.previousElementSibling
+      while (prev && isNonContentBlock(prev)) prev = prev.previousElementSibling
+      indent = (!prev || prev.classList?.contains('section-title') ||
+        (prev.classList?.contains('paragraph') && !prev.textContent?.trim()))
+        ? 0
+        : 0.5
+    }
+
+    // Shift+Tab deletes a tab to the left instead of stepping the indent.
+    let tabBeforeCaret = false
+    if (sel.isCollapsed && e.shiftKey && prefixBeforeCaret.toString().endsWith('\t')) {
+      tabBeforeCaret = true
+    }
+
+    const action = resolveTabAction({
+      key: e.key,
+      ctrlKey: e.ctrlKey,
+      shiftKey: e.shiftKey,
+      hasSelection,
+      atParagraphStart,
+      indent,
+      tabBeforeCaret,
+    })
+    // 'none' hands the key back to the browser; no preventDefault.
+    if (action.type === 'none') return
+    e.preventDefault()
+
+    if (action.type === 'set-indent') {
+// Write the indent in the exact form the readback parses: 96 px per inch,
+// `no-indent` for 0, no automatic marker.
+      para.style.textIndent = action.indent > 0 ? `${Math.round(action.indent * 96)}px` : '0px'
+      para.classList.toggle('no-indent', action.indent === 0)
+      delete para.dataset.autoIndent
+      syncFromDOM()
+      return
+    }
+    if (action.type === 'insert-tab') {
+// `execCommand` over a selection wraps the tab in a `white-space: pre` span and
+// turns a following space into U+00A0, so replace the selection by range surgery
+// instead — but only when it lies inside this paragraph; otherwise fall back.
+      const cac = range.commonAncestorContainer
+      if (hasSelection && (para === cac || para.contains(cac))) {
+        range.deleteContents()
+        const tabNode = document.createTextNode('\t')
+        range.insertNode(tabNode)
+        // Caret lands immediately after the inserted tab, ready to type.
+        range.setStartAfter(tabNode)
+        range.collapse(true)
+        sel.removeAllRanges()
+        sel.addRange(range)
+      } else {
+        document.execCommand('insertText', false, '\t')
+      }
+      syncFromDOM()
+      return
+    }
+    if (action.type === 'delete-tab') {
+      document.execCommand('delete')
+      syncFromDOM()
+      return
+    }
+  }
 }
 
 function onBeforeinput(e) {
@@ -1145,13 +630,8 @@ function onMousedown(e) {
 }
 
 // --- Section insert ----------------------------------------------------------
-// Insert is LOCAL (decision 2): splice a new section into a copy of the
-// sections array, mark it fresh so its title renders editable, emit the new
-// array via syncSections, then re-render and focus the title for inline
-// editing. This mirrors the old insertHeading flow — synchronous, immediate
-// focus, no async round-trip. (Section inserts are not in in-memory undo
-// history; they are captured on-disk by the next autosave delta's
-// InsertSection op.)
+// Insert is local (decision 2): splice, mark the new section fresh, emit, then
+// render and focus its title. The insert reaches undo as an autosave delta.
 
 function insertSection(sectionType, afterId = null) {
   syncFromDOM()
@@ -1220,11 +700,8 @@ watch(() => props.modelValue?.sections, () => {
     skipNextWatcher.value = false
     return
   }
-  // Patch when the store doc changes externally (rename, delete, type-change,
-  // undo/redo, restore) — surgical id-keyed DOM patch that preserves the
-  // cursor/scroll. Skipped when the change originated here (syncFromDOM,
-  // insertSection). reconcileEditor falls back to renderEditor when it can't
-  // verify the DOM against the retained baseline (first paint, drift).
+  // External model change: patch by id so the caret stays. Skipped when this
+  // component caused it (`skipNextWatcher`).
   reconcileEditor()
 }, { deep: true })
 
@@ -1232,17 +709,13 @@ watch(pageBreaks, () => {
   layoutPageBreaks()
 })
 
-// NOTE: there is deliberately no watch(props.theme) or watch(props.zoom).
-// editorStyles (the reactive computed bound via :style) updates background,
-// text-color, and font-size live; page breaks are laid out by usePagination
-// against fixed manuscript metrics, so zoom does not shift them; the
-// page-break <hr> color flows through the --page-break-color CSS variable.
+// No watchers on theme or zoom: `editorStyles` is a computed bound through
+// `:style`, and pagination uses fixed manuscript metrics, so zoom does not move
+// the breaks.
 
 onMounted(() => {
   renderEditor()
-  // selectionchange is a document-level event (the caret lives in the
-  // contenteditable, not on a per-element listener), so subscribe on mount and
-  // tear down on unmount.
+  // selectionchange fires on document, not on the sheet.
   document.addEventListener('selectionchange', onSelectionChange)
 })
 
@@ -1256,15 +729,17 @@ defineExpose({
   insertSection,
   scrollToParagraph,
   scrollToSection,
+  scrollToPage,
+  getCurrentPage,
   selectLine,
   navigatePage,
   navigateSectionPage,
   applySearchHighlights: editorApplySearchHighlights,
   clearSearchHighlights: editorClearSearchHighlights,
-  // The Assistant panel's `selection` scope reads the editor's current text
-  // selection. Returns the plain-text selection within the sheet, or '' when
-  // nothing is selected / the selection is outside the editor.
+  // For the Assistant panel's `selection` scope (roadmap 3.2).
   getSelectionText,
+  // For the Assistant panel's `selection` scope (roadmap 3.2).
+  hasSelection,
 })
 </script>
 
@@ -1274,13 +749,19 @@ defineExpose({
   font-size: 16px;
   line-height: 1.6;
   width: 100%;
-  transition: background 0.2s, color 0.2s;
+  /* No background/colour transition: a theme switch — keyboard (Enter on a
+     focused swatch) or click — must read as applied in getComputedStyle
+     immediately; a fade turns the switched-to colour into an interpolated
+     mid-animation value for 200ms. */
   font-family: var(--editor-font, 'Inter', sans-serif);
 }
 
 .editor-sheet :deep(.paragraph) {
   margin-bottom: 0.6em;
   text-indent: 48px;
+  /* A tab is 0.5 in at 96 dpi, the unit the indent model uses. */
+  white-space: pre-wrap;
+  tab-size: 48px;
 }
 
 .editor-sheet :deep(.paragraph.no-indent) {
@@ -1291,9 +772,8 @@ defineExpose({
   margin-bottom: 0;
 }
 
-/* Section titles are the structural headings now (one level, flat). A Chapter
-   is visually heavier than a freeform Section. The derived "Chapter N: " prefix
-   lives in .chapter-prefix; the editable subtitle in .section-subtitle. */
+/* A Chapter is heavier than a freeform Section; the derived number lives in
+   .chapter-prefix. */
 .editor-sheet :deep(.section-title) {
   font-size: 1.2em;
   font-weight: 600;
@@ -1311,22 +791,18 @@ defineExpose({
   margin-bottom: 1em;
 }
 
+/* A hidden section still renders its title, dimmed, so it can be found, renamed
+   and re-toggled. */
+.editor-sheet :deep(.section-title.section-hidden) {
+  opacity: 0.45;
+}
+
 .editor-sheet :deep(.section-title .chapter-prefix) {
   /* locked, derived — no special styling beyond inheriting the title's look */
 }
 
-.editor-sheet :deep(.epigram-block) {
-  font-style: italic;
-  text-align: center;
-  margin-bottom: 1.5em;
-  white-space: pre-line;
-  opacity: 0.7;
-}
-
-/* Page break visuals are rendered via CSS pseudo-elements on the first block of
-   each page so there are no interstitial DOM nodes the cursor can land in
-   between. Generalized from .paragraph[data-page-start] to [data-page-start] so
-   a page can begin on either a section-title or a paragraph. */
+/* Page breaks are pseudo-elements, so no interstitial node can hold the caret;
+   either block kind can start a page. */
 .editor-sheet :deep([data-page-start]) {
   position: relative;
   border-top: 1px dashed rgba(128, 128, 128, 0.35);

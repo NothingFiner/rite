@@ -7,6 +7,9 @@
         class="search-input"
         v-model="localQuery"
         placeholder="Find..."
+        autocorrect="off"
+        autocapitalize="off"
+        spellcheck="false"
         @keydown.enter.prevent="findNext"
         @keydown.shift.enter.prevent="findPrev"
       />
@@ -28,6 +31,9 @@
         class="search-input"
         v-model="localReplace"
         placeholder="Replace..."
+        autocorrect="off"
+        autocapitalize="off"
+        spellcheck="false"
         @keydown.enter.prevent="replace"
       />
       <button class="search-btn primary" @click="replace">Replace</button>

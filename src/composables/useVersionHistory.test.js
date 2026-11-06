@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { useVersionHistory, formatHistoryTimestamp } from './useVersionHistory.js'
 
-vi.mock('@tauri-apps/api/tauri', () => ({
+vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }))
 
-import { invoke } from '@tauri-apps/api/tauri'
+import { invoke } from '@tauri-apps/api/core'
 
 // A minimal stand-in for the Pinia document store — only the method the
 // composable calls (applyRestoredDocument) needs to exist. Spied per-test.

@@ -48,7 +48,12 @@ export function useTheme(viewModeRef) {
   })
   const uiScrollBg = computed(() => {
     if (viewModeRef.value !== 'editor') return 'var(--bg-base)'
-    return hexToRgba(currentTheme.value.bg, 0.12)
+    // The editor scroll layer sits behind the editor sheet, which paints the
+    // full theme bg itself. Painting the same opaque bg here (instead of a
+    // translucent tint over the near-black app background) means the area below
+    // a short document reads as one continuous surface with the sheet — no
+    // black void showing through when the content is shorter than the viewport.
+    return currentTheme.value.bg
   })
   const uiGlassBorder = computed(() => viewModeRef.value === 'editor' ? currentTheme.value.text + '33' : 'rgba(255, 255, 255, 0.1)')
   const uiHoverBg = computed(() => viewModeRef.value === 'editor' ? currentTheme.value.text + '11' : 'rgba(255, 255, 255, 0.06)')

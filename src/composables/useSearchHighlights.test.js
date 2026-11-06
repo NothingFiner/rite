@@ -61,7 +61,7 @@ describe('useSearchHighlights', () => {
 
     it('wraps a single match in highlight span', () => {
       root.innerHTML = '<p data-para-id="p1">Hello world</p>'
-      applySearchHighlights(root, [{ paragraph_id: 'p1', start_offset: 0, end_offset: 5 }], 0)
+      applySearchHighlights(root, [{ paragraphId: 'p1', startOffset: 0, endOffset: 5 }], 0)
       const spans = root.querySelectorAll('.search-highlight, .search-current')
       expect(spans.length).toBe(1)
       expect(spans[0].textContent).toBe('Hello')
@@ -71,8 +71,8 @@ describe('useSearchHighlights', () => {
     it('marks non-current matches as search-highlight', () => {
       root.innerHTML = '<p data-para-id="p1">foo foo foo</p>'
       applySearchHighlights(root, [
-        { paragraph_id: 'p1', start_offset: 0, end_offset: 3 },
-        { paragraph_id: 'p1', start_offset: 4, end_offset: 7 },
+        { paragraphId: 'p1', startOffset: 0, endOffset: 3 },
+        { paragraphId: 'p1', startOffset: 4, endOffset: 7 },
       ], 1)
       const current = root.querySelector('.search-current')
       const highlights = root.querySelectorAll('.search-highlight')
@@ -87,8 +87,8 @@ describe('useSearchHighlights', () => {
         <p data-para-id="p2">Second para</p>
       `
       applySearchHighlights(root, [
-        { paragraph_id: 'p1', start_offset: 0, end_offset: 5 },
-        { paragraph_id: 'p2', start_offset: 7, end_offset: 11 },
+        { paragraphId: 'p1', startOffset: 0, endOffset: 5 },
+        { paragraphId: 'p2', startOffset: 7, endOffset: 11 },
       ], 0)
       const currentSpans = root.querySelectorAll('.search-current')
       expect(currentSpans.length).toBe(1)
@@ -98,8 +98,8 @@ describe('useSearchHighlights', () => {
     it('skips paragraphs not found in root', () => {
       root.innerHTML = '<p data-para-id="p1">Hello</p>'
       applySearchHighlights(root, [
-        { paragraph_id: 'p1', start_offset: 0, end_offset: 5 },
-        { paragraph_id: 'p999', start_offset: 0, end_offset: 3 },
+        { paragraphId: 'p1', startOffset: 0, endOffset: 5 },
+        { paragraphId: 'p999', startOffset: 0, endOffset: 3 },
       ], 0)
       const spans = root.querySelectorAll('.search-highlight, .search-current')
       expect(spans.length).toBe(1)
@@ -107,8 +107,8 @@ describe('useSearchHighlights', () => {
 
     it('clears previous highlights before applying new ones', () => {
       root.innerHTML = '<p data-para-id="p1">Hello world</p>'
-      applySearchHighlights(root, [{ paragraph_id: 'p1', start_offset: 0, end_offset: 5 }], 0)
-      applySearchHighlights(root, [{ paragraph_id: 'p1', start_offset: 6, end_offset: 11 }], 0)
+      applySearchHighlights(root, [{ paragraphId: 'p1', startOffset: 0, endOffset: 5 }], 0)
+      applySearchHighlights(root, [{ paragraphId: 'p1', startOffset: 6, endOffset: 11 }], 0)
       const spans = root.querySelectorAll('.search-highlight, .search-current')
       expect(spans.length).toBe(1)
       expect(spans[0].textContent).toBe('world')
@@ -116,7 +116,7 @@ describe('useSearchHighlights', () => {
 
     it('handles match in middle of text node', () => {
       root.innerHTML = '<p data-para-id="p1">abcdef</p>'
-      applySearchHighlights(root, [{ paragraph_id: 'p1', start_offset: 2, end_offset: 4 }], 0)
+      applySearchHighlights(root, [{ paragraphId: 'p1', startOffset: 2, endOffset: 4 }], 0)
       expect(root.textContent).toBe('abcdef')
       const span = root.querySelector('.search-current')
       expect(span.textContent).toBe('cd')
@@ -125,8 +125,8 @@ describe('useSearchHighlights', () => {
     it('handles multiple matches in same paragraph', () => {
       root.innerHTML = '<p data-para-id="p1">ab cd ef</p>'
       applySearchHighlights(root, [
-        { paragraph_id: 'p1', start_offset: 0, end_offset: 2 },
-        { paragraph_id: 'p1', start_offset: 6, end_offset: 8 },
+        { paragraphId: 'p1', startOffset: 0, endOffset: 2 },
+        { paragraphId: 'p1', startOffset: 6, endOffset: 8 },
       ], 0)
       const spans = root.querySelectorAll('.search-current, .search-highlight')
       expect(spans.length).toBe(2)

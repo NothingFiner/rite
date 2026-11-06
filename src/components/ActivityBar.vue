@@ -4,6 +4,7 @@
       <button
         v-for="item in items"
         :key="item.id"
+        :ref="el => setIconRef(item.id, el)"
         class="activity-icon"
         :class="{ active: activeId === item.id && drawerOpen }"
         :title="item.label"
@@ -54,7 +55,8 @@
 </template>
 
 <script setup>
-import { h, Transition, TransitionGroup } from 'vue'
+import { computed, h, Transition, TransitionGroup } from 'vue'
+import { isDrawerModeAllowedIn } from '../constants/drawerVisibility.js'
 
 const props = defineProps({
   activeId: { type: String, default: '' },
@@ -114,18 +116,65 @@ const ListIcon = () => h('svg', {
         })
 ])
 
-const items = [
-  // The id stays 'chapters' (compared in App.vue's drawer-open conditions and
-  // here in useKeyboardShortcuts' Cmd+Enter handler); only the user-facing
-  // label changes to reflect the flat-sections model.
+const StatsIcon = () => h('svg', {
+  width: 24,
+  height: 24,
+  viewBox: '0 0 256 256',
+  fill: 'none',
+  stroke: 'currentColor',
+  'stroke-width': 1.5,
+  'stroke-linecap': 'round',
+  'stroke-linejoin': 'round',
+}, [
+  h('path', {
+    fill: 'currentColor',
+    d: 'M56 142a6 6 0 0 1 6-6h28a6 6 0 0 1 6 6v66H56Zm52-56a6 6 0 0 1 6-6h28a6 6 0 0 1 6 6v122h-40Zm52 32a6 6 0 0 1 6-6h28a6 6 0 0 1 6 6v90h-40Z'
+  })
+])
+
+// Every drawer button, in rail order. Visibility per view is governed by
+// `isDrawerModeAllowedIn` (constants/drawerVisibility.js) — the single source
+// of truth shared with App.vue's close-on-switch — so a button that doesn't
+// apply to the current view is hidden rather than left to act nonsensically
+// (e.g. Text Options over the History view). The 'chapters' id stays a valid
+// leftDrawerMode value in every view it appears in (useKeyboardShortcuts' Cmd+Enter
+// handler writes the literal 'chapters' directly, and App.vue's drawer-open
+// conditions compare against it); only the user-facing label reflects the
+// flat-sections model.
+const ALL_ITEMS = [
   { id: 'chapters', label: 'Sections', icon: BookIcon },
   { id: 'general-options', label: 'General Options', icon: ListIcon },
   { id: 'text-options', label: 'Text Options', icon: CogIcon },
+  { id: 'stats', label: 'Stats', icon: StatsIcon },
 ]
+const items = computed(() =>
+  ALL_ITEMS.filter((item) => isDrawerModeAllowedIn(item.id, props.viewMode)),
+)
 
 function onClick(id) {
   emit('select', id)
 }
+
+// S-017: focus-return targets keyed by drawer id, in a plain map (not a
+// per-name template ref) so the ref lookup is by id — never by label or a
+// DOM query. The function ref form fires with null on unmount; deleting the
+// entry keeps the map free of stale elements.
+const iconRefs = {}
+
+function setIconRef(id, el) {
+  if (el) iconRefs[id] = el
+  else delete iconRefs[id]
+}
+
+// S-017: focus a drawer's opener button by id — the target App.vue hands to
+// the Escape handler's focusDrawerOpener. A no-op for an id that has no
+// button here ('history' is a viewMode toggle, not an item) or one filtered
+// out of the current view (isDrawerModeAllowedIn).
+function focusItem(id) {
+  iconRefs[id]?.focus?.({ preventScroll: true })
+}
+
+defineExpose({ focusItem })
 </script>
 
 <style scoped>

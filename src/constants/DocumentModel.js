@@ -33,11 +33,12 @@ export function createParagraph(text = '') {
   }
 }
 
-export function createSection({ title = '', sectionType = 'section', paragraphs = null } = {}) {
+export function createSection({ title = '', sectionType = 'section', paragraphs = null, hidden = false } = {}) {
   return {
     id: generateSectionId(),
     title,
     sectionType,
+    hidden,
     paragraphs: paragraphs ?? [createParagraph()],
   }
 }

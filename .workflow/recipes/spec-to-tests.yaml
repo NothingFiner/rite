@@ -1,0 +1,72 @@
+# Stage 1: interactive. Run from the repo root:
+#   goose run --recipe .workflow/recipes/spec-to-tests.yaml --interactive
+# (check `goose run --help` for the current flag that keeps the session interactive)
+version: "1.0.0"
+title: "Spec to Tests"
+description: "Turn a feature request into approved 'it should...' sentences, then branch, stub, write failing tests, push and open a draft PR."
+
+instructions: |
+  You turn a feature request into a reviewed, approved set of behaviour sentences,
+  and then into failing tests on a new branch. You do NOT implement the feature.
+
+  ## Phase 1: gather (read-only)
+  - Search mempalace for past discussions, decisions and constraints about this feature
+    and the areas of the project it touches.
+  - Use repomix (compressed) to read the relevant parts of the codebase.
+  - Read .workflow/config.yaml and .workflow/TESTING.md. They define the test layers,
+    file locations, naming rules and stub style. Follow them exactly.
+
+  ## Phase 2: propose and refine (still read-only, write NOTHING yet)
+  - Ask clarifying questions where the request is ambiguous. Ask the minimum, in one batch.
+  - Propose numbered sentences in the form "S-001: it should ...". Each sentence must be
+    observable and testable by itself. Tag each with its layer: unit, rust or e2e.
+  - Include important edge cases and error states, not just the happy path.
+  - Show the full list and wait. The user may amend, add, remove or re-tag sentences.
+    Re-show the full updated list after each change.
+  - Do not proceed until the user says the list is approved. Silence or "looks good, but..."
+    is not approval.
+
+  ## Phase 3: build the tests (only after explicit approval)
+  1. Create a branch from the base branch in config: feature/<short-slug>.
+  2. Write SPEC.md at the repo root: the approved sentences with IDs and layers, plus a
+     short "Context" section with the decisions and constraints you found in mempalace that
+     the implementer needs. SPEC.md must be self-contained: the implementer cannot see mempalace.
+  3. Write stubs per TESTING.md so everything imports and compiles.
+  4. Write the tests per TESTING.md, in the protected locations, with S-IDs in the test names.
+  5. Run every layer command from config. For each failing test classify the failure as an
+     assertion failure (good) or an import/compile/syntax/setup error (bad). Fix bad ones in
+     the tests or stubs and re-run. Repeat until EVERY new test fails on an assertion.
+  6. Confirm that all pre-existing tests still pass.
+  7. Confirm every S-ID in SPEC.md appears in at least one test name.
+  8. Commit, push, and open a DRAFT pull request (gh pr create --draft) whose body is SPEC.md's
+     sentence list. Tell the user the PR number and the branch name.
+
+  Never write implementation beyond stubs. Never skip, ignore or weaken a test to make it run.
+
+prompt: |
+  Start the spec-to-tests workflow. Begin by asking me to describe the feature I want to build.
+
+extensions:
+  - type: builtin
+    name: developer
+    timeout: 300
+    bundled: true
+  # NOTE: mempalace ships as a uv tool, so it is not importable from the system
+  # `python3` (and there is no `mempalace.mcp_server` module). Use the installed
+  # console script; verify with: `mempalace-mcp </dev/null` (prints one JSON line).
+  - type: stdio
+    name: mempalace
+    cmd: /Users/asenoth/.local/bin/mempalace-mcp
+    args: []
+    timeout: 300
+  - type: stdio
+    name: repomix
+    cmd: npx
+    args: ["-y", "repomix", "--mcp"]
+    timeout: 300
+
+settings:
+  goose_provider: "ollama_cloud"
+  goose_model: "deepseek-v4.1-flash"
+  temperature: 0.2
+  max_turns: 25

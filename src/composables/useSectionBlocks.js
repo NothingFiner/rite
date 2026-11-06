@@ -8,7 +8,7 @@
 // flatten sections into a block list (section-title block, then its paragraph
 // blocks, repeat), and at sync time we group the flat DOM blocks back into
 // sections. A `.section-title` is a non-paragraph structural sibling, exactly
-// like epigram-block / page-break-line already are.
+// like page-break lines already are.
 //
 // Chapter numbers are render-derived: a Chapter's number is its 1-based index
 // among Chapter-type sections, computed during the flatten walk. It is never
@@ -17,6 +17,10 @@
 
 import { generateSectionId } from '../constants/DocumentModel.js'
 import { isEmptyParagraph } from '../constants/ParagraphStyle.js'
+
+/// The first-line indent, in inches, that the automatic rule applies. Named
+/// once because the editor also converts it to px for the DOM.
+export const AUTO_FIRST_LINE_INDENT = 0.5
 
 /// A block is one row in the flat editor sequence.
 ///   kind: 'section-title' | 'paragraph'
@@ -35,6 +39,7 @@ export function flattenSections(sections) {
       sectionId: section.id,
       sectionType: section.sectionType,
       title: section.title,
+      hidden: Boolean(section.hidden),
       chapterIndex: displayChapterIndex,
     })
     for (const paragraph of section.paragraphs) {
@@ -64,11 +69,12 @@ export function groupBlocks(blocks) {
         id: block.sectionId,
         title: block.title,
         sectionType: block.sectionType,
+        hidden: Boolean(block.hidden),
         paragraphs: [],
       }
     } else if (block.kind === 'paragraph') {
       if (!current) {
-        current = { id: generateSectionId(), title: '', sectionType: 'section', paragraphs: [] }
+        current = { id: generateSectionId(), title: '', sectionType: 'section', hidden: false, paragraphs: [] }
       }
       current.paragraphs.push(block.paragraph)
     }
@@ -78,16 +84,20 @@ export function groupBlocks(blocks) {
 }
 
 /// Section-aware first-line indent for the paragraph block at `index` in a flat
-/// block list: 0 for the first paragraph of a section (preceded by a
-/// section-title) or right after an empty paragraph (scene break / spacer),
-/// 0.5 otherwise. Headings are gone, so there is no heading special-case; page
-/// breaks no longer influence indent — section-first + after-empty fully
-/// determines it. Shared by the editor (render + sync) and the manuscript so
-/// both views apply the identical rule.
+/// block list. Returns 0 for the first paragraph of a section, for an empty
+/// paragraph, and for the paragraph after an empty one. A spacer paragraph is
+/// the empty paragraph that starts the next line at the margin, so it carries
+/// no indent itself. Returns `AUTO_FIRST_LINE_INDENT` otherwise. Shared by the
+/// editor (render + sync) and the manuscript, so both views apply the identical
+/// rule.
 export function computeFirstLineIndent(blocks, index) {
   const prev = blocks[index - 1]
   if (!prev) return 0
   if (prev.kind === 'section-title') return 0
   if (prev.kind === 'paragraph' && isEmptyParagraph(prev.paragraph)) return 0
-  return 0.5
+  // An empty paragraph is the spacer, so it carries no indent of its own.
+  // There is no first line to indent.
+  const self = blocks[index]?.paragraph
+  if (self && isEmptyParagraph(self)) return 0
+  return AUTO_FIRST_LINE_INDENT
 }

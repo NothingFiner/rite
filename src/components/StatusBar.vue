@@ -1,27 +1,39 @@
 <template>
   <div class="statusbar glass">
     <div class="status-left">
-      <span class="status-title">{{ title }}{{ modified ? ' *' : '' }}</span>
-      <button class="btn-ghost" @click="$emit('openFile')">Open</button>
-      <button class="btn-ghost" @click="$emit('saveFile')">Save</button>
-      <button class="btn-ghost" @click="$emit('importFile')">Import</button>
+      <span class="status-title">{{ title || 'Untitled' }}</span>
+      <span v-if="fileName" class="status-file">{{ fileName }}</span>
+      <span
+        v-if="saveStatus"
+        class="save-status"
+        :class="{ 'is-saving': saveStatus === 'Saving…', 'is-error': saveStatus === 'Save failed' }"
+      >{{ saveStatus }}</span>
     </div>
     <div class="status-right">
       <div class="theme-picker">
-        <div
+        <!-- A div with a click handler is unnamed and keyboard-unreachable; the
+             trigger is a real button that reports the picker state (S-010). -->
+        <button
+          type="button"
           class="theme-swatch current"
           :style="{ background: currentTheme.bg, borderColor: swatchBorder(currentTheme.bg) }"
+          :aria-expanded="showThemePicker"
+          :aria-label="triggerAriaLabel"
           @click="$emit('toggleThemePicker')"
-        ></div>
+        ></button>
         <div v-if="showThemePicker" class="theme-tooltip">
-          <div
+          <!-- aria-current (SPEC 5.7, decision 7): only the current theme's swatch is the current item. -->
+          <button
             v-for="(t, i) in themes"
             :key="i"
+            type="button"
             class="theme-swatch"
             :class="{ active: theme === i }"
             :style="{ background: t.bg, borderColor: swatchBorder(t.bg) }"
+            :aria-label="swatchAriaLabel(t, i)"
+            :aria-current="theme === i ? 'true' : undefined"
             @click="$emit('selectTheme', i)"
-          ></div>
+          ></button>
         </div>
       </div>
       <span class="word-count">{{ wordCount }} words ({{ selectedWordCount }} Selected)</span>
@@ -34,15 +46,37 @@ import { computed } from 'vue'
 
 const props = defineProps({
   title: { type: String, default: '' },
-  modified: { type: Boolean, default: false },
+  saveStatus: { type: String, default: '' },
   theme: { type: Number, default: 0 },
   themes: { type: Array, default: () => [] },
   showThemePicker: { type: Boolean, default: false },
   wordCount: { type: Number, default: 0 },
   selectedWordCount: { type: Number, default: 0 },
+  // Basename of the current file, including its extension (`novel.rite`), or
+  // '' when the document has never been saved. Rendered in the status-left
+  // group after the title; blank (nothing shown) while the file is unsaved.
+  fileName: { type: String, default: '' },
 })
 
 const currentTheme = computed(() => props.themes[props.theme] || props.themes[0] || { bg: '#333333' })
+
+// The trigger's accessible name: state that the current theme when it has one.
+// Legacy spec mounts feed nameless themes (and one an empty list), so the
+// plain label is the fallback — never "undefined".
+const triggerAriaLabel = computed(() => {
+  const name = currentTheme.value.name
+  if (typeof name === 'string' && name.trim()) {
+    return `Change colour theme (current: ${name.trim()})`
+  }
+  return 'Change colour theme'
+})
+
+// The swatch's accessible name is its theme's `name`; position-based fallback
+// for entries without a usable name, so legacy mounts never read "undefined".
+function swatchAriaLabel(t, i) {
+  const name = t && typeof t.name === 'string' ? t.name : ''
+  return name.trim() ? name : `Theme ${i + 1}`
+}
 
 function isLightColor(hex) {
   if (!hex) return false
@@ -57,7 +91,7 @@ function swatchBorder(bg) {
   return isLightColor(bg) ? 'rgba(0, 0, 0, 0.35)' : 'rgba(255, 255, 255, 0.35)'
 }
 
-defineEmits(['openFile', 'saveFile', 'importFile', 'toggleThemePicker', 'selectTheme'])
+defineEmits(['toggleThemePicker', 'selectTheme'])
 </script>
 
 <style scoped>
@@ -97,23 +131,35 @@ defineEmits(['openFile', 'saveFile', 'importFile', 'toggleThemePicker', 'selectT
   font-weight: 500;
 }
 
+/* Current file's basename (`novel.rite`), same muted treatment as the
+   save-status label — a secondary fact sitting next to the title. */
+.status-file {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+/* Save indicator: the title's right-hand label replacing the old binary `*`.
+   Muted by default (Saved / Edited), accented while a write is in flight, red
+   when the last write failed so the writer notices their work is not on disk. */
+.save-status {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 400;
+  padding-left: 2px;
+}
+
+.save-status.is-saving {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.save-status.is-error {
+  color: #e5484d;
+  font-weight: 500;
+}
+
 .word-count {
   color: var(--text-secondary);
-}
-
-.btn-ghost {
-  background: transparent;
-  border: 1px solid var(--bg-glass-border);
-  color: var(--text-primary);
-  padding: 2px 10px;
-  border-radius: var(--radius-sm);
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-
-.btn-ghost:hover {
-  background: var(--hover-bg-strong);
 }
 
 .theme-picker {
@@ -126,6 +172,10 @@ defineEmits(['openFile', 'saveFile', 'importFile', 'toggleThemePicker', 'selectT
   border-radius: 4px;
   cursor: pointer;
   border: 1px solid;
+  /* The swatches are real buttons now: drop the UA button chrome so the
+     16×16 box keeps its size and its inline colours. */
+  padding: 0;
+  appearance: none;
 }
 
 .theme-swatch.active {

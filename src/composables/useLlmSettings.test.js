@@ -25,6 +25,22 @@ describe('useLlmSettings', () => {
     expect(llm.settings.value.model).toBe('')
     expect(llm.settings.value.apiKey).toBe('')
     expect(llm.settings.value.temperature).toBeNull()
+    // contextLength (Phase 3.4) — the configured model context window used by
+    // the panel's token-usage readout. Not auto-detected; 8192 is the default.
+    expect(llm.settings.value.contextLength).toBe(8192)
+    // embeddingsModel (Phase 4.2) — the model RAG retrieval uses to vectorize
+    // chunks. Separate from the chat `model` (different binary); nomic-embed-text
+    // is Ollama's standard small embeddings model.
+    expect(llm.settings.value.embeddingsModel).toBe('nomic-embed-text')
+    // embeddingsEndpoint / embeddingsApiKey (Phase 4.2 follow-up) — separate
+    // from the chat endpoint/key because Ollama Cloud doesn't host embeddings
+    // models; embeddings default to a local Ollama (no key).
+    expect(llm.settings.value.embeddingsEndpoint).toBe('http://localhost:11434')
+    expect(llm.settings.value.embeddingsApiKey).toBe('')
+    // embeddingsEnabled (Phase 4.3) — the manuscript-index opt-in. Off by
+    // default so a writer without a local Ollama isn't peppered with failing
+    // embedding calls; turned on explicitly when they want document-aware chat.
+    expect(llm.settings.value.embeddingsEnabled).toBe(false)
   })
 
   it('saves settings to localStorage', () => {
@@ -58,6 +74,19 @@ describe('useLlmSettings', () => {
     expect(llm.settings.value.model).toBe('llama3')
     // endpoint falls back to the default
     expect(llm.settings.value.endpoint).toBe('http://localhost:11434')
+    // contextLength (added in 3.4) also falls back — an older saved settings
+    // blob predates the field, so the merge must supply the default rather than
+    // leaving it undefined (which would break the panel readout's denominator).
+    expect(llm.settings.value.contextLength).toBe(8192)
+    // embeddingsModel (added in 4.2) likewise falls back for older blobs.
+    expect(llm.settings.value.embeddingsModel).toBe('nomic-embed-text')
+    // embeddingsEndpoint / embeddingsApiKey (4.2 follow-up) fall back too.
+    expect(llm.settings.value.embeddingsEndpoint).toBe('http://localhost:11434')
+    expect(llm.settings.value.embeddingsApiKey).toBe('')
+    // embeddingsEnabled (4.3) falls back too — older blobs predate the toggle
+    // and must gain `false`, not `undefined` (which would make the watcher's
+    // `embeddingsEnabled &&` truthiness check misbehave).
+    expect(llm.settings.value.embeddingsEnabled).toBe(false)
   })
 
   it('setModel persists the model name', () => {

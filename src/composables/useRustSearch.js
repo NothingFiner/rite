@@ -1,5 +1,5 @@
 import { ref, computed } from 'vue'
-import { invoke } from '@tauri-apps/api/tauri'
+import { invoke } from '@tauri-apps/api/core'
 
 export function useRustSearch() {
   const matches = ref([])
@@ -27,13 +27,15 @@ export function useRustSearch() {
   }
 
   function findNext() {
-    if (matches.value.length === 0) return
+    if (matches.value.length === 0) return { matches: [], currentIndex: -1 }
     currentIndex.value = (currentIndex.value + 1) % matches.value.length
+    return { matches: matches.value, currentIndex: currentIndex.value }
   }
 
   function findPrev() {
-    if (matches.value.length === 0) return
+    if (matches.value.length === 0) return { matches: [], currentIndex: -1 }
     currentIndex.value = (currentIndex.value - 1 + matches.value.length) % matches.value.length
+    return { matches: matches.value, currentIndex: currentIndex.value }
   }
 
   async function replaceCurrent(replacement) {
@@ -47,7 +49,7 @@ export function useRustSearch() {
         matchIndex: currentIndex.value,
       })
       matches.value = result.matches || []
-      currentIndex.value = result.current_index
+      currentIndex.value = result.currentIndex
       return result
     } catch (e) {
       console.error('Replace current failed:', e)

@@ -1,19 +1,32 @@
+use crate::diff::{self, SectionDiff};
 use crate::document::{
     find_paragraph_mut, find_section_mut, Document, Element, Paragraph, ReplaceResult, SearchMatch,
     Section, SectionType, TextRun, TextStyleDelta,
 };
-use crate::diff::{self, SectionDiff};
 use crate::history::{self, HistoryEntry};
 use crate::state::AppState;
 use regex::Regex;
 use std::fs;
 use std::path::Path;
-use tauri::State;
+use tauri::{AppHandle, Runtime, State};
 
 #[tauri::command]
 pub fn get_document(state: State<AppState>) -> Result<Document, String> {
     let doc = state.document.lock().map_err(|e| e.to_string())?;
     Ok(doc.clone())
+}
+
+/// Read a file's raw bytes for the JS-side `docx`/`odt` importers.
+///
+/// The unzipping and XML parsing of an imported Word/ODT file happen in JS, but
+/// the bytes do not have to be fetched there too: Tauri v2 removed
+/// `@tauri-apps/api/fs`, and giving the webview an `fs` capability to read an
+/// arbitrary path the user picked would widen the permission surface far more
+/// than this one command does. Rust is not gated by capabilities at all, so the
+/// read belongs here — it is the same `std::fs` the rest of document IO uses.
+#[tauri::command]
+pub fn read_import_bytes(path: String) -> Result<Vec<u8>, String> {
+    fs::read(&path).map_err(|e| format!("could not read {}: {}", path, e))
 }
 
 /// Remove the section identified by `id`. The document always keeps at least
@@ -87,6 +100,83 @@ pub fn change_section_type(
     Ok(doc.clone())
 }
 
+/// Set a section's `hidden` flag: when hidden, the section renders NO heading
+/// (manuscript, exports, printed TOC) but its body text still renders and it
+/// still starts its own page. Round-trip + undoable via `ChangeSectionHidden`.
+#[tauri::command]
+pub fn set_section_hidden(
+    id: String,
+    hidden: bool,
+    state: State<AppState>,
+) -> Result<Document, String> {
+    let old_doc = state.document.lock().map_err(|e| e.to_string())?.clone();
+    let mut doc = state.document.lock().map_err(|e| e.to_string())?;
+    let mut modified = state.is_modified.lock().map_err(|e| e.to_string())?;
+
+    if let Some(section) = find_section_mut(&mut doc, &id) {
+        section.hidden = hidden;
+    }
+
+    *modified = true;
+    drop(doc);
+    state.push_history_delta(&old_doc);
+    let doc = state.document.lock().map_err(|e| e.to_string())?;
+    Ok(doc.clone())
+}
+
+/// Move a section — with all its paragraphs — to sit after `to_after_id`, or
+/// to the front of the document when `to_after_id` is `None`. The outline
+/// drag-reorder (roadmap 5.5) calls this; the resulting `push_history_delta`
+/// journals a single `MoveSection` op (the compute_doc_ops reorder fix), so
+/// undo/redo and version-history reconstruction both round-trip the order.
+#[tauri::command]
+pub fn move_section(
+    id: String,
+    to_after_id: Option<String>,
+    state: State<AppState>,
+) -> Result<Document, String> {
+    let old_doc = state.document.lock().map_err(|e| e.to_string())?.clone();
+    let mut doc = state.document.lock().map_err(|e| e.to_string())?;
+    let mut modified = state.is_modified.lock().map_err(|e| e.to_string())?;
+
+    if to_after_id.as_deref() == Some(id.as_str()) {
+        return Err(format!("MoveSection: section {} cannot follow itself", id));
+    }
+    // Validate the destination BEFORE mutating: on a bad id the document
+    // lock must not be released with the section already removed (the
+    // failed command would otherwise silently drop it from the document).
+    if let Some(to_after_id) = &to_after_id {
+        if !doc.sections.iter().any(|s| s.id == *to_after_id) {
+            return Err(format!(
+                "MoveSection: to_after_id {} not found",
+                to_after_id
+            ));
+        }
+    }
+    let from_idx = doc
+        .sections
+        .iter()
+        .position(|s| s.id == id)
+        .ok_or_else(|| format!("MoveSection: section {} not found", id))?;
+    let section = doc.sections.remove(from_idx);
+    if let Some(to_after_id) = &to_after_id {
+        let to_idx = doc
+            .sections
+            .iter()
+            .position(|s| s.id == *to_after_id)
+            .expect("destination validated above");
+        doc.sections.insert(to_idx + 1, section);
+    } else {
+        doc.sections.insert(0, section);
+    }
+
+    *modified = true;
+    drop(doc);
+    state.push_history_delta(&old_doc);
+    let doc = state.document.lock().map_err(|e| e.to_string())?;
+    Ok(doc.clone())
+}
+
 #[tauri::command]
 pub fn search_document(query: String, state: State<AppState>) -> Result<Vec<SearchMatch>, String> {
     let doc = state.document.lock().map_err(|e| e.to_string())?;
@@ -125,7 +215,7 @@ pub fn replace_current(
     match_index: usize,
     state: State<AppState>,
 ) -> Result<ReplaceResult, String> {
-    let _old_doc = state.document.lock().map_err(|e| e.to_string())?.clone();
+    let old_doc = state.document.lock().map_err(|e| e.to_string())?.clone();
     let mut doc = state.document.lock().map_err(|e| e.to_string())?;
     let mut modified = state.is_modified.lock().map_err(|e| e.to_string())?;
 
@@ -144,7 +234,12 @@ pub fn replace_current(
             for m in re.find_iter(&text) {
                 let start_offset = text[..m.start()].chars().count();
                 let end_offset = text[..m.end()].chars().count();
-                matches.push((section.id.clone(), para.id.clone(), start_offset, end_offset));
+                matches.push((
+                    section.id.clone(),
+                    para.id.clone(),
+                    start_offset,
+                    end_offset,
+                ));
             }
         }
     }
@@ -217,6 +312,9 @@ pub fn replace_current(
         new_matches.len() as i32 - 1
     };
 
+    drop(doc);
+    state.push_history_delta(&old_doc);
+
     Ok(ReplaceResult {
         matches: new_matches,
         current_index: new_index,
@@ -259,7 +357,11 @@ pub fn replace_all(
 }
 
 #[tauri::command]
-pub fn save_document(path: String, state: State<AppState>) -> Result<(), String> {
+pub fn save_document<R: Runtime>(
+    path: String,
+    app: AppHandle<R>,
+    state: State<AppState>,
+) -> Result<(), String> {
     let doc = state.document.lock().map_err(|e| e.to_string())?.clone();
 
     // Record a full snapshot of the saved document in the embedded history (the
@@ -268,7 +370,15 @@ pub fn save_document(path: String, state: State<AppState>) -> Result<(), String>
     // pair, so nothing separate appears in Finder next to the document.
     state.append_history_snapshot(&doc)?;
     let file = state.build_rite_file()?;
-    history::write_rite_file(Path::new(&path), &file)?;
+    // `write_rite_file` takes ownership and stamps the current schema version
+    // on the way to disk; `file` is not used afterward, so move it in.
+    history::write_rite_file(Path::new(&path), file)?;
+
+    // Checkpoint the RAG vector index to its sidecar (Phase 4.7). Done BEFORE
+    // `path` is moved into `last_path` below. Best-effort: vectors are derivable
+    // (a missing sidecar just rebuilds on next open), so a sidecar write failure
+    // must NOT fail the document save that already succeeded — swallow it.
+    let _ = state.checkpoint_index_to_sidecar(&app, &path);
 
     let mut last_path = state.last_path.lock().map_err(|e| e.to_string())?;
     *last_path = Some(path);
@@ -284,14 +394,21 @@ pub fn save_document(path: String, state: State<AppState>) -> Result<(), String>
 }
 
 #[tauri::command]
-pub fn open_document(path: String, state: State<AppState>) -> Result<Document, String> {
+pub fn open_document<R: Runtime>(
+    path: String,
+    app: AppHandle<R>,
+    state: State<AppState>,
+) -> Result<Document, String> {
     let json = fs::read_to_string(&path).map_err(|e| e.to_string())?;
 
     // Parse the `.rite` as an embedded `RiteFile { document, history }`. A
     // bare `Document` (a pre-embedding `.rite`, written before history lived
     // inside the file) is accepted as a fallback with an empty history, so
-    // older single-document saves still open.
-    let mut rite_file = history::read_rite_file(&json)?;
+    // older single-document saves still open. Then run the forward-migration
+    // hook so the rest of the app only ever sees a file at the current schema;
+    // a file from a newer Rite is rejected here with a clear error rather than
+    // silently misread.
+    let mut rite_file = history::migrate_rite_file(history::read_rite_file(&json)?)?;
 
     // Absorb any legacy `.rite.history` sidecar folder into the embedded
     // history, then delete the folder so it no longer appears in Finder.
@@ -322,6 +439,12 @@ pub fn open_document(path: String, state: State<AppState>) -> Result<Document, S
     // against (the embedded history already holds a snapshot from the
     // document's last explicit save).
     state.set_history_baseline(&doc);
+
+    // Load the durable RAG vector index for this manuscript (Phase 4.7). This
+    // clears the previous manuscript's stale vectors first, then repopulates
+    // from the sidecar if one exists for this path; the next `reembed_document`
+    // pass reconciles the persisted baseline against the live document.
+    state.load_index_from_sidecar(&app, &path);
 
     let mut last_path = state.last_path.lock().map_err(|e| e.to_string())?;
     *last_path = Some(path);
@@ -355,7 +478,10 @@ pub fn sync_document(data: Document, state: State<AppState>) -> Result<(), Strin
 }
 
 #[tauri::command]
-pub fn autosave_document(state: State<AppState>) -> Result<(), String> {
+pub fn autosave_document<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<AppState>,
+) -> Result<(), String> {
     let modified = *state.is_modified.lock().map_err(|e| e.to_string())?;
     if !modified {
         return Ok(());
@@ -377,7 +503,14 @@ pub fn autosave_document(state: State<AppState>) -> Result<(), String> {
     let journaled = state.append_history_delta()?;
     if journaled {
         let file = state.build_rite_file()?;
-        history::write_rite_file(Path::new(&base_path), &file)?;
+        history::write_rite_file(Path::new(&base_path), file)?;
+        // Checkpoint the RAG vector index alongside the `.rite` rewrite
+        // (Phase 4.7). Best-effort, same rationale as `save_document`: the
+        // index is derivable, so a sidecar write failure must not fail the
+        // autosave. Only checkpoint when we actually rewrote the `.rite`
+        // (a journaled change implies the doc — and thus the reembed that
+        // follows a sync — advanced).
+        let _ = state.checkpoint_index_to_sidecar(&app, &base_path);
     }
 
     *state.is_modified.lock().map_err(|e| e.to_string())? = false;
@@ -395,7 +528,7 @@ pub fn save_snapshot(state: State<AppState>) -> Result<String, String> {
     let doc = state.document.lock().map_err(|e| e.to_string())?.clone();
     let timestamp = state.append_history_snapshot(&doc)?;
     let file = state.build_rite_file()?;
-    history::write_rite_file(Path::new(&base_path), &file)?;
+    history::write_rite_file(Path::new(&base_path), file)?;
     Ok(timestamp)
 }
 
@@ -802,6 +935,7 @@ pub fn redo(state: State<AppState>) -> Result<Document, String> {
 mod tests {
     use super::*;
     use crate::document::{Section, SectionType, TextStyle};
+    use tauri::Manager;
 
     /// Create a paragraph with a single unstyled run of `text`.
     fn create_paragraph(id: &str, text: &str) -> Paragraph {
@@ -843,14 +977,25 @@ mod tests {
             author: "A".to_string(),
             author_contact: "C".to_string(),
             has_toc: false,
-            has_epigram: false,
-            epigram_text: String::new(),
             sections: vec![Section {
                 id: "s1".to_string(),
                 title: String::new(),
                 section_type: SectionType::Section,
+                hidden: false,
                 paragraphs: content,
             }],
+        }
+    }
+
+    /// A section with the given id and paragraphs — the building block for
+    /// the move_section tests, which need MULTI-section documents.
+    fn create_section(id: &str, paragraphs: Vec<Paragraph>) -> Section {
+        Section {
+            id: id.to_string(),
+            title: String::new(),
+            section_type: SectionType::Section,
+            hidden: false,
+            paragraphs,
         }
     }
 
@@ -1034,8 +1179,18 @@ mod tests {
         assert_eq!(para_text(&doc.sections[0].paragraphs[0]), "abcd");
         // Different styles -> two distinct runs, not concatenated into one.
         assert_eq!(doc.sections[0].paragraphs[0].elements.len(), 2);
-        assert!(!doc.sections[0].paragraphs[0].elements[0].text_run.text_style.bold);
-        assert!(doc.sections[0].paragraphs[0].elements[1].text_run.text_style.bold);
+        assert!(
+            !doc.sections[0].paragraphs[0].elements[0]
+                .text_run
+                .text_style
+                .bold
+        );
+        assert!(
+            doc.sections[0].paragraphs[0].elements[1]
+                .text_run
+                .text_style
+                .bold
+        );
     }
 
     #[test]
@@ -1058,5 +1213,244 @@ mod tests {
         ]);
         assert!(!merge_paragraphs_in_document(&mut doc, "p1", "nope"));
         assert_eq!(doc.sections[0].paragraphs.len(), 2);
+    }
+
+    // --- replace_current (history journaling) --------------------------------
+
+    /// Read the concatenated text of the first paragraph in the live document.
+    fn first_paragraph_text(state: &AppState) -> String {
+        let doc = state.document.lock().unwrap();
+        doc.sections[0].paragraphs[0]
+            .elements
+            .iter()
+            .map(|e| e.text_run.content.as_str())
+            .collect()
+    }
+
+    /// Build a Tauri mock app with a fresh `AppState` managed. Mirrors how
+    /// `main.rs` wires the real app (`main.rs` calls `.manage(AppState::new())`).
+    /// The returned `App` owns the state; tests obtain a `State` handle via
+    /// `app.state::<AppState>()` and keep the `App` alive for the test's
+    /// duration so that borrow stays valid.
+    fn mock_app_with_state() -> tauri::App<tauri::test::MockRuntime> {
+        tauri::test::mock_builder()
+            .manage(AppState::new())
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .expect("failed to build mock app")
+    }
+
+    #[test]
+    fn replace_current_replaces_the_indexed_match() {
+        let app = mock_app_with_state();
+        let state = app.state::<AppState>();
+        *state.document.lock().unwrap() = create_document(vec![create_paragraph("p1", "foo foo")]);
+
+        // Replace the first of the two "foo" matches.
+        let result =
+            replace_current("foo".to_string(), "bar".to_string(), 0, state.clone()).unwrap();
+        // One "foo" remains, so re-search finds exactly one match, and the
+        // cursor stays on the same index.
+        assert_eq!(result.matches.len(), 1);
+        assert_eq!(result.current_index, 0);
+        assert_eq!(first_paragraph_text(&state), "bar foo");
+    }
+
+    #[test]
+    fn replace_current_is_undoable() {
+        let app = mock_app_with_state();
+        let state = app.state::<AppState>();
+        let original = create_document(vec![create_paragraph("p1", "foo foo")]);
+        *state.document.lock().unwrap() = original.clone();
+
+        // A single find/replace is journaled as a history delta, so it must be
+        // reachable from `undo` (this is the regression: previously
+        // `replace_current` never called `push_history_delta`, so a single
+        // replace was not undoable).
+        replace_current("foo".to_string(), "bar".to_string(), 0, state.clone()).unwrap();
+        assert_eq!(first_paragraph_text(&state), "bar foo");
+
+        assert!(state.undo().unwrap());
+        assert_eq!(first_paragraph_text(&state), "foo foo");
+    }
+
+    #[test]
+    fn replace_current_no_match_journals_nothing() {
+        let app = mock_app_with_state();
+        let state = app.state::<AppState>();
+        *state.document.lock().unwrap() = create_document(vec![create_paragraph("p1", "foo foo")]);
+
+        // An out-of-range match index performs no replacement and records no
+        // history entry, so undo is a no-op that leaves the text untouched.
+        let result =
+            replace_current("foo".to_string(), "bar".to_string(), 99, state.clone()).unwrap();
+        assert!(result.matches.is_empty());
+        assert_eq!(result.current_index, -1);
+        assert!(!state.undo().unwrap());
+        assert_eq!(first_paragraph_text(&state), "foo foo");
+    }
+
+    // --- move_section ----------------------------------------------------------
+
+    /// Read the live document's section ids in order (the property every
+    /// move/undo assertion in this block checks).
+    fn section_ids(state: &AppState) -> Vec<String> {
+        state
+            .document
+            .lock()
+            .unwrap()
+            .sections
+            .iter()
+            .map(|s| s.id.clone())
+            .collect()
+    }
+
+    /// A three-section document [s1, s2, s3], one paragraph each.
+    fn three_section_document() -> Document {
+        let base = create_document(vec![create_paragraph("p1", "a")]);
+        Document {
+            sections: vec![
+                create_section("s1", vec![create_paragraph("p1", "a")]),
+                create_section("s2", vec![create_paragraph("p2", "b")]),
+                create_section("s3", vec![create_paragraph("p3", "c")]),
+            ],
+            ..base
+        }
+    }
+
+    #[test]
+    fn move_section_returns_the_reordered_document() {
+        let app = mock_app_with_state();
+        let state = app.state::<AppState>();
+        *state.document.lock().unwrap() = three_section_document();
+
+        // Move s1 to the end (after s3) — the returned doc AND the live state
+        // must both reflect the new order.
+        let returned =
+            move_section("s1".to_string(), Some("s3".to_string()), state.clone()).unwrap();
+        assert_eq!(
+            returned
+                .sections
+                .iter()
+                .map(|s| s.id.as_str())
+                .collect::<Vec<_>>(),
+            ["s2", "s3", "s1"]
+        );
+        assert_eq!(section_ids(&state), ["s2", "s3", "s1"]);
+        // The command marks the document modified so autosave picks it up.
+        assert!(*state.is_modified.lock().unwrap());
+    }
+
+    #[test]
+    fn move_section_to_none_moves_to_front() {
+        let app = mock_app_with_state();
+        let state = app.state::<AppState>();
+        *state.document.lock().unwrap() = three_section_document();
+
+        move_section("s2".to_string(), None, state.clone()).unwrap();
+        assert_eq!(section_ids(&state), ["s2", "s1", "s3"]);
+    }
+
+    #[test]
+    fn move_section_is_undoable() {
+        let app = mock_app_with_state();
+        let state = app.state::<AppState>();
+        *state.document.lock().unwrap() = three_section_document();
+        let original_ids = section_ids(&state);
+
+        // The move is journaled as a history delta (the whole point of the
+        // MoveSection DocOp over a blind reorder), so undo must restore the
+        // original order.
+        move_section("s1".to_string(), Some("s3".to_string()), state.clone()).unwrap();
+        assert_eq!(section_ids(&state), ["s2", "s3", "s1"]);
+
+        assert!(state.undo().unwrap());
+        assert_eq!(section_ids(&state), original_ids);
+    }
+
+    #[test]
+    fn set_section_hidden_sets_the_flag_and_is_undoable() {
+        let app = mock_app_with_state();
+        let state = app.state::<AppState>();
+        *state.document.lock().unwrap() = three_section_document();
+
+        // The command returns the updated document (the JS store assigns it
+        // back wholesale) — assert the flag round-trips through the wire doc.
+        let updated = set_section_hidden("s2".to_string(), true, state.clone()).unwrap();
+        assert!(
+            updated
+                .sections
+                .iter()
+                .find(|s| s.id == "s2")
+                .unwrap()
+                .hidden
+        );
+        assert!(
+            !updated
+                .sections
+                .iter()
+                .find(|s| s.id == "s1")
+                .unwrap()
+                .hidden
+        );
+
+        // The toggle is journaled as a ChangeSectionHidden delta, so undo
+        // must restore the visible state.
+        assert!(state.undo().unwrap());
+        let doc = state.document.lock().unwrap();
+        assert!(!doc.sections.iter().find(|s| s.id == "s2").unwrap().hidden);
+    }
+
+    #[test]
+    fn set_section_hidden_unknown_id_journals_nothing() {
+        let app = mock_app_with_state();
+        let state = app.state::<AppState>();
+        *state.document.lock().unwrap() = three_section_document();
+
+        // Matches change_section_type's semantics: an unknown id is a silent
+        // no-op, and the empty diff journals no delta — undo has nothing to do.
+        set_section_hidden("nope".to_string(), true, state.clone()).unwrap();
+        assert!(!state.undo().unwrap());
+    }
+
+    #[test]
+    fn move_section_unknown_id_errors_and_leaves_document_untouched() {
+        let app = mock_app_with_state();
+        let state = app.state::<AppState>();
+        *state.document.lock().unwrap() = three_section_document();
+
+        let err =
+            move_section("nope".to_string(), Some("s2".to_string()), state.clone()).unwrap_err();
+        assert!(err.contains("not found"));
+        assert_eq!(section_ids(&state), ["s1", "s2", "s3"]);
+        // A failed command must not journal a delta: undo has nothing to do.
+        assert!(!state.undo().unwrap());
+    }
+
+    #[test]
+    fn move_section_unknown_destination_leaves_document_untouched() {
+        let app = mock_app_with_state();
+        let state = app.state::<AppState>();
+        *state.document.lock().unwrap() = three_section_document();
+
+        // The destination must be validated BEFORE the remove — the
+        // regression this guards: removing first would silently drop s1 from
+        // the document on the failed command's error path.
+        let err =
+            move_section("s1".to_string(), Some("nope".to_string()), state.clone()).unwrap_err();
+        assert!(err.contains("not found"));
+        assert_eq!(section_ids(&state), ["s1", "s2", "s3"]);
+        assert!(!state.undo().unwrap());
+    }
+
+    #[test]
+    fn move_section_self_follow_errors() {
+        let app = mock_app_with_state();
+        let state = app.state::<AppState>();
+        *state.document.lock().unwrap() = three_section_document();
+
+        let err =
+            move_section("s1".to_string(), Some("s1".to_string()), state.clone()).unwrap_err();
+        assert!(err.contains("cannot follow itself"));
+        assert_eq!(section_ids(&state), ["s1", "s2", "s3"]);
     }
 }

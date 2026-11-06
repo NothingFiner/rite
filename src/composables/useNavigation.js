@@ -1,5 +1,4 @@
 import { ref, computed, nextTick } from 'vue'
-import { usePagination } from './usePagination.js'
 import { useDocumentStore } from '../stores/document.js'
 import { flattenSections } from './useSectionBlocks.js'
 import { useSectionFormat } from './useSectionFormat.js'
@@ -9,10 +8,17 @@ import { useSectionFormat } from './useSectionFormat.js'
 // its stable section id, section type, the render-derived chapter index (for
 // Chapter-type sections only), a display title, and its starting page. Chapter
 // numbers are derived (position among Chapter-type sections), never stored.
-export function useNavigation(docRef, editorRef) {
+//
+// `pagination` is the SINGLE shared `usePagination` instance owned by App.vue
+// (roadmap 2.5): previously this composable spun up its OWN instance with its
+// own cold per-section measurement cache, duplicating the editor's and
+// manuscript's work. Now it only reads `getPageForBlock` from the shared
+// instance, so nav page numbers stay in lockstep with the views at no extra
+// measurement cost.
+export function useNavigation(docRef, editorRef, pagination = { getPageForBlock: () => 1 }) {
   const store = useDocumentStore()
   const selectedNavId = ref(null)
-  const { getPageForBlock } = usePagination(docRef)
+  const { getPageForBlock } = pagination
   const sectionFormat = useSectionFormat()
 
   const tocItems = computed(() => {
@@ -26,6 +32,7 @@ export function useNavigation(docRef, editorRef) {
         id: blocks[i].sectionId,
         title: blocks[i].title,
         sectionType: blocks[i].sectionType,
+        hidden: blocks[i].hidden,
         chapterIndex: blocks[i].chapterIndex,
         displayTitle: displayTitleFor(blocks[i]),
         page: getPageForBlock(i),
@@ -67,6 +74,15 @@ export function useNavigation(docRef, editorRef) {
     await store.changeSectionType(id, newType)
   }
 
+  async function setSectionHidden(id, hidden) {
+    await store.setSectionHidden(id, hidden)
+  }
+
+  async function moveSection(id, toAfterId) {
+    await store.moveSection(id, toAfterId)
+    // Editor re-renders automatically via its watcher when store.doc changes.
+  }
+
   return {
     selectedNavId,
     tocItems,
@@ -74,5 +90,7 @@ export function useNavigation(docRef, editorRef) {
     renameSection,
     deleteSection,
     changeSectionType,
+    setSectionHidden,
+    moveSection,
   }
 }

@@ -2,6 +2,39 @@
   <div class="llm-panel">
     <h3 class="drawer-heading">Assistant</h3>
 
+    <!-- Tab row: one chip per chat session + a "+" to open a new one. The row
+         is ALWAYS shown (even with one tab) so the "+" is discoverable from
+         launch — otherwise a single-tab start would hide the only way to add a
+         second chat. The × close only appears once 2+ tabs exist, so the lone
+         tab can't be closed by accident (use the Clear button to wipe it).
+         Each label follows its session's chosen role; only one generation runs
+         at a time (see useChatManager's stream serialization), so Stop cancels
+         the active stream regardless of which tab is selected. -->
+    <div class="llm-tabs">
+      <button
+        v-for="tab in manager.tabs"
+        :key="tab.id"
+        class="llm-tab"
+        :class="{ active: tab.id === manager.activeId }"
+        :title="tab.label"
+        @click="manager.selectSession(tab.id)"
+      >
+        <span class="llm-tab-label">{{ tab.label }}</span>
+        <span
+          v-if="manager.tabs.length > 1"
+          class="llm-tab-close"
+          aria-label="Close tab"
+          @click.stop="manager.closeSession(tab.id)"
+        >×</span>
+      </button>
+      <button
+        class="llm-tab llm-tab-new"
+        aria-label="New chat"
+        title="New chat"
+        @click="manager.createSession()"
+      >+</button>
+    </div>
+
     <!-- Role selector: the chosen persona's composed body becomes the system
          prompt. Presets layer on top; they don't replace the role. -->
     <div class="llm-role-row">
@@ -18,20 +51,6 @@
     </div>
     <p v-if="currentRoleDescription" class="llm-role-desc">{{ currentRoleDescription }}</p>
 
-    <!-- Preset row: quick analytical actions. Each sets a prompt + scope, then
-         sends — on top of the role's system prompt. -->
-    <div class="llm-presets">
-      <button
-        v-for="preset in PRESETS"
-        :key="preset.id"
-        class="llm-preset-btn"
-        :disabled="chat.busy || !chat.selectedRoleName"
-        @click="chat.preset(preset.id)"
-        :title="preset.prompt"
-      >
-        {{ preset.label }}
-      </button>
-    </div>
     <!-- Message list -->
     <div class="llm-messages" ref="messagesContainer">
       <div v-if="chat.messages.length === 0" class="llm-empty">
@@ -40,10 +59,10 @@
           <button class="llm-empty-btn" @click="$emit('openSettings')">Open General Options</button>
         </template>
         <template v-else-if="!chat.selectedRoleName">
-          <p class="llm-empty-text">Pick a role above, then type a question or tap a preset.</p>
+          <p class="llm-empty-text">Pick a role above, then type a question. Type / for built-in commands.</p>
         </template>
         <template v-else>
-          <p class="llm-empty-text">Ask the assistant about your manuscript, or use a preset above.</p>
+          <p class="llm-empty-text">Ask the assistant about your manuscript, or type / for commands.</p>
         </template>
       </div>
 
@@ -68,21 +87,51 @@
       </div>
     </div>
 
-    <!-- Input row -->
+    <!-- Input row. The slash-command popup floats above the textarea, so the
+         row is the positioning context (position: relative; the popup is
+         bottom: 100%). -->
     <div class="llm-input-row">
+      <!-- Slash-command autocomplete. `@keydown.capture` on the textarea below
+           intercepts Arrow/Tab/Enter/Esc while this is open; clicking an item
+           also selects. `@mousedown.prevent` on items keeps the textarea
+           focused so the click lands without a blur/click race. -->
+      <div v-if="slashMenuOpen" class="llm-slash-menu">
+        <button
+          v-for="(preset, index) in slashMatches"
+          :key="preset.id"
+          class="llm-slash-item"
+          :class="{ active: index === selectIndex }"
+          :title="preset.prompt"
+          @mousedown.prevent
+          @click="selectSlashCommand(preset)"
+          @mouseenter="selectIndex = index"
+        >
+          <span class="llm-slash-id">/{{ preset.id }}</span>
+          <span class="llm-slash-label">{{ preset.label }}</span>
+        </button>
+      </div>
+      <!-- Enter alone sends (`.exact` = no modifiers held). Shift+Enter is
+           intentionally NOT bound here: it falls through to the textarea's
+           native default, which inserts a newline. (Binding it with `.prevent`
+           would swallow that newline — the bug this replaces.) Enter and Return
+           are the same key in the browser (`event.key` is 'Enter'), so this
+           covers both. -->
       <textarea
+        ref="inputEl"
         class="drawer-textarea llm-input"
         v-model="chat.input"
         :placeholder="inputPlaceholder"
         rows="2"
-        @keydown.enter.exact.prevent="chat.send"
-        @keydown.enter.shift.exact.prevent="() => {}"
-        :disabled="chat.busy"
+        @focus="inputFocused = true"
+        @blur="inputFocused = false"
+        @keydown.capture="onInputKeydownCapture"
+        @keydown.enter.exact.prevent="onSend"
+        :disabled="busy"
       ></textarea>
-      <button v-if="!chat.busy" class="llm-send-btn" :disabled="!chat.input.trim()" @click="chat.send">
+      <button v-if="!busy" class="llm-send-btn" :disabled="!chat.input.trim()" @click="onSend">
         Send
       </button>
-      <button v-else class="llm-send-btn llm-stop-btn" @click="chat.stop">
+      <button v-else class="llm-send-btn llm-stop-btn" @click="manager.stopActive">
         Stop
       </button>
     </div>
@@ -92,12 +141,60 @@
         <option value="section">Current section</option>
         <option value="selection">Selection</option>
         <option value="document">Whole document</option>
+        <!-- Phase 4.6: send a per-chapter word/paragraph/scene-break breakdown
+             instead of the prose itself — a compact context for structural /
+             pacing-shape questions. A sibling to Whole document: when the full
+             prose fits the window the model can derive the shape itself, so this
+             earns its keep on truncated manuscripts or shape-only questions. Pure
+             Rust, no network, re-fetched per send (no indexing needed). -->
+        <option value="structure">Structure</option>
+        <!-- Phase 4.8: inject LLM-generated per-section recaps (a 2–3 sentence
+             neutral summary per Section), stored durably in the 4.7 sidecar. A
+             compact semantic grasp of the whole book — for arc/turning-point
+             questions where Structure's counts are too coarse but the full prose
+             truncates. Pure Rust read (no network) of pre-generated summaries,
+             re-fetched per send. Generate them from the AI options drawer first;
+             an empty store surfaces a "generate summaries first" notice. -->
+        <option value="summaries">Summaries</option>
+        <!-- Phase 4.4: embed the question, cosine-rank the manuscript's indexed
+             chunks, inject the top-k. A sibling to Whole document for
+             document-wide-but-localized-evidence questions (character
+             consistency, motif tracking). Needs manuscript indexing ON. -->
+        <option value="passages">Relevant passages</option>
       </select>
+      <!-- Shows only when a live editor selection overrides the chosen scope
+           ("selection wins, except Whole document"). `scope` is the writer's
+           explicit dropdown choice (kept as-is); `effectiveScope` is what the
+           next send will actually use. See useChat.effectiveScope. -->
+      <span
+        v-if="chat.effectiveScope === 'selection' && chat.scope !== 'selection'"
+        class="llm-scope-hint"
+        >Using your selection</span
+      >
+      <!-- Live token-usage readout: assembled request cost vs the configured
+           context window. Gated on a model being configured (matches the empty-
+           state gate above), so it never shows a misleading fraction before
+           setup. `margin-left: auto` pushes it to the right of the scope row,
+           wrapping under the hint when the hint is also present. -->
+      <p
+        v-if="settings.settings.model"
+        class="llm-context-readout"
+        :class="{ near: contextTokens > settings.settings.contextLength * 0.8 }"
+      >
+        Context: ~{{ formatTokens(contextTokens) }} / {{ formatTokens(settings.settings.contextLength) }} tokens
+      </p>
     </div>
+    <!-- Retrieval error (4.4 / 4.6 / 4.8): shown when an async-context scope
+         send couldn't fetch context — "Relevant passages" (index off, embeddings
+         model not pulled), "Structure" (poisoned document lock, near-impossible),
+         or "Summaries" (no summaries generated yet). Cleared by `useChat.send` on
+         the next attempt. `chat.retrievalError` auto-unwraps via the reactive
+         proxy. -->
+    <p v-if="chat.retrievalError" class="llm-retrieval-error">{{ chat.retrievalError }}</p>
     <div class="llm-clear-row">
        <button
           class="llm-clear-btn"
-          :disabled="chat.busy"
+          :disabled="busy"
           :aria-expanded="clearOpen"
           aria-controls="clearConfirm"
           @click="toggleClearOpen"
@@ -107,7 +204,7 @@
       <transition name="slide-fade">
         <button
           class="llm-clear-btn"
-          :disabled="chat.busy"
+          :disabled="busy"
           v-show="clearOpen"
           @click="chat.clear"
           id="clearConfirm"
@@ -119,14 +216,19 @@
 
 <script setup>
 import { ref, computed, watch, nextTick } from 'vue'
-import { invoke } from '@tauri-apps/api/tauri'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import { PRESETS } from '../composables/useChat.js'
+import { matchSlashCommands, estimateContextTokens } from '../composables/useChat.js'
 
 const props = defineProps({
   chat: { type: Object, required: true },
   settings: { type: Object, required: true },
+  // The chat-session manager (see useChatManager): owns the tab list, role
+  // list, and stream-serialization `anyBusy`. The panel drives it directly for
+  // tab create/select/close and Stop, the same way it drives `chat` for send.
+  manager: { type: Object, required: true },
+  roles: { type: Array, default: () => [] },
+  busy: { type: Boolean, default: false },
 })
 
 defineEmits(['openSettings'])
@@ -134,7 +236,6 @@ defineEmits(['openSettings'])
 // Configure marked once: no extra HTML, compact output.
 marked.setOptions({ breaks: true, gfm: true })
 
-const roles = ref([])
 const messagesContainer = ref(null)
 const clearOpen = ref(false)
 
@@ -142,26 +243,17 @@ const clearOpen = ref(false)
 // ↔ select[id]) so clicking the label focuses the control.
 const scopeSelect = 'llm-scope-select'
 
-// Load roles from the Rust command (compile-time-embedded personas). Each
-// role's `body` is the composed system prompt (base rules + persona) — sent
-// verbatim as the system message when the role is selected.
-async function loadRoles() {
-  try {
-    roles.value = await invoke('list_roles')
-    // Auto-select Writing Assistant as the default role when present.
-    const defaultRole = roles.value.find((r) => r.name === 'Writing Assistant')
-    if (defaultRole && !props.chat.selectedRoleName) {
-      props.chat.setRole(defaultRole)
-    }
-  } catch (e) {
-    console.error('Failed to load roles:', e)
-  }
+// Send via the active session, but only when no other tab is streaming —
+// `busy` here is the manager's `anyBusy` (one generation at a time; see
+// useChatManager). The textarea/button are already disabled while busy, but
+// guarding here keeps the Enter-key path honest too.
+function onSend() {
+  if (props.busy) return
+  props.chat.send()
 }
 
-loadRoles()
-
 const currentRoleDescription = computed(() => {
-  const role = roles.value.find((r) => r.name === props.chat.selectedRoleName)
+  const role = props.roles.find((r) => r.name === props.chat.selectedRoleName)
   return role?.description || ''
 })
 
@@ -177,11 +269,146 @@ const toggleClearOpen = () => {
 const inputPlaceholder = computed(() => {
   if (!props.settings.settings.model) return 'Configure a model in General Options…'
   if (!props.chat.selectedRoleName) return 'Select a role first…'
-  return 'Ask about your manuscript… (Enter to send, Shift+Enter for newline)'
+  return 'Ask about your manuscript… (/ for commands, Shift+Enter for newline)'
 })
 
+// --- Slash-command autocomplete --------------------------------------------
+//
+// The four analytical presets (Summarize / Critique / Analyze pacing / Suggest
+// improvements) used to be a button row. They're now invoked by typing the
+// preset id after a `/` in the input, with this autocomplete popup. Selecting a
+// command INSERTS the preset's curated prompt as editable text (and sets its
+// scope) rather than sending — the writer can append " — focus on dialogue"
+// before pressing Enter to send. See the plan (Phase 3.3).
+//
+// The popup is keyboard-driven. The textarea already binds Enter → onSend and
+// Shift+Enter → newline on the bubble phase; `onInputKeydownCapture` runs on the
+// CAPTURE phase (before those) so that when the popup is open, Arrow/Tab/Enter/
+// Esc drive the menu and never reach the send/newline handlers. When the popup
+// is closed it does nothing, leaving plain Enter-to-send untouched.
+const inputEl = ref(null)
+const inputFocused = ref(false)
+
+// The presets matching the current input. `null` (not `/`-prefixed) means "no
+// popup at all"; `[]` means a `/` was typed but nothing matches (still no popup
+// — see `slashMenuOpen`). `chat.input` is auto-unwrapped by the reactive proxy.
+const slashMatches = computed(() => matchSlashCommands(props.chat.input))
+
+// The popup shows only while the textarea is focused AND there are matches.
+// Tying open state to focus means a genuine blur (clicking outside) closes it;
+// `@mousedown.prevent` on the items keeps focus during a click selection so the
+// blur never fires mid-selection.
+const slashMenuOpen = computed(
+  () => inputFocused.value && slashMatches.value !== null && slashMatches.value.length > 0,
+)
+
+// Highlighted item index. Reset to the first item whenever the match set
+// changes (i.e. as the writer types), so the top match is always pre-selected.
+const selectIndex = ref(0)
+watch(slashMatches, () => {
+  selectIndex.value = 0
+})
+
+// Capture-phase keydown: handles Arrow/Tab/Enter/Esc when the popup is open.
+// Only these four keys are intercepted — every other key (letters, Backspace,
+// Space) falls through the `default` case untouched so the writer can keep
+// typing and the list keeps filtering. `preventDefault()` + `stopPropagation()`
+// live inside the handled cases (not above the switch) precisely so that
+// fall-through keystrokes still reach the textarea; and they stop the
+// bubble-phase Enter handler (onSend) from firing when Enter selects a command.
+function onInputKeydownCapture(event) {
+  if (!slashMenuOpen.value) return
+  const matches = slashMatches.value
+  switch (event.key) {
+    case 'ArrowDown':
+      event.preventDefault()
+      event.stopPropagation()
+      selectIndex.value = (selectIndex.value + 1) % matches.length
+      break
+    case 'ArrowUp':
+      event.preventDefault()
+      event.stopPropagation()
+      selectIndex.value = (selectIndex.value - 1 + matches.length) % matches.length
+      break
+    case 'Tab':
+    case 'Enter':
+      event.preventDefault()
+      event.stopPropagation()
+      selectSlashCommand(matches[selectIndex.value])
+      break
+    case 'Escape':
+      event.preventDefault()
+      event.stopPropagation()
+      inputFocused.value = false // closes the popup (slashMenuOpen is focus-tied)
+      break
+    default:
+      break
+  }
+}
+
+/// Selecting a command inserts the preset's curated prompt as editable text and
+/// sets the scope, so the next send uses it. Any text the writer typed after
+/// the `/token` (e.g. `/critique focus on dialogue`) is appended after a space,
+/// so the note rides along. Does NOT send — the writer reviews, then Enter.
+function selectSlashCommand(preset) {
+  if (!preset) return
+  // Split the input into the leading `/token` and the trailing text after it.
+  const afterSlash = props.chat.input.slice(1)
+  const firstSpace = afterSlash.search(/\s/)
+  const rest = firstSpace === -1 ? '' : afterSlash.slice(firstSpace + 1).trim()
+  props.chat.scope = preset.scope
+  props.chat.input = rest ? `${preset.prompt} ${rest}` : preset.prompt
+  inputFocused.value = true // keep the popup closed on next render (no `/` now)
+  focusInputEnd()
+}
+
+/// Refocus the textarea and place the caret at the end, ready to edit / append
+/// / Enter to send. `nextTick` waits for the input value to render.
+function focusInputEnd() {
+  nextTick(() => {
+    const textarea = inputEl.value
+    if (!textarea) return
+    textarea.focus()
+    const length = textarea.value.length
+    textarea.setSelectionRange(length, length)
+  })
+}
+
+// --- Context-usage readout (Phase 3.4) -------------------------------------
+//
+// Shows how much of the model's context window the *next* send will consume.
+// We reuse `buildContextMessages` — the exact assembly send ships (system role
+// + manuscript context + last 10 history turns + the current draft input) — so
+// the number the writer sees is the number the model will receive. Calling it
+// inside a `computed` tracks its reactive reads (input, scope/effectiveScope,
+// selected role, history, the doc) and recomputes live as the writer types or
+// the conversation grows. One caveat: `buildContextMessages` also reads the
+// editor selection imperatively (getSelectionText, not a reactive dep), so a
+// selection change alone won't retrigger this — acceptable for a heuristic
+// readout, and the real send still reads the live value.
+//
+// The denominator is the configured `contextLength` setting, NOT the model's
+// actual limit (which the list-models endpoints don't expose — see
+// useLlmSettings.defaultSettings). `props.settings` is the reactive-wrapped
+// useLlmSettings from App.vue, so `settings.settings.contextLength` auto-unwraps
+// the same way `settings.settings.model` does (e.g. inputPlaceholder above).
+const contextTokens = computed(() => {
+  const messages = props.chat.buildContextMessages(props.chat.input || '')
+  return estimateContextTokens(messages)
+})
+
+// Compact token formatting: 6200 → "6.2k", 8192 → "8.2k", 940 → "940". The
+// trailing ".0" is stripped so round thousands read as "8k", not "8.0k".
+function formatTokens(count) {
+  if (count >= 1000) {
+    const thousands = (count / 1000).toFixed(1)
+    return `${thousands.replace(/\.0$/, '')}k`
+  }
+  return String(count)
+}
+
 function onRoleChange(event) {
-  const role = roles.value.find((r) => r.name === event.target.value)
+  const role = props.roles.find((r) => r.name === event.target.value)
   props.chat.setRole(role || null)
 }
 
@@ -224,6 +451,69 @@ watch(
   letter-spacing: 0.5px;
 }
 
+.llm-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.llm-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 4px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--bg-glass-border);
+  background: var(--input-bg);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.llm-tab:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.llm-tab.active {
+  border-color: var(--accent);
+  background: var(--accent-bg);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.llm-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.llm-tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.6;
+}
+
+.llm-tab-close:hover {
+  opacity: 1;
+  background: var(--bg-glass-border);
+}
+
+.llm-tab-new {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  font-size: 13px;
+  line-height: 1;
+}
+
 .llm-role-row {
   display: flex;
   flex-direction: column;
@@ -254,41 +544,9 @@ watch(
   line-height: 1.4;
 }
 
-.llm-presets {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-.llm-preset-btn {
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: 5px 8px;
-  border-radius: 6px;
-  border: 1px solid var(--bg-glass-border);
-  background: var(--input-bg);
-  color: var(--text-secondary);
-  font-size: 11px;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.llm-preset-btn:hover:not(:disabled) {
-  background: var(--hover-bg);
-  color: var(--text-primary);
-  border-color: var(--accent);
-}
-
-.llm-preset-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
 .llm-scope-row {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
   align-items: center;
 }
@@ -301,6 +559,41 @@ watch(
 .llm-scope-select {
   flex: 1 1 auto;
   flex-basis: 50%;
+}
+
+/* "Using your selection" — appears when a live editor selection overrides the
+   chosen Feedback Target. Accent-colored so it reads as an active override. */
+.llm-scope-hint {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--accent);
+  font-style: italic;
+}
+
+/* Token-usage readout, right-aligned in the scope row. Muted by default; turns
+   accent when the assembled request passes 80% of the configured window, as a
+   soft "you're filling up the context" nudge. `flex: 0 0 auto` keeps it from
+   stretching; the scope select's `flex: 1 1 auto` already pushes it to the
+   right edge, so `margin-left: auto` is a no-op there but keeps it right-aligned
+   on a wrapped second line (when the hint is also present). */
+.llm-context-readout {
+  flex: 0 0 auto;
+  margin: 0 0 0 auto;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.llm-context-readout.near {
+  color: var(--accent);
+}
+
+/* Retrieval error (4.4): a red inline notice under the scope row, matching the
+   existing error bubble's red so it reads as the same severity. */
+.llm-retrieval-error {
+  margin: 0;
+  font-size: 11px;
+  color: #e55;
+  line-height: 1.4;
 }
 
 .llm-clear-row {
@@ -479,18 +772,75 @@ watch(
   to { visibility: hidden; }
 }
 
-/* Input row pinned to the bottom of the panel. */
+/* Input row pinned to the bottom of the panel. position: relative so the
+   slash-command popup can float above it (bottom: 100%). */
 .llm-input-row {
   display: flex;
   gap: 6px;
   align-items: flex-end;
   flex: 0 0 auto;
+  position: relative;
 }
 
 .llm-input {
   flex: 1 1 auto;
   min-height: 36px;
   max-height: 120px;
+}
+
+/* Slash-command autocomplete: floats above the textarea, reusing the panel's
+   existing surface/border tokens so it reads as part of the drawer. */
+.llm-slash-menu {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  margin-bottom: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 4px;
+  border-radius: 6px;
+  border: 1px solid var(--bg-glass-border);
+  background: var(--input-bg);
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.25);
+  z-index: 10;
+}
+
+.llm-slash-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+.llm-slash-item:hover,
+.llm-slash-item.active {
+  background: var(--accent-bg);
+  color: var(--text-primary);
+}
+
+.llm-slash-id {
+  font-family: ui-monospace, monospace;
+  color: var(--accent);
+  flex: 0 0 auto;
+}
+
+.llm-slash-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .llm-send-btn {

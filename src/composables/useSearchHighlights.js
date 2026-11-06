@@ -63,20 +63,33 @@ export function applySearchHighlights(root, matches, currentIndex) {
   const byPara = {}
   for (let i = 0; i < matches.length; i++) {
     const m = matches[i]
-    if (!byPara[m.paragraph_id]) byPara[m.paragraph_id] = []
-    byPara[m.paragraph_id].push({ ...m, index: i })
+    if (!byPara[m.paragraphId]) byPara[m.paragraphId] = []
+    byPara[m.paragraphId].push({ ...m, index: i })
   }
 
   for (const paraId in byPara) {
     const paraEl = root.querySelector(`[data-para-id="${paraId}"]`)
-    if (!paraEl) continue
+    if (!paraEl) {
+      // Diagnostic: the backend returned a match for a paragraph_id that has no
+      // corresponding [data-para-id] element in the live DOM. The match-count
+      // readout (driven by reactive refs, independent of highlighting) will show
+      // the match, but no highlight span can be rendered and scrollIntoView
+      // can't fire — exactly the "finding matches but nothing highlights / moves"
+      // symptom. Logging the expected ids vs the ids actually present surfaces
+      // the drift (a browser-created paragraph that never got its id stamped
+      // back, or a stale Rust doc) without being noisy in the happy path.
+      const present = Array.from(root.querySelectorAll('[data-para-id]'))
+        .map(el => el.dataset.paraId)
+      console.warn('[search] match paragraph_id not in DOM:', { missing: paraId, presentInDom: present })
+      continue
+    }
 
     // Sort by start_offset descending so earlier offsets aren't shifted
-    const paraMatches = byPara[paraId].sort((a, b) => b.start_offset - a.start_offset)
+    const paraMatches = byPara[paraId].sort((a, b) => b.startOffset - a.startOffset)
     for (const match of paraMatches) {
       const isCurrent = match.index === currentIndex
       const className = isCurrent ? CURRENT_CLASS : HIGHLIGHT_CLASS
-      wrapMatchInParagraph(paraEl, match.start_offset, match.end_offset, className)
+      wrapMatchInParagraph(paraEl, match.startOffset, match.endOffset, className)
     }
   }
 

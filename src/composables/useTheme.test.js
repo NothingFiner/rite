@@ -112,7 +112,9 @@ describe('useTheme', () => {
   it('computes editor scroll background', () => {
     const theme = createTheme('editor')
     theme.editorTheme.value = 0
-    expect(theme.uiScrollBg.value).toContain('rgba(216, 211, 214')
+    // Editor scroll layer paints the full theme bg so it matches the editor
+    // sheet (no translucent tint letting the black app base show through).
+    expect(theme.uiScrollBg.value).toBe('#D8D3D6')
   })
 
   it('computes manuscript glass border', () => {

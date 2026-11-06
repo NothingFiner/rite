@@ -8,15 +8,28 @@ repository = ""
 edition = "2021"
 rust-version = "1.70"
 
+# Library target, so integration tests under `src-tauri/tests/` have something
+# to import: a test crate can only reach `pub` items of a *library* target, not
+# of a binary. The explicit `name` is what TESTING.md's `use <crate>_lib::...`
+# convention refers to (the package is `rite`, so the default lib name would be
+# plain `rite`; naming the target `rite_lib` keeps the documented import path
+# literal). See `src/lib.rs` for the full rationale.
+[lib]
+name = "rite_lib"
+path = "src/lib.rs"
+crate-type = ["lib", "staticlib", "cdylib"]
+
 [build-dependencies]
-tauri-build = { version = "1.5.1", features = [] }
+tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "1.6.1", features = [ "window-start-dragging", "macos-private-api", "dialog-all", "fs-all"] }
+tauri = { version = "2", features = [ "macos-private-api"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 similar = "2.5"
 regex = "1"
+# Thesaurus dataset (thesaurus.rs): the bundled WordNet TSV ships brotli-compressed.
+brotli = "9.1"
 uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
 # HTTP client for the LLM proxy. `stream` for SSE chunk reading; `rustls-tls`
@@ -27,8 +40,44 @@ reqwest = { version = "0.12", features = ["json", "stream", "rustls-tls"], defau
 # iteration (`bytes_stream().next()`). reqwest's `stream` feature re-exports
 # the types but not the trait prelude, so this is a direct dep.
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
+# DOCX export (`export_docx.rs`). A `.docx` is a ZIP of OOXML parts; we emit the
+# XML ourselves (transparent, no opaque heavy dependency) and let `zip` do the
+# deflate+archive. `deflate` is the only feature needed; `default-features =
+# false` drops the unused `aes-crypto`/`time`/`bzip2` machinery so the dep stays
+# small. Chosen over a high-level `docx-rs` crate for build reliability on this
+# Tauri v1 setup and so the output is plain readable OOXML that round-trips
+# with the existing mammoth-based import path.
+zip = { version = "2", default-features = false, features = ["deflate"] }
+tauri-plugin-dialog = "2"
+
+# macOS-only native spellcheck enable (Phase 5.8a). wry/Tauri's WKWebView ships
+# with continuous spell checking OFF (Tauri #7705), so the red misspelling
+# squiggle never paints even with `spellcheck="true"` on the sheet. We flip
+# `WebContinuousSpellCheckingEnabled` in NSUserDefaults at the top of `main()`
+# (before the WKWebView is created) via the `objc` crate. Target-gated so
+# non-macOS builds don't pull it in.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"
+
+# objc 0.2's `sel_impl!` macro emits a `cfg(cargo-clippy)` check that the
+# `unexpected_cfgs` lint flags as unknown. Register it as a known cfg so the
+# dependency's macro doesn't dirty our build output. (Scoped to objc only;
+# the rest of the crate gains nothing from clippy-cfg awareness.)
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("cargo-clippy"))'] }
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem
 # DO NOT REMOVE!!
 custom-protocol = ["tauri/custom-protocol"]
+
+[dev-dependencies]
+# Enables `tauri::test` (mock app/builder) so command tests can construct a
+# `State<AppState>` without spinning up the full Tauri runtime. Only active
+# during `cargo test`; never compiled into production builds.
+tauri = { version = "2", features = ["test"] }
+# Integration tests that touch disk (`save_document` / `open_document` /
+# `autosave_document` / the `.rite` round-trip) need a scratch directory that
+# cleans itself up. Hand-rolled `std::env::temp_dir()` helpers leak on panic,
+# which is exactly when a test fails and you least want debris.
+tempfile = "3"

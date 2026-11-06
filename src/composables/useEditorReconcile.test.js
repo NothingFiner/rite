@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeReconcileOps, blockKey } from './useEditorReconcile.js'
+import { computeReconcileOps, blockKey, renderBlockHTML } from './useEditorReconcile.js'
 
 // --- toy block builders + renderer ------------------------------------------
 // The real renderer (sectionTitleToHTML / paragraphToHTML) is injected by the
@@ -7,8 +7,8 @@ import { computeReconcileOps, blockKey } from './useEditorReconcile.js'
 // fields change-detection should notice: sectionType, chapterIndex, title for
 // titles; paragraphId, text, firstLineIndent for paragraphs.
 
-function title(id, { sectionType = 'section', titleText = '', chapterIndex = null } = {}) {
-  return { kind: 'section-title', sectionId: id, sectionType, title: titleText, chapterIndex }
+function title(id, { sectionType = 'section', titleText = '', chapterIndex = null, hidden = false } = {}) {
+  return { kind: 'section-title', sectionId: id, sectionType, title: titleText, chapterIndex, hidden }
 }
 
 function para(id, { text = '', indent = 0.5, sectionId = 's1' } = {}) {
@@ -31,7 +31,9 @@ function para(id, { text = '', indent = 0.5, sectionId = 's1' } = {}) {
 /// appear here.
 function render(b) {
   if (b.kind === 'section-title') {
-    return `T[${b.sectionType}|${b.chapterIndex}|${b.title}]`
+    // Hidden appends a suffix only when TRUE, so the pre-5.10 expectations
+    // (all non-hidden) keep their exact strings.
+    return `T[${b.sectionType}|${b.chapterIndex}|${b.title}${b.hidden ? '|hidden' : ''}]`
   }
   const text = (b.paragraph.elements || []).map((e) => e.textRun.content).join('')
   return `P[${b.paragraphId}|${text}|${b.paragraph.firstLineIndent}]`
@@ -127,6 +129,32 @@ describe('computeReconcileOps', () => {
     expect(removedKeys).toEqual([])
   })
 
+  it('replaces exactly one title when a section toggles hidden (5.10)', () => {
+    // Toggling hidden changes ONE section's rendered marker; every other
+    // block — including other titles — must diff as `keep`.
+    const old = [
+      title('s1', { titleText: 'Epigraph' }),
+      para('p1', { text: 'a' }),
+      title('s2', { titleText: 'One' }),
+      para('p2', { text: 'b' }),
+    ]
+    const next = [
+      title('s1', { titleText: 'Epigraph', hidden: true }),
+      para('p1', { text: 'a' }),
+      title('s2', { titleText: 'One' }),
+      para('p2', { text: 'b' }),
+    ]
+    const { ops, removedKeys } = reconcile(old, next)
+    expect(opSummary(ops)).toEqual([
+      ['replace', 'title:s1'],
+      ['keep', 'para:p1'],
+      ['keep', 'title:s2'],
+      ['keep', 'para:p2'],
+    ])
+    expect(ops[0].html).toBe('T[section|null|Epigraph|hidden]')
+    expect(removedKeys).toEqual([])
+  })
+
   it('replaces every later chapter when a chapter is inserted above them', () => {
     // Old: chapter One (idx 1), a paragraph, section Two.
     const old = [
@@ -204,5 +232,97 @@ describe('computeReconcileOps', () => {
     const { ops, removedKeys } = reconcile(old, [])
     expect(ops).toEqual([])
     expect(removedKeys).toEqual(['title:s1', 'para:p1'])
+  })
+})
+
+// --- renderBlockHTML (the production renderBlockFn) --------------------------
+// renderBlockHTML is the single-block renderer computeReconcileOps injects in
+// production. It must match buildEditorHTML's per-block output byte-for-byte so
+// an unchanged block diffs as `keep`. These tests pin that contract directly
+// against the real sectionTitleToHTML / paragraphToHTML output (no toy
+// renderer), covering the two kinds + the injected render-derived bits.
+
+const fmt = (i) => `Chapter ${i}: `
+
+describe('renderBlockHTML', () => {
+  it('renders a chapter title with the derived prefix and a locked subtitle span', () => {
+    const block = { kind: 'section-title', sectionId: 's1', sectionType: 'chapter', title: 'The Reveal', chapterIndex: 1 }
+    const html = renderBlockHTML(block, { freshSectionId: null, formatChapter: fmt })
+    expect(html).toBe(
+      '<div class="section-title chapter" data-section-id="s1" data-section-type="chapter" contenteditable="false">'
+      + '<span class="chapter-prefix" contenteditable="false">Chapter 1: </span>'
+      + '<span class="section-subtitle">The Reveal</span></div>'
+    )
+  })
+
+  it('renders a plain section title with a single title-text span and no prefix', () => {
+    const block = { kind: 'section-title', sectionId: 's2', sectionType: 'section', title: 'Opening', chapterIndex: null }
+    const html = renderBlockHTML(block, { freshSectionId: null, formatChapter: fmt })
+    expect(html).toBe(
+      '<div class="section-title" data-section-id="s2" data-section-type="section" contenteditable="false">'
+      + '<span class="section-title-text">Opening</span></div>'
+    )
+  })
+
+  it('renders a hidden section title with the marker class + data attr (5.10)', () => {
+    const block = { kind: 'section-title', sectionId: 's3', sectionType: 'section', title: 'Epigram', chapterIndex: null, hidden: true }
+    const html = renderBlockHTML(block, { freshSectionId: null, formatChapter: fmt })
+    expect(html).toBe(
+      '<div class="section-title section-hidden" data-section-id="s3" data-section-type="section" data-section-hidden="true" contenteditable="false">'
+      + '<span class="section-title-text">Epigram</span></div>'
+    )
+  })
+
+  it('renders a fresh section title editable so the user can type the subtitle inline', () => {
+    const block = { kind: 'section-title', sectionId: 's1', sectionType: 'chapter', title: '', chapterIndex: 1 }
+    const html = renderBlockHTML(block, { freshSectionId: 's1', formatChapter: fmt })
+    expect(html).toContain('contenteditable="true"')
+    // An empty title renders a <br> placeholder in the subtitle span.
+    expect(html).toContain('<span class="section-subtitle"><br></span>')
+  })
+
+  it('renders a non-chapter title without a prefix even when a chapterIndex is present', () => {
+    // A section-type title never has a prefix; chapterIndex is null for them,
+    // but even if it weren't, sectionType drives the prefix, not the index.
+    const block = { kind: 'section-title', sectionId: 's2', sectionType: 'section', title: 'X', chapterIndex: null }
+    const html = renderBlockHTML(block, { freshSectionId: null, formatChapter: fmt })
+    expect(html).not.toContain('chapter-prefix')
+  })
+
+  it('renders a paragraph with its para id, section id, and baked indent style', () => {
+    const block = {
+      kind: 'paragraph',
+      sectionId: 's1',
+      paragraphId: 'p1',
+      paragraph: {
+        id: 'p1',
+        elements: [{ textRun: { content: 'hello', textStyle: {} } }],
+        leftIndent: null,
+        rightIndent: null,
+        firstLineIndent: 0.5,
+      },
+    }
+    const html = renderBlockHTML(block, { freshSectionId: null, formatChapter: fmt })
+    expect(html).toBe(
+      '<div class="paragraph" data-para-id="p1" data-section-id="s1" style="text-indent:48px">hello</div>'
+    )
+  })
+
+  it('renders a zero-indent paragraph with the no-indent class and no text-indent style', () => {
+    const block = {
+      kind: 'paragraph',
+      sectionId: 's1',
+      paragraphId: 'p1',
+      paragraph: {
+        id: 'p1',
+        elements: [{ textRun: { content: 'first', textStyle: {} } }],
+        leftIndent: null,
+        rightIndent: null,
+        firstLineIndent: 0,
+      },
+    }
+    const html = renderBlockHTML(block, { freshSectionId: null, formatChapter: fmt })
+    expect(html).toContain('class="paragraph no-indent"')
+    expect(html).not.toContain('text-indent')
   })
 })

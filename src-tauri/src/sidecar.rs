@@ -1,0 +1,422 @@
+//! Durable persistence for Phase 4.3's in-memory RAG vector store.
+//!
+//! 4.3 keeps `AppState.vectors` + `AppState.section_hashes` in memory only, so
+//! every app restart re-embeds the whole manuscript from scratch even if nothing
+//! changed. This module persists them to a per-manuscript sidecar file in Tauri's
+//! `app_data_dir/indexes/` — loaded on `open_document`, checkpointed on
+//! `save_document`/`autosave_document`. On reload the EXISTING `plan_reembed`
+//! differential reconciles the persisted `section_hashes` baseline against the
+//! live document: unchanged sections keep their vectors, changed sections
+//! re-embed. A missing/corrupt sidecar, or one from a different manuscript,
+//! simply starts empty → a full rebuild (no data is lost; vectors are
+//! derivable). The sidecar is a separate file (NOT embedded in the `.rite`)
+//! because vectors are large (~768 floats × many chunks) and `write_rite_file`
+//! rewrites the whole `.rite` on every autosave — embedding them would make
+//! autosave slow for an indexed manuscript. This mirrors the `roles/` precedent
+//! (`app_data_dir` + `atomic_write`) rather than the legacy `.rite.history`
+//! folder the project deliberately moved away from.
+//!
+//! The sidecar has its OWN schema version (independent of `RiteFile`'s) so it can
+//! evolve — Phase 4.8 adds a `summaries` field (`#[serde(default)]` so a
+//! 4.7-written sidecar still loads) and bumps this version.
+
+use crate::history::atomic_write;
+use crate::retrieval::StoredChunk;
+use crate::summary::SectionSummary;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fs;
+use std::hash::{DefaultHasher, Hasher};
+use std::path::{Path, PathBuf};
+use tauri::{AppHandle, Manager, Runtime};
+
+/// The sidecar schema version this build writes and understands. Independent of
+/// `RiteFile`'s `.rite` schema — the sidecar is a separate file in
+/// `app_data_dir`, so it can evolve without bumping the `.rite` schema. A sidecar
+/// whose `schemaVersion` is higher than this is from a newer Rite and is
+/// rejected (→ graceful full rebuild) rather than guessed at. Bump this only
+/// when the on-disk shape changes; pair it with a migration arm in
+/// `migrate_sidecar`.
+pub const CURRENT_SIDECAR_SCHEMA_VERSION: u32 = 2;
+
+/// The on-disk shape of a manuscript's vector index: the section-hash baseline
+/// (`section_id → hash of the section's concatenated paragraph text`, the
+/// differential signal `reembed_document` diffs against) + the vectors
+/// themselves, plus Phase 4.8's per-section `summaries` (`section_id →
+/// SectionSummary`). `camelCase` on the wire to match `Chunk`/`ReembedReport`.
+/// All payload fields are `#[serde(default)]` so a truncated-but-parseable file
+/// degrades to an empty index rather than failing to load — and so a 4.7-written
+/// sidecar (no `summaries` field) still loads in 4.8 with empty summaries.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Sidecar {
+    #[serde(default)]
+    pub schema_version: u32,
+    #[serde(default)]
+    pub section_hashes: HashMap<String, u64>,
+    #[serde(default)]
+    pub vectors: Vec<StoredChunk>,
+    /// Phase 4.8 semantic summaries, keyed by `section_id`. `#[serde(default)]`
+    /// so a 4.7 sidecar (schema v1, no summaries) loads with an empty map; the
+    /// `1 => 2` migration in `migrate_sidecar` stamps the version after which
+    /// this field is always present on write.
+    #[serde(default)]
+    pub summaries: HashMap<String, SectionSummary>,
+}
+
+impl Sidecar {
+    /// Build a sidecar snapshot from the current in-memory store, stamped with
+    /// the current schema version. (`write` is the only authority that needs the
+    /// version; constructing it here keeps the call site a one-liner and mirrors
+    /// how `build_rite_file` carries a neutral version for the writer to stamp.)
+    pub fn new(
+        section_hashes: HashMap<String, u64>,
+        vectors: Vec<StoredChunk>,
+        summaries: HashMap<String, SectionSummary>,
+    ) -> Self {
+        Self {
+            schema_version: CURRENT_SIDECAR_SCHEMA_VERSION,
+            section_hashes,
+            vectors,
+            summaries,
+        }
+    }
+}
+
+/// A stable, filesystem-safe hex digest of a manuscript's path, used as the
+/// sidecar filename. `DefaultHasher::new()` is SipHash with a CONSTANT key, so
+/// it is deterministic across processes for the same binary — the same `.rite`
+/// path always maps to the same sidecar file across opens/saves. Moving or
+/// renaming the `.rite` orphans the sidecar (a different digest) → graceful full
+/// rebuild on next open. The digest is an internal key, never user-facing.
+fn path_digest(manuscript_path: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    hasher.write(manuscript_path.as_bytes());
+    format!("{:016x}", hasher.finish())
+}
+
+/// The on-disk path for a manuscript's sidecar, given the resolved `indexes`
+/// directory. Pure (no `AppHandle`) so it is unit-testable.
+fn sidecar_file_path(indexes_dir: &Path, manuscript_path: &str) -> PathBuf {
+    indexes_dir.join(format!("{}.json", path_digest(manuscript_path)))
+}
+
+/// Resolve `<base>/indexes/` from an already-resolved app-data base. The
+/// directory is NOT created (reads must not create empty dirs as a side
+/// effect). `None` means the app data directory could not be resolved; that is
+/// an error naming the app data directory, never a fallback path.
+///
+/// Split out from [`indexes_dir`] so the failure branch is testable without a
+/// Tauri runtime.
+pub fn indexes_dir_in(base: Option<PathBuf>) -> Result<PathBuf, String> {
+    match base {
+        Some(base) => Ok(base.join("indexes")),
+        None => Err("could not resolve app data dir".to_string()),
+    }
+}
+
+fn indexes_dir<R: Runtime>(app: &AppHandle<R>) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map_err(|e| format!("could not resolve app data dir: {}", e))
+        .and_then(|base| indexes_dir_in(Some(base)))
+}
+
+/// Parse a sidecar JSON string into a `Sidecar`. A file whose `schemaVersion` is
+/// higher than `CURRENT_SIDECAR_SCHEMA_VERSION` is from a newer Rite and is
+/// rejected with a clear error (the caller treats any error as "no sidecar" →
+/// full rebuild) rather than guessed at. Pure — the unit-testable core of
+/// `load_sidecar`.
+pub fn parse_sidecar(json: &str) -> Result<Sidecar, String> {
+    let sidecar: Sidecar = serde_json::from_str(json).map_err(|e| e.to_string())?;
+    if sidecar.schema_version > CURRENT_SIDECAR_SCHEMA_VERSION {
+        return Err(format!(
+            "unsupported sidecar schema version {} (this build of rite supports up to version {})",
+            sidecar.schema_version, CURRENT_SIDECAR_SCHEMA_VERSION
+        ));
+    }
+    Ok(sidecar)
+}
+
+/// Apply any forward migrations a loaded `Sidecar` needs before it is used.
+/// Structured like `history::migrate_rite_file`. Phase 4.8 adds the `1 => 2`
+/// arm: a 4.7-written sidecar has no `summaries` field, but `summaries` is
+/// `#[serde(default)]` so it already deserializes to an empty map — the
+/// migration only stamps the version to 2 so the next write carries the field.
+/// `2` is current → no-op.
+pub fn migrate_sidecar(mut sidecar: Sidecar) -> Result<Sidecar, String> {
+    match sidecar.schema_version {
+        1 => {
+            sidecar.schema_version = 2;
+            // summaries already defaults to empty via serde; nothing to fill.
+            Ok(sidecar)
+        }
+        2 => Ok(sidecar),
+        v if v > CURRENT_SIDECAR_SCHEMA_VERSION => {
+            Err(format!("unsupported sidecar schema version {}", v))
+        }
+        _ => Err(format!(
+            "unknown sidecar schema version {}",
+            sidecar.schema_version
+        )),
+    }
+}
+
+/// Read + parse the sidecar at `path`. Missing file or corrupt/future-version
+/// JSON → `None`, so the caller starts empty → a full rebuild. Never panics,
+/// never returns a partial/invalid store. Pure I/O core (takes a `&Path`, no
+/// `AppHandle`) so it is TempDir-testable.
+fn load_sidecar_at(path: &Path) -> Option<Sidecar> {
+    let json = fs::read_to_string(path).ok()?;
+    parse_sidecar(&json)
+        .ok()
+        .and_then(|s| migrate_sidecar(s).ok())
+}
+
+/// Serialize + atomically write the sidecar to `path` (via `atomic_write`, so a
+/// crash mid-write cannot leave a half-written index). Pure I/O core.
+fn write_sidecar_at(path: &Path, sidecar: &Sidecar) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(sidecar).map_err(|e| e.to_string())?;
+    atomic_write(path, &json)
+}
+
+/// Load the sidecar for `manuscript_path`. Missing/corrupt/future-version →
+/// `None` (full rebuild). Does NOT create the `indexes` dir — a read that finds
+/// nothing leaves the filesystem untouched. `AppHandle` is auto-injected by Tauri
+/// at the command boundary.
+pub fn load_sidecar<R: Runtime>(app: &AppHandle<R>, manuscript_path: &str) -> Option<Sidecar> {
+    let dir = indexes_dir(app).ok()?;
+    let path = sidecar_file_path(&dir, manuscript_path);
+    load_sidecar_at(&path)
+}
+
+/// Checkpoint `sidecar` for `manuscript_path`, creating the `indexes` dir on
+/// first use. `AppHandle` is auto-injected by Tauri at the command boundary.
+pub fn write_sidecar<R: Runtime>(
+    app: &AppHandle<R>,
+    manuscript_path: &str,
+    sidecar: &Sidecar,
+) -> Result<(), String> {
+    let dir = indexes_dir(app)?;
+    fs::create_dir_all(&dir).map_err(|e| format!("could not create indexes dir: {}", e))?;
+    let path = sidecar_file_path(&dir, manuscript_path);
+    write_sidecar_at(&path, sidecar)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::retrieval::Chunk;
+    use crate::summary::SectionSummary;
+
+    /// Build a `StoredChunk` with a couple of vector dims for round-trip tests.
+    fn stored_chunk(section_id: &str, ordinal: usize, text: &str, vector: &[f32]) -> StoredChunk {
+        StoredChunk {
+            chunk: Chunk {
+                id: format!("{}:{}", section_id, ordinal),
+                section_id: section_id.to_string(),
+                chapter_index: Some(1),
+                text: text.to_string(),
+            },
+            vector: vector.to_vec(),
+        }
+    }
+
+    #[test]
+    fn path_digest_is_stable_and_distinguishing() {
+        // Same path → same digest.
+        assert_eq!(
+            path_digest("/Users/x/novel.rite"),
+            path_digest("/Users/x/novel.rite")
+        );
+        // Different paths → different digests (so two manuscripts don't collide).
+        assert_ne!(
+            path_digest("/Users/x/novel.rite"),
+            path_digest("/Users/x/novel2.rite")
+        );
+        // 16-char hex.
+        assert_eq!(path_digest("/x/y.rite").len(), 16);
+        assert!(path_digest("/x/y.rite")
+            .chars()
+            .all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn sidecar_file_path_is_keyed_by_path_digest() {
+        let dir = Path::new("/tmp/rite-indexes");
+        let a = sidecar_file_path(dir, "/Users/x/novel.rite");
+        let b = sidecar_file_path(dir, "/Users/x/novel.rite");
+        let c = sidecar_file_path(dir, "/Users/x/novel2.rite");
+        assert_eq!(a, b);
+        assert_ne!(a, c);
+        assert!(a.starts_with(dir));
+        assert_eq!(a.extension().unwrap(), "json");
+    }
+
+    fn make_summary(id: &str, hash: u64, summary: &str) -> SectionSummary {
+        SectionSummary {
+            section_id: id.to_string(),
+            section_hash: hash,
+            summary: summary.to_string(),
+        }
+    }
+
+    #[test]
+    fn sidecar_round_trips_vectors_and_hashes() {
+        let sidecar = Sidecar::new(
+            HashMap::from([("s1".to_string(), 111), ("s2".to_string(), 222)]),
+            vec![stored_chunk("s1", 0, "hello world", &[0.1, 0.2, 0.3])],
+            HashMap::new(),
+        );
+        let json = serde_json::to_string_pretty(&sidecar).unwrap();
+        let back = parse_sidecar(&json).unwrap();
+        assert_eq!(back, sidecar);
+        assert_eq!(back.schema_version, CURRENT_SIDECAR_SCHEMA_VERSION);
+        assert_eq!(back.vectors.len(), 1);
+        assert_eq!(back.vectors[0].vector, vec![0.1, 0.2, 0.3]);
+        assert_eq!(back.section_hashes.get("s2"), Some(&222));
+    }
+
+    #[test]
+    fn sidecar_round_trips_summaries() {
+        // Summaries persist alongside vectors + hashes and come back equal.
+        let summaries = HashMap::from([
+            (
+                "s1".to_string(),
+                make_summary("s1", 111, "Chapter one recap."),
+            ),
+            (
+                "s2".to_string(),
+                make_summary("s2", 222, "Chapter two recap."),
+            ),
+        ]);
+        let sidecar = Sidecar::new(HashMap::new(), Vec::new(), summaries.clone());
+        let json = serde_json::to_string_pretty(&sidecar).unwrap();
+        let back = parse_sidecar(&json).unwrap();
+        assert_eq!(back.summaries, summaries);
+        assert_eq!(
+            back.summaries.get("s1").unwrap().summary,
+            "Chapter one recap."
+        );
+        assert_eq!(back.summaries.get("s2").unwrap().section_hash, 222);
+    }
+
+    #[test]
+    fn parse_sidecar_defaults_missing_summaries_for_a_v1_sidecar() {
+        // A 4.7-written sidecar (schema v1) has no `summaries` field. It must
+        // still load with an empty summaries map, and migrate up to v2.
+        let json =
+            "{\"schemaVersion\":1,\"sectionHashes\":{\"s1\":111},\"vectors\":[]}".to_string();
+        let back = parse_sidecar(&json).unwrap();
+        assert_eq!(back.schema_version, 1);
+        assert!(back.summaries.is_empty());
+        // migrate stamps it to v2 (summaries already empty via serde default).
+        let migrated = migrate_sidecar(back).unwrap();
+        assert_eq!(migrated.schema_version, 2);
+        assert!(migrated.summaries.is_empty());
+    }
+
+    #[test]
+    fn migrate_sidecar_v1_to_v2_preserves_payloads() {
+        let summaries = HashMap::from([("s1".to_string(), make_summary("s1", 9, "recap"))]);
+        let mut v1 = Sidecar::new(
+            HashMap::from([("s1".to_string(), 111)]),
+            vec![stored_chunk("s1", 0, "text", &[0.1])],
+            summaries.clone(),
+        );
+        v1.schema_version = 1; // pretend it was written by 4.7
+        let migrated = migrate_sidecar(v1.clone()).unwrap();
+        assert_eq!(migrated.schema_version, 2);
+        assert_eq!(migrated.section_hashes, v1.section_hashes);
+        assert_eq!(migrated.vectors, v1.vectors);
+        assert_eq!(migrated.summaries, summaries);
+    }
+
+    #[test]
+    fn parse_sidecar_rejects_future_schema() {
+        let json = format!(
+            "{{\"schemaVersion\":{},\"sectionHashes\":{{}},\"vectors\":[]}}",
+            CURRENT_SIDECAR_SCHEMA_VERSION + 1
+        );
+        assert!(parse_sidecar(&json).is_err());
+    }
+
+    #[test]
+    fn parse_sidecar_accepts_current_schema() {
+        let json = format!(
+            "{{\"schemaVersion\":{},\"sectionHashes\":{{}},\"vectors\":[]}}",
+            CURRENT_SIDECAR_SCHEMA_VERSION
+        );
+        let back = parse_sidecar(&json).unwrap();
+        assert!(back.vectors.is_empty());
+        assert!(back.section_hashes.is_empty());
+    }
+
+    #[test]
+    fn parse_sidecar_defaults_missing_payload_fields() {
+        // A parseable file with just the version still loads (empty index) —
+        // truncated payloads degrade to empty rather than failing.
+        let json = format!("{{\"schemaVersion\":{}}}", CURRENT_SIDECAR_SCHEMA_VERSION);
+        let back = parse_sidecar(&json).unwrap();
+        assert!(back.vectors.is_empty());
+        assert!(back.section_hashes.is_empty());
+    }
+
+    #[test]
+    fn load_sidecar_at_returns_none_for_missing_file() {
+        let tmp =
+            std::env::temp_dir().join(format!("rite-sidecar-test-missing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.join("nope.json");
+        assert!(load_sidecar_at(&path).is_none());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn load_sidecar_at_returns_none_for_corrupt_json() {
+        let tmp =
+            std::env::temp_dir().join(format!("rite-sidecar-test-corrupt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.join("bad.json");
+        std::fs::write(&path, "not json at all {{{").unwrap();
+        assert!(load_sidecar_at(&path).is_none());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn write_then_load_round_trips_on_disk() {
+        let tmp = std::env::temp_dir().join(format!(
+            "rite-sidecar-test-roundtrip-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.join("index.json");
+
+        let sidecar = Sidecar::new(
+            HashMap::from([("s1".to_string(), 999)]),
+            vec![
+                stored_chunk("s1", 0, "first chunk", &[0.5, -0.5]),
+                stored_chunk("s1", 1, "second chunk", &[1.0, 0.0]),
+            ],
+            HashMap::new(),
+        );
+        write_sidecar_at(&path, &sidecar).unwrap();
+        let back = load_sidecar_at(&path).unwrap();
+        assert_eq!(back, sidecar);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn migrate_sidecar_accepts_current_rejects_future() {
+        let current = Sidecar::new(HashMap::new(), Vec::new(), HashMap::new());
+        assert!(migrate_sidecar(current.clone()).is_ok());
+
+        let mut future = current;
+        future.schema_version = CURRENT_SIDECAR_SCHEMA_VERSION + 1;
+        assert!(migrate_sidecar(future).is_err());
+    }
+}

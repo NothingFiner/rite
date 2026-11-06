@@ -1,33 +1,67 @@
 <template>
   <!--
-    Side-by-side diff of a past version (left = old) against the current live
-    document (right = new). Walks the `SectionDiff` blocks from Rust's
-    `diff_against_current`; each block becomes a two-column row. Unchanged
-    sections/paragraphs appear in both columns plainly; Removed (in the past,
-    gone now) appears on the left tinted red; Added (new since that version)
-    appears on the right tinted green; Modified paragraphs render word-level
-    spans — deleted words on the left struck through, inserted words on the
-    right highlighted. Run-level styling (bold/italic) is intentionally not
-    rendered in modified paragraphs: the diff is about text changes, and mixing
-    per-run styling with per-word diff spans would muddy both.
+    Side-by-side diff of a past version (left) against the live document
+    (right). A section renders a title row, then one row per paragraph. That
+    row split keeps the two columns aligned as the page scrolls, and gives the
+    change navigation a row to mark. Run-level styling (bold/italic) is not
+    rendered in modified paragraphs, because per-run styling and per-word spans
+    competing in one cell muddies both.
   -->
-  <div class="diff-view">
+  <div ref="diffViewElement" class="diff-view">
     <div class="diff-header">
       <div class="diff-header-cell diff-left">Past version</div>
       <div class="diff-header-cell diff-right">Current</div>
+      <div class="diff-nav">
+        <span v-if="changeTargets.total === 0" class="diff-nav-empty">No changes</span>
+        <template v-else>
+          <button
+            class="diff-nav-prev"
+            :disabled="!canGoPrevious"
+            @click="goToPreviousChange"
+          >Previous change</button>
+          <span class="diff-nav-position">Change {{ currentChange + 1 }} of {{ changeTargets.total }}</span>
+          <button
+            class="diff-nav-next"
+            :disabled="!canGoNext"
+            @click="goToNextChange"
+          >Next change</button>
+        </template>
+      </div>
     </div>
     <div class="diff-body">
       <div v-for="(sd, i) in diffBlocks" :key="i" class="diff-section">
-        <div class="diff-row">
+        <div
+          class="diff-title-row"
+          :data-change-index="changeTargets.titleStops[i]"
+          :data-current-change="isCurrentChange(changeTargets.titleStops[i])"
+        >
+          <div
+            class="diff-title-cell diff-left"
+            :class="sideTint(sd, 'left')"
+            v-html="titleHTML(sd, 'left')"
+          ></div>
+          <div
+            class="diff-title-cell diff-right"
+            :class="sideTint(sd, 'right')"
+            v-html="titleHTML(sd, 'right')"
+          ></div>
+        </div>
+        <div
+          v-for="(pd, j) in paragraphRows(sd)"
+          :key="j"
+          class="diff-row"
+          :data-change-index="changeTargets.rowStops[i]?.[j]"
+          :data-current-change="isCurrentChange(changeTargets.rowStops[i]?.[j])"
+        >
           <div
             class="diff-cell diff-left"
-            :class="{ 'diff-tint-removed': sd.type === 'removed' }"
-            v-html="renderLeftCell(sd)"
+            :class="sideTint(sd, 'left')"
+            v-html="paragraphHTML(pd, 'left')"
           ></div>
           <div
             class="diff-cell diff-right"
-            :class="{ 'diff-tint-added': sd.type === 'added' }"
-            v-html="renderRightCell(sd)"
+            :class="sideTint(sd, 'right')"
+            v-html="paragraphHTML(pd, 'right')"
           ></div>
         </div>
       </div>
@@ -36,13 +70,126 @@
 </template>
 
 <script setup>
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { paragraphToHTML, escapeHtml } from '../composables/useParagraphHTML.js'
 
 const props = defineProps({
   diffBlocks: { type: Array, default: () => [] },
 })
 
+const diffViewElement = ref(null)
+
 const GAP = '<div class="diff-gap">—</div>'
+
+/// Paragraph-diff kinds that count as changed. The set is explicit instead of
+/// a negation of `unchanged`, so a future changed kind cannot slip by
+/// uncounted.
+const CHANGED_PARAGRAPH_KINDS = new Set(['modified', 'added', 'removed'])
+
+/// Change targets of the whole diff, numbered from 0 in document order. The
+/// `total` field is their count. `titleStops[i]` is the value for section
+/// i's title row and `rowStops[i][j]` for its paragraph row j. The nav
+/// tests find targets with the bare `[data-change-index]` selector, which
+/// matches an empty value too. A non-target row must leave the attribute
+/// absent.
+const changeTargets = computed(() => {
+  const titleStops = []
+  const rowStops = []
+  let nextTarget = 0
+  const takeTarget = () => {
+    const target = nextTarget
+    nextTarget += 1
+    return target
+  }
+  for (const sectionDiff of props.diffBlocks) {
+    if (sectionDiff.type === 'modified') {
+      titleStops.push(sectionDiff.oldTitle !== sectionDiff.newTitle ? takeTarget() : undefined)
+      rowStops.push(
+        (sectionDiff.paragraphDiffs || []).map((paragraphDiff) => {
+          if (!CHANGED_PARAGRAPH_KINDS.has(paragraphDiff.type)) return undefined
+          return takeTarget()
+        })
+      )
+      continue
+    }
+    if (sectionDiff.type === 'added' || sectionDiff.type === 'removed') {
+      titleStops.push(takeTarget())
+    } else {
+      titleStops.push(undefined)
+    }
+    rowStops.push([])
+  }
+  return { titleStops, rowStops, total: nextTarget }
+})
+
+/// Index of the change the header marks, 0-based. SPEC.md Reset: a new
+/// version's diff returns the walk to the first change.
+const currentChange = ref(0)
+watch(() => props.diffBlocks, () => {
+  currentChange.value = 0
+})
+
+/// End guards double as the buttons' disabled state and the click handlers'
+/// bounds, so no path can move the index past the targets. A diff with no
+/// targets gives a negative upper bound, which locks both buttons instead of
+/// wrapping the index.
+const canGoPrevious = computed(() => currentChange.value > 0)
+const canGoNext = computed(() => currentChange.value < changeTargets.value.total - 1)
+
+function goToPreviousChange() {
+  if (!canGoPrevious.value) return
+  currentChange.value -= 1
+  scrollToCurrentChange()
+}
+
+function goToNextChange() {
+  if (!canGoNext.value) return
+  currentChange.value += 1
+  scrollToCurrentChange()
+}
+
+/// Brings the just-activated stop row into view after the index moves. The
+/// stop rows render on mount and never unmount, so the element carrying the
+/// new `data-change-index` exists as soon as the ref is updated. The view
+/// stays put on reset and on first render, because SPEC allows scrolling on
+/// navigation only.
+function scrollToCurrentChange() {
+  if (changeTargets.value.total === 0) return
+  const currentRow = diffViewElement.value?.querySelector(
+    `[data-change-index="${currentChange.value}"]`
+  )
+  currentRow?.scrollIntoView()
+}
+
+/// Walks the stops on Alt+ArrowDown and Alt+ArrowUp while a diff is mounted.
+/// The listener lives here, not in `useKeyboardShortcuts.js`, because the
+/// change index exists only in this component.
+function handleNavKeydown(event) {
+  if (!event.altKey) return
+  if (event.key === 'ArrowDown') {
+    goToNextChange()
+    event.preventDefault()
+  } else if (event.key === 'ArrowUp') {
+    goToPreviousChange()
+    event.preventDefault()
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('keydown', handleNavKeydown)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('keydown', handleNavKeydown)
+})
+
+/// `data-current-change` for a stop row. It holds `"true"` only when that
+/// stop's index is the current change, so exactly one stop wears the mark and
+/// non-target rows never do.
+function isCurrentChange(target) {
+  if (target === undefined) return undefined
+  return target === currentChange.value ? 'true' : undefined
+}
 
 function typeTag(sectionType) {
   return sectionType === 'chapter' ? 'Chapter' : 'Section'
@@ -74,6 +221,27 @@ function modifiedTitleLine(sd, side) {
   return `<div class="diff-section-title"><span class="diff-type-tag">${tag}</span>${body}</div>`
 }
 
+function titleHTML(sd, side) {
+  if (sd.type === 'added' && side === 'left') return GAP
+  if (sd.type === 'removed' && side === 'right') return GAP
+  if (sd.type === 'modified') return modifiedTitleLine(sd, side)
+  return sectionTitleLine(sd.section)
+}
+
+function sideTint(sd, side) {
+  if (side === 'left') return sd.type === 'removed' ? 'diff-tint-removed' : ''
+  return sd.type === 'added' ? 'diff-tint-added' : ''
+}
+
+/// The paragraph diffs of one section, normalised so every row carries a
+/// `type` the cell renderer understands. An added or removed section carries
+/// no `paragraphDiffs`, so its rows come from `section.paragraphs` instead.
+function paragraphRows(sd) {
+  if (sd.type === 'modified') return sd.paragraphDiffs || []
+  const type = sd.type === 'unchanged' ? 'unchanged' : sd.type
+  return (sd.section?.paragraphs || []).map((paragraph) => ({ type, paragraph }))
+}
+
 function plainParagraphHTML(p) {
   return paragraphToHTML(p, { sectionId: null })
 }
@@ -94,54 +262,25 @@ function wordDiffHTML(wordDiff, side) {
   return spans.join('') || '<br>'
 }
 
-function sectionBodyHTML(section) {
-  const title = sectionTitleLine(section)
-  const paras = (section.paragraphs || []).map((p) => plainParagraphHTML(p)).join('')
-  return title + paras
-}
-
-function renderLeftCell(sd) {
-  if (sd.type === 'added') return GAP
-  if (sd.type === 'unchanged') return sectionBodyHTML(sd.section)
-  if (sd.type === 'removed') return sectionBodyHTML(sd.section)
-  // modified
-  let html = modifiedTitleLine(sd, 'left')
-  for (const pd of sd.paragraphDiffs || []) {
-    if (pd.type === 'unchanged') html += plainParagraphHTML(pd.paragraph)
-    else if (pd.type === 'removed') html += `<div class="diff-para-removed">${plainParagraphHTML(pd.paragraph)}</div>`
-    else if (pd.type === 'added') html += GAP
-    else {
-      const words = wordDiffHTML(pd.wordDiff, 'left')
-      html += `<div class="diff-para-modified">${words || plainParagraphHTML(pd.old)}</div>`
-    }
+function paragraphHTML(pd, side) {
+  if (pd.type === 'unchanged') return plainParagraphHTML(pd.paragraph)
+  if (pd.type === 'removed') {
+    return side === 'left' ? `<div class="diff-para-removed">${plainParagraphHTML(pd.paragraph)}</div>` : GAP
   }
-  return html || GAP
-}
-
-function renderRightCell(sd) {
-  if (sd.type === 'removed') return GAP
-  if (sd.type === 'unchanged') return sectionBodyHTML(sd.section)
-  if (sd.type === 'added') return sectionBodyHTML(sd.section)
-  // modified
-  let html = modifiedTitleLine(sd, 'right')
-  for (const pd of sd.paragraphDiffs || []) {
-    if (pd.type === 'unchanged') html += plainParagraphHTML(pd.paragraph)
-    else if (pd.type === 'added') html += `<div class="diff-para-added">${plainParagraphHTML(pd.paragraph)}</div>`
-    else if (pd.type === 'removed') html += GAP
-    else {
-      const words = wordDiffHTML(pd.wordDiff, 'right')
-      html += `<div class="diff-para-modified">${words || plainParagraphHTML(pd.new)}</div>`
-    }
+  if (pd.type === 'added') {
+    return side === 'right' ? `<div class="diff-para-added">${plainParagraphHTML(pd.paragraph)}</div>` : GAP
   }
-  return html || GAP
+  const words = wordDiffHTML(pd.wordDiff, side)
+  const fallback = side === 'left' ? plainParagraphHTML(pd.old) : plainParagraphHTML(pd.new)
+  return `<div class="diff-para-modified">${words || fallback}</div>`
 }
 </script>
 
 <style scoped>
 .diff-view {
-  /* Flows inside the App scroll-layer; the page scrolls. Each section is a
-     two-column row, so left/right cells stay aligned row-by-row as the page
-     scrolls. */
+  /* Flows inside the App scroll-layer, so the page scrolls. Each section is a
+     title row plus one row per paragraph, so left/right cells stay aligned
+     row-by-row as the page scrolls. */
   font-family: var(--editor-font, Georgia, serif);
   font-size: 15px;
   line-height: 1.6;
@@ -169,6 +308,23 @@ function renderRightCell(sd) {
   border-right: 1px solid var(--bg-glass-border, rgba(255, 255, 255, 0.1));
 }
 
+.diff-title-row {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--bg-glass-border, rgba(255, 255, 255, 0.06));
+}
+
+.diff-title-cell {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 16px 4px;
+  word-break: break-word;
+}
+
+.diff-title-cell.diff-left {
+  border-right: 1px solid var(--bg-glass-border, rgba(255, 255, 255, 0.1));
+}
+
 .diff-row {
   display: flex;
   align-items: stretch;
@@ -178,7 +334,7 @@ function renderRightCell(sd) {
 .diff-cell {
   flex: 1;
   min-width: 0;
-  padding: 12px 16px;
+  padding: 6px 16px;
   word-break: break-word;
 }
 
@@ -194,15 +350,17 @@ function renderRightCell(sd) {
   background: rgba(63, 185, 80, 0.08);
 }
 
+.diff-title-cell :deep(.diff-section-title),
 .diff-cell :deep(.diff-section-title) {
   font-weight: 700;
   font-size: 1.2em;
-  margin: 1em 0 0.4em;
+  margin: 0 0 0.4em;
   display: flex;
   gap: 8px;
   align-items: baseline;
 }
 
+.diff-title-cell :deep(.diff-type-tag),
 .diff-cell :deep(.diff-type-tag) {
   font-size: 10px;
   font-weight: 700;
@@ -215,7 +373,7 @@ function renderRightCell(sd) {
   flex-shrink: 0;
 }
 
-.diff-cell :deep(.diff-renamed) {
+.diff-title-cell :deep(.diff-renamed) {
   text-decoration: line-through;
   opacity: 0.7;
 }
@@ -247,7 +405,8 @@ function renderRightCell(sd) {
   border-radius: 2px;
 }
 
-.diff-cell :deep(.diff-gap) {
+.diff-cell :deep(.diff-gap),
+.diff-title-cell :deep(.diff-gap) {
   opacity: 0.35;
   font-style: italic;
   text-align: center;
