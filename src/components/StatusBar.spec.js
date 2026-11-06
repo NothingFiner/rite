@@ -8,9 +8,9 @@ describe('StatusBar', () => {
     expect(wrapper.find('.statusbar').exists()).toBe(true)
   })
 
-  // SPEC.md 5.13 S-003. Colour moved to the Text Options drawer, so the bar has
+  // SPEC.md 5.13 S-003. Color moved to the Text Options drawer, so the bar has
   // no swatch, no tooltip and no theme props to hand it.
-  it('S-003: renders no colour swatch and no colour picker', () => {
+  it('S-003: renders no color swatch and no color picker', () => {
     const wrapper = mount(StatusBar)
     expect(wrapper.find('.theme-swatch').exists()).toBe(false)
     expect(wrapper.find('.theme-picker').exists()).toBe(false)

@@ -4,10 +4,10 @@ import { THEMES } from '../constants/themes.js'
 import { ref } from 'vue'
 
 // The theme model behind Text Options (SPEC.md 5.13). The selection is three
-// colours, not an index: `editorBg`, `editorText` and `editorAccent` hold the
+// colors, not an index: `editorBg`, `editorText` and `editorAccent` hold the
 // chosen hex strings, and a preset is one shortcut that sets all three.
 //
-// The stub in useTheme.js returns the first preset's colours and ignores the
+// The stub in useTheme.js returns the first preset's colors and ignores the
 // setters. Every case below that depends on a choice is therefore red until the
 // model is real.
 
@@ -56,7 +56,7 @@ describe('useTheme', () => {
     expect(theme.themes).toHaveLength(10)
   })
 
-  it('starts on the first theme in all three colours', () => {
+  it('starts on the first theme in all three colors', () => {
     const theme = createTheme()
     expect(theme.editorBg.value).toBe(THEMES[0].bg)
     expect(theme.editorText.value).toBe(THEMES[0].text)
@@ -148,7 +148,7 @@ describe('useTheme', () => {
     expect(localStorageMock.setItem).toHaveBeenCalledWith('rite-zoom', '20')
   })
 
-  it('selectTheme replaces all three colours and saves them', () => {
+  it('selectTheme replaces all three colors and saves them', () => {
     const theme = createTheme()
     theme.selectTheme(2)
 
@@ -209,7 +209,7 @@ describe('useTheme', () => {
     expect(reloaded.editorAccent.value).toBe('#C9A96E')
   })
 
-  it('S-010: loads the legacy theme index when the three colour keys are absent', () => {
+  it('S-010: loads the legacy theme index when the three color keys are absent', () => {
     storedPrefs({ 'rite-theme': '3' })
     const theme = createTheme()
     theme.loadPrefs()
@@ -233,9 +233,9 @@ describe('useTheme', () => {
     expect(theme.matchedPreset.value).toBe(-1)
   })
 
-  it('S-012: falls back to the first preset when the stored colours are corrupt, unreadable or repeat', () => {
+  it('S-012: falls back to the first preset when the stored colors are corrupt, unreadable or repeat', () => {
     const cases = [
-      { 'rite-bg': 'not-a-colour', 'rite-text': THEMES[1].text, 'rite-accent': THEMES[1].accent },
+      { 'rite-bg': 'not-a-color', 'rite-text': THEMES[1].text, 'rite-accent': THEMES[1].accent },
       { 'rite-bg': THEMES[0].bg, 'rite-text': THEMES[0].bg, 'rite-accent': THEMES[0].accent },
       { 'rite-bg': '', 'rite-text': '', 'rite-accent': '' },
     ]
