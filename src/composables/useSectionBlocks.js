@@ -81,9 +81,10 @@ export function groupBlocks(blocks) {
 
 /// Section-aware first-line indent for the paragraph block at `index` in a flat
 /// block list: 0 for the first paragraph of a section (preceded by a
-/// section-title) or right after an empty paragraph (scene break / spacer),
-/// 0.5 otherwise. Headings are gone, so there is no heading special-case; page
-/// breaks no longer influence indent — section-first + after-empty fully
+/// section-title), for an empty paragraph itself (a spacer indents nothing) and
+/// right after an empty paragraph (scene break / spacer); 0.5 otherwise.
+/// Headings are gone, so there is no heading special-case; page breaks no
+/// longer influence indent — section-first + empty-self + after-empty fully
 /// determines it. Shared by the editor (render + sync) and the manuscript so
 /// both views apply the identical rule.
 export function computeFirstLineIndent(blocks, index) {
@@ -91,5 +92,9 @@ export function computeFirstLineIndent(blocks, index) {
   if (!prev) return 0
   if (prev.kind === 'section-title') return 0
   if (prev.kind === 'paragraph' && isEmptyParagraph(prev.paragraph)) return 0
+  // An empty paragraph indents nothing itself (it is the spacer that makes its
+  // next text paragraph flush); with no content there is no first line to indent.
+  const self = blocks[index]?.paragraph
+  if (self && isEmptyParagraph(self)) return 0
   return 0.5
 }

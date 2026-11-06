@@ -390,12 +390,13 @@ function onKeydown(e) {
 
     document.execCommand('defaultParagraphSeparator', false, 'div')
     document.execCommand('insertParagraph', false, null)
-// The browser copies `text-indent` and `data-para-id` from the split paragraph.
-// Reset the indent (the block list supplies the automatic one) and give the new
-// paragraph a fresh id plus its section id; duplicate or missing ids make the undo
-// delta ambiguous.
+// Return always produces an automatic paragraph: strip what the browser copied
+// from the split partner (inline indent, no-indent class, marker state) and
+// mark automatic. The fresh id plus its section id keep the undo-delta keys
+// unambiguous. The readback then stamps the automatic rule.
     const sectionId = getSectionIdAtCursor()
     const sel2 = window.getSelection()
+    let createdPara = null
     if (sel2.rangeCount) {
       let node = sel2.anchorNode
       let para = node.nodeType === 3 ? node.parentElement : node
@@ -403,12 +404,28 @@ function onKeydown(e) {
         para = para.parentElement
       }
       if (para) {
-        para.style.textIndent = '0px'
+        para.style.textIndent = ''
+        para.classList.remove('no-indent')
+        para.dataset.autoIndent = 'true'
         para.dataset.paraId = generateParagraphId()
         if (sectionId) para.dataset.sectionId = sectionId
+        createdPara = para
       }
     }
     syncFromDOM()
+// The readback stamp reads an empty paragraph as flush (it is the spacer rule),
+// so a Return that split at a paragraph end shows 0px until typing fills it.
+// Return's visible contract is the continuation indent (0.5 inch after a text
+// paragraph), and the marker above keeps the model automatic either way.
+    if (createdPara && !createdPara.textContent?.trim()) {
+      let prevBlock = createdPara.previousElementSibling
+      while (prevBlock && isNonContentBlock(prevBlock)) {
+        prevBlock = prevBlock.previousElementSibling
+      }
+      if (prevBlock && prevBlock.classList?.contains('paragraph') && prevBlock.textContent?.trim()) {
+        createdPara.style.textIndent = `${Math.round(0.5 * 96)}px`
+      }
+    }
     return
   }
 
