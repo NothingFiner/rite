@@ -1,15 +1,11 @@
 <template>
   <!--
-    Side-by-side diff of a past version (left = old) against the current live
-    document (right = new). A section renders a title row, then one row per
-    paragraph, so the two columns stay aligned row by row. Unchanged content
-    appears plainly in both columns. Removed (in the past, gone now) appears on
-    the left tinted red. Added (new since that version) appears on the right
-    tinted green. A modified paragraph renders word-level spans: deleted words
-    struck through on the left, inserted words highlighted on the right.
-    Run-level styling (bold/italic) is not rendered in modified paragraphs.
-    The diff is about text changes, and mixing per-run styling with per-word
-    spans muddies both.
+    Side-by-side diff of a past version (left) against the live document
+    (right). A section renders a title row, then one row per paragraph. That
+    row split keeps the two columns aligned as the page scrolls, and gives the
+    change navigation a row to mark. Run-level styling (bold/italic) is not
+    rendered in modified paragraphs, because per-run styling and per-word spans
+    competing in one cell muddies both.
   -->
   <div class="diff-view">
     <div class="diff-header">
@@ -114,8 +110,8 @@ function sideTint(sd, side) {
 }
 
 /// The paragraph diffs of one section, normalised so every row carries a
-/// `type` the cell renderer understands. A whole added or removed section
-/// reports all of its paragraphs as added or removed.
+/// `type` the cell renderer understands. An added or removed section carries
+/// no `paragraphDiffs`, so its rows come from `section.paragraphs` instead.
 function paragraphRows(sd) {
   if (sd.type === 'modified') return sd.paragraphDiffs || []
   const type = sd.type === 'unchanged' ? 'unchanged' : sd.type

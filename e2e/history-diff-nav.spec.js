@@ -63,7 +63,7 @@ const DOC = {
 
 const HISTORY_ENTRIES = [{ timestamp: '2026-11-03T21-05-00-000', kind: 'delta', label: 'Autosave' }]
 
-/// Three paragraph edits, so the diff holds the three stops S-013 expects.
+/// S-013 asserts a count of three, so the fixture holds exactly three stops.
 function threeChanges() {
   return [
     {
@@ -103,8 +103,8 @@ function twoChangesFarApart() {
   ]
 }
 
-/// Opens one version's diff. The version list needs a sidecar path, so the test
-/// opens a document before it enters the History view.
+/// Opens one version's diff. `.history-row` and the diff button need
+/// `store.lastPath` set, and `open_document` is the command that sets it.
 async function openVersionDiff(page, diffBlocks) {
   await installTauriIpc(page, { doc: DOC, openPaths: ['/tmp/novel.rite'] })
   await page.addInitScript(
@@ -170,8 +170,9 @@ test('S-015: Previous is disabled on the first change and pressing it changes no
   await expect(previous).toBeDisabled()
   await expect(position(page)).toHaveText('Change 1 of 3')
 
-  // Playwright waits for a disabled button to become enabled, so force the
-  // click. The assertion then covers the state that follows the activation.
+  // A disabled button cannot be activated by a real click, so force it. Without
+  // the force, Playwright's actionability wait turns this into a timeout
+  // instead of an assertion about what the press did.
   await previous.click({ force: true })
 
   await expect(position(page)).toHaveText('Change 1 of 3')
