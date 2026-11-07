@@ -1,5 +1,5 @@
 <template>
-  <div class="notes-view">
+  <div class="notes-view" :style="notesStyles">
     <div class="notes-list">
       <!-- Rows come from `noteEntries(store.doc)` in `useNotes.js`, which owns
            the order. A click only selects a row and emits `select`. Navigation
@@ -61,11 +61,14 @@
           @click="startEditing"
         >✎</button>
       </div>
+      <!-- :value plus @input, because the handler records the draft on the
+           noteDraftUndo stack, whose order v-model does not own (S-026). -->
       <textarea
         v-if="isEditing"
-        v-model="draftText"
+        :value="draftText"
         class="note-source"
         aria-label="Note draft"
+        @input="onDraftInput"
       ></textarea>
       <div
         v-else-if="noteText.trim()"
@@ -91,7 +94,7 @@
 
 <script setup>
 import { computed, onBeforeUnmount, ref } from 'vue'
-import { noteEntries, readNote } from '../composables/useNotes.js'
+import { noteDraftUndo, noteEntries, readNote } from '../composables/useNotes.js'
 import { renderMarkdown } from '../composables/useMarkdown.js'
 
 const props = defineProps({
@@ -133,6 +136,21 @@ const selectedRecap = computed(() => {
   return recapText.trim() ? recapText : ''
 })
 
+// Paints the surface from the same palette the editor sheet binds (S-022).
+// The scoped vars carry the colours into the CSS below, and the chrome vars
+// stay untouched. Without a theme object the style object is bare, so the
+// scoped styles decide everything.
+const notesStyles = computed(() => {
+  const theme = props.theme
+  if (!theme || typeof theme !== 'object') return {}
+  return {
+    backgroundColor: theme.bg,
+    color: theme.text,
+    '--note-text': theme.text,
+    '--note-accent': theme.accent,
+  }
+})
+
 // One draft at a time, owned by the entry selected when it opened. Reading
 // mode is the default. The pencil starts the session at the committed text.
 const isEditing = ref(false)
@@ -140,7 +158,21 @@ const draftText = ref('')
 
 function startEditing() {
   draftText.value = readNote(props.store.notes, selectedEntryId.value)
+  // Seeding runs before begin, so the session opens on the text the writer
+  // starts with.
+  noteDraftUndo.begin(
+    () => draftText.value,
+    (value) => { draftText.value = value },
+  )
   isEditing.value = true
+}
+
+// The draft moves first and the controller records after it, so the stack top
+// follows the live text. Programmatic assignments never pass here, so undo
+// and redo write the draft without pushing a step.
+function onDraftInput(event) {
+  draftText.value = event.target.value
+  noteDraftUndo.record(draftText.value)
 }
 
 // Writes the draft for the entry it was opened on, through the store. A draft
@@ -157,6 +189,7 @@ function selectEntry(entryId) {
   // that entry before the selection moves (SPEC.md 5.17).
   commitDirtyDraft()
   isEditing.value = false
+  noteDraftUndo.end()
   selectedEntryId.value = entryId
   emit('select', entryId)
 }
@@ -167,11 +200,13 @@ function selectEntry(entryId) {
 function saveDraft() {
   commitDirtyDraft()
   isEditing.value = false
+  noteDraftUndo.end()
 }
 
 // The reset lifts the committed text over the draft and keeps the session
 // open, per SPEC.md 5.17. Nothing writes to the record, because the stored
-// note did not change.
+// note did not change. The assignment skips record (see onDraftInput), so the
+// session keeps its history.
 function resetDraft() {
   draftText.value = readNote(props.store.notes, selectedEntryId.value)
 }
@@ -188,6 +223,9 @@ function insertRecap() {
   draftText.value = existing
     ? `${existing}\n\n${selectedRecap.value}`
     : selectedRecap.value
+  // The textarea fires nothing for this assignment, so the recap records
+  // here to stay undoable.
+  noteDraftUndo.record(draftText.value)
 }
 
 // Emits the selected row's sectionId, deferring the view switch and the
@@ -197,8 +235,12 @@ function jumpToSection() {
 }
 
 // The view closing is not a discard: a dirty draft lands on the same entry,
-// per SPEC.md 5.17.
-onBeforeUnmount(commitDirtyDraft)
+// per SPEC.md 5.17. The undo session closes with it, or the app-wide
+// singleton would eat the manuscript's next menu undo.
+onBeforeUnmount(() => {
+  commitDirtyDraft()
+  noteDraftUndo.end()
+})
 </script>
 
 <style scoped>
@@ -230,7 +272,7 @@ onBeforeUnmount(commitDirtyDraft)
   font-size: 13px;
   font-weight: 600;
   text-align: left;
-  color: var(--text-primary);
+  color: var(--note-text, var(--text-primary));
   background: none;
   border: none;
   border-radius: var(--radius-sm);
@@ -244,6 +286,12 @@ onBeforeUnmount(commitDirtyDraft)
 .notes-entry:hover,
 .notes-entry.selected {
   background: var(--hover-bg);
+}
+
+/* The selected row paints with the theme accent (S-022). The fallback keeps
+   a themeless mount on the chrome accent. */
+.notes-entry.selected {
+  color: var(--note-accent, var(--accent));
 }
 
 .note-pane {
@@ -323,7 +371,7 @@ onBeforeUnmount(commitDirtyDraft)
 .note-rendered {
   font-size: 14px;
   line-height: 1.55;
-  color: var(--text-primary);
+  color: var(--note-text, var(--text-primary));
 }
 
 .note-empty {

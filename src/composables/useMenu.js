@@ -43,8 +43,15 @@ export function createMenuActions(deps) {
     export_markdown: deps.exports.exportMarkdown,
     export_docx: deps.exports.exportDocx,
     export_epub: deps.exports.exportEpub,
-    undo: deps.store.undo,
-    redo: deps.store.redo,
+    // An open note draft session consumes undo/redo first (S-026), so the
+    // manuscript history never moves under a live draft. The controller is
+    // noteDraftUndo in useNotes.js.
+    undo: () => {
+      if (!deps.notesDraft?.tryUndo()) deps.store.undo()
+    },
+    redo: () => {
+      if (!deps.notesDraft?.tryRedo()) deps.store.redo()
+    },
     // The word menu's `thesaurus` item rides the same `menu` window event, but
     // the deps may lack it (the unit tests build deps without a thesaurus), so
     // this entry stays a lazy arrow: `deps.thesaurus` is only touched when the

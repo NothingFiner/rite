@@ -105,9 +105,13 @@
           @back="onSetMode('editor')"
           @toggle-versions="onToggleVersions"
         />
+        <!-- Notes is a working view: its surface paints from the same
+             currentTheme the editor sheet binds, not the glass chrome
+             (S-022). -->
         <NotesView
           v-else-if="viewMode === 'notes'"
           :store="store"
+          :theme="theme.currentTheme"
           :initial-entry-id="notesEntryId"
           :origin-view="notesOriginView"
           @jump="onNotesJump"
@@ -209,6 +213,7 @@ import { useSectionFormat } from './composables/useSectionFormat.js'
 import { useFocusMode } from './composables/useFocusMode.js'
 import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts.js'
 import { createMenuActions, useMenuActions } from './composables/useMenu.js'
+import { noteDraftUndo } from './composables/useNotes.js'
 import { useThesaurus } from './composables/useThesaurus.js'
 import { useNewDocument } from './composables/useNewDocument.js'
 import { useVersionHistory } from './composables/useVersionHistory.js'
@@ -328,6 +333,8 @@ const menuActions = createMenuActions({
   exports: exportComposable,
   newDocument,
   thesaurus,
+  // Undo/redo consult the note draft before the store (useNotes.js, S-026).
+  notesDraft: noteDraftUndo,
 })
 useMenuActions(menuActions)
 const format = reactive(useFormat(editorRef, store.markModified.bind(store)))

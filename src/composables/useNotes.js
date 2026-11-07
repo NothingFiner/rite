@@ -6,7 +6,8 @@
 // NotesView.vue edits these values. This module owns the pure translations.
 // They are the ordered entry list, the read/write helpers, the assistant
 // context, and the move of a deleted section's note into the single orphaned
-// draft.
+// draft. It also hosts the draft undo session the macOS menu routes through
+// (S-026).
 
 export function emptyNotes() {
   return { overview: '', sections: {}, orphaned: '' }
@@ -112,3 +113,71 @@ export function orphanSectionNote(notes, section) {
     : `${heading}\n\n${text}`
   return record
 }
+
+// --- Note draft undo (S-026) ---
+//
+// The macOS menu owns Undo and Redo. While a note draft session is open, the
+// menu action must unwind the draft text, and the manuscript history must not
+// move. useMenu.js consults tryUndo/tryRedo first and runs the document store
+// only when both return false.
+//
+// The undo stack holds every state the session saw, seed included, so its top
+// reads as the live draft text. The stack has no cap, because drafts are small
+// and it dies with the session.
+
+export function createNoteDraftUndo() {
+  let session = null
+
+  // Opens the one session. A begin on an open session changes nothing. The
+  // seed starts the undo stack, so an undo can return to the text the
+  // session opened on.
+  function begin(getText, setText) {
+    if (session) return
+    session = { getText, setText, undo: [], redo: [] }
+    session.undo.push(getText())
+  }
+
+  // Closes the session, so menu undo/redo reach the manuscript again.
+  function end() {
+    session = null
+  }
+
+  // A repeated text is no typing and no step. Any real edit kills the redo
+  // branch first, because an edit past an undone state has no redo left.
+  function record(text) {
+    if (!session) return
+    if (session.undo[session.undo.length - 1] === text) return
+    session.redo.length = 0
+    session.undo.push(text)
+  }
+
+  // Pops the live text onto redo and restores the state under it. False means
+  // no session, the signal useMenu.js needs to run the document store. Even
+  // with no step left, a session consumes the action. A fall-through would
+  // undo the manuscript under a visible draft.
+  function tryUndo() {
+    if (!session) return false
+    if (session.undo.length < 2) return true
+    session.redo.push(session.undo.pop())
+    session.setText(session.undo[session.undo.length - 1])
+    return true
+  }
+
+  // Moves the newest undone state back under the live text. An empty redo
+  // stack consumes the action too, since there is no step to replay.
+  function tryRedo() {
+    if (!session) return false
+    const value = session.redo.pop()
+    if (value !== undefined) {
+      session.undo.push(value)
+      session.setText(value)
+    }
+    return true
+  }
+
+  return { begin, end, record, tryUndo, tryRedo }
+}
+
+// The one app-wide session. App.vue passes it to the menu deps, and
+// NotesView.vue opens and closes it with each draft edit.
+export const noteDraftUndo = createNoteDraftUndo()
