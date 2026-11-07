@@ -35,6 +35,7 @@ sentence ID it contradicts.
 | B-001 | Notes scope sends the manuscript instead of the notes | open | assistant / notes |
 | B-002 | Deleting a section drops its note; the orphaned draft stays empty | open | notes / store |
 | B-003 | An unnamed chapter had a blank row in the Notes list | fixed (6b20319) | notes / titles |
+| B-004 | A generated summary is shown beside the note with no label saying which is which | open | notes / vocabulary |
 
 ---
 
@@ -130,3 +131,33 @@ surface: `"Chapter 3: Ash"`, `"Chapter 3"` for a subtitle-less chapter,
 `notesToText`, and (via an explicit argument) `orphanSectionNote`.
 
 **Tests.** `useNotes.test.js` (S-001, S-009, S-007) and `NotesView.spec.js` (S-001).
+
+---
+
+## B-004 — A generated summary is shown beside the note with no label saying which is which
+
+**Status:** open — needs a spec (breaks no sentence; `VOCABULARY.md` rule 1).
+**Layer:** unit (`src/components/NotesView.vue`).
+
+**Symptom.** Open a section's note in the Notes view and, when a summary exists
+for that section, a second block of prose appears under the note — the generated
+one. Nothing on screen says which is the writer's and which is the model's. A
+writer who has not used the assistant will reasonably read the generated text as
+their own note, and one who has will not know whether editing it does anything
+(it does not: the summary block is read-only).
+
+**Root cause.** `NotesView.vue:81` renders `selectedRecap` in a `.note-recap`
+block inside the note pane. The prop is `recaps` and the value comes from
+`useSummaries`; no label, heading, icon or attribution appears anywhere in the
+markup. The CSS class names are the only thing that distinguishes it.
+
+**Why the tests missed it.** The specs assert the recap *appears* (S-006) and
+that "Insert into note" copies it (S-024). None asserts what it is *called*, and
+"a block of prose appears" is satisfied by a block with no label.
+
+**Fix direction.** Label it as what it is: the canonical word is **summary**
+(`VOCABULARY.md`), so the block reads something like "AI summary" or
+"Generated summary" with the section's stale state if any. The note pane's own
+heading is the writer's note. Prefer a real heading element so the distinction is
+carried to a screen reader, not only to the eye (5.7's rule: naming matters once
+reachability is solved).
