@@ -22,10 +22,19 @@
     <div class="note-pane">
       <div class="note-head">
         <div class="note-title">{{ selectedTitle }}</div>
-        <!-- The pencil stays last in .note-head. The spot after .note-title is
-             reserved for the section jump (SPEC.md 5.17), and .note-title +
-             .note-jump stays adjacent. While editing the pencil gives way to
-             check and reset, which reading mode never shows. -->
+        <!-- The jump keeps the slot after .note-title, unbroken by elements
+             so the sibling selector holds (SPEC.md 5.17). Only section-backed
+             rows carry a sectionId, so overview and orphaned show none. -->
+        <button
+          v-if="selectedSectionId"
+          type="button"
+          class="note-jump"
+          title="Go to section"
+          aria-label="Go to section"
+          @click="jumpToSection"
+        >Go to section</button>
+        <!-- The pencil stays last in .note-head. While editing the pencil
+             gives way to check and reset, which reading mode never shows. -->
         <template v-if="isEditing">
           <button
             type="button"
@@ -64,6 +73,18 @@
         v-html="renderMarkdown(noteText)"
       ></div>
       <div v-else class="note-empty">No note yet.</div>
+      <!-- The recap is generated context beside the writer's words, so it
+           follows the note body and stays read-only prose. -->
+      <div v-if="selectedRecap" class="note-recap">
+        <p class="note-recap-text">{{ selectedRecap }}</p>
+        <button
+          type="button"
+          class="note-insert-recap"
+          title="Insert into note"
+          aria-label="Insert into note"
+          @click="insertRecap"
+        >Insert into note</button>
+      </div>
     </div>
   </div>
 </template>
@@ -98,10 +119,19 @@ const entries = computed(() => noteEntries(props.store.doc))
 
 // The pane shows the note of the selected entry in reading mode: rendered
 // markdown when there is text, the empty state otherwise (SPEC.md 5.17).
-const selectedTitle = computed(
-  () => entries.value.find((entry) => entry.id === selectedEntryId.value)?.title ?? ''
+const selectedEntry = computed(() =>
+  entries.value.find((entry) => entry.id === selectedEntryId.value)
 )
+const selectedTitle = computed(() => selectedEntry.value?.title ?? '')
+const selectedSectionId = computed(() => selectedEntry.value?.sectionId ?? '')
 const noteText = computed(() => readNote(props.store.notes, selectedEntryId.value))
+
+// Whitespace-only text counts as no recap, so a blank stored recap never
+// renders this block.
+const selectedRecap = computed(() => {
+  const recapText = props.recaps?.[selectedSectionId.value] ?? ''
+  return recapText.trim() ? recapText : ''
+})
 
 // One draft at a time, owned by the entry selected when it opened. Reading
 // mode is the default. The pencil starts the session at the committed text.
@@ -144,6 +174,26 @@ function saveDraft() {
 // note did not change.
 function resetDraft() {
   draftText.value = readNote(props.store.notes, selectedEntryId.value)
+}
+
+// Inserting appends the recap to the draft without committing; the writes
+// happen at the check, an entry change or the view closing (SPEC.md 5.17).
+// A closed session seeds the committed text first, so the writer's words
+// precede the recap. The trimEnd keeps exactly one blank line between them,
+// the same join `orphanSectionNote` uses in useNotes.js.
+function insertRecap() {
+  if (!selectedRecap.value) return
+  if (!isEditing.value) startEditing()
+  const existing = draftText.value.trimEnd()
+  draftText.value = existing
+    ? `${existing}\n\n${selectedRecap.value}`
+    : selectedRecap.value
+}
+
+// The pane jumps back to the section the selected note is about (SPEC.md
+// 5.17). Only section-backed rows carry a sectionId, so nothing else emits.
+function jumpToSection() {
+  if (selectedSectionId.value) emit('jump', selectedSectionId.value)
 }
 
 // The view closing is not a discard: a dirty draft lands on the same entry,
@@ -217,9 +267,11 @@ onBeforeUnmount(commitDirtyDraft)
 
 .note-edit,
 .note-save,
-.note-reset {
-  /* Glyph size stands off the row font, so a head control is a quiet
-     affordance. */
+.note-reset,
+.note-jump,
+.note-insert-recap {
+  /* Quiet small controls, shared by the head glyphs and the jump and recap
+     labels. Font size stands off the row font so they stay affordances. */
   flex: none;
   font: inherit;
   font-size: 12px;
@@ -235,7 +287,9 @@ onBeforeUnmount(commitDirtyDraft)
 
 .note-edit:hover,
 .note-save:hover,
-.note-reset:hover {
+.note-reset:hover,
+.note-jump:hover,
+.note-insert-recap:hover {
   color: var(--text-primary);
   background: var(--hover-bg);
 }
@@ -275,5 +329,28 @@ onBeforeUnmount(commitDirtyDraft)
 .note-empty {
   font-size: 13px;
   color: var(--text-secondary);
+}
+
+.note-recap {
+  /* Generated recap prose beside the writer's note. The glass surface
+     marks it as context, not writer text; read-only means no textarea. */
+  margin-top: 12px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  background: var(--glass-bg);
+  border: 1px solid var(--bg-glass-border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+
+/* The paragraph carries no default margin, because the block padding sets
+   the rhythm already. */
+.note-recap-text {
+  margin: 0;
+}
+
+.note-recap .note-insert-recap {
+  margin-top: 8px;
 }
 </style>
