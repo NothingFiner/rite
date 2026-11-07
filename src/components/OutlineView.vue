@@ -20,7 +20,10 @@
       @click="$emit('jump', row.sectionId)"
     >
       <div class="outline-title">{{ row.title }}</div>
+      <!-- Model output is labelled where the UI shows it (the rule lives in `VOCABULARY.md`). -->
+      <div v-if="row.hasSummary" class="outline-summary-label">Summary</div>
       <div class="outline-summary">{{ row.summary }}</div>
+      <div v-if="row.stale" class="outline-stale">Stale</div>
       <div v-if="!row.hasSummary" class="outline-no-summary">No summary yet</div>
     </button>
     <!-- Refreshing a stale summary is a generation call too, so the same gate applies. -->
@@ -57,11 +60,11 @@ defineEmits(['jump'])
 const rows = computed(() => outlineRows(props.store.doc, props.summaries?.summaryEntries ?? []))
 
 // The generation gate (5.20): a configured model, never the API key. The rule
-// lives in `llmConfigured` (useLlmSettings.js); the settings prop is the
+// lives in `llmConfigured` (useLlmSettings.js). The settings prop is the
 // composable object, so the predicate reads its `settings` member.
 const gateOpen = computed(() => llmConfigured(props.settings?.settings))
 
-// An empty summary store is "nothing generated yet" (5.20 trap 2) — the normal
+// An empty summary store is "nothing generated yet" (5.20 trap 2), the normal
 // first-run state, not an error.
 const awaitingSummaries = computed(() => (props.summaries?.summaryEntries ?? []).length === 0)
 </script>

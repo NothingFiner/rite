@@ -79,6 +79,7 @@
       <!-- The recap is generated context beside the writer's words, so it
            follows the note body and stays read-only prose. -->
       <div v-if="selectedRecap" class="note-recap">
+        <p class="note-recap-label">Summary</p>
         <p class="note-recap-text">{{ selectedRecap }}</p>
         <button
           type="button"
@@ -390,6 +391,12 @@ onBeforeUnmount(() => {
   border: 1px solid var(--bg-glass-border);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
+}
+
+.note-recap-label {
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 /* The paragraph carries no default margin, because the block padding sets
