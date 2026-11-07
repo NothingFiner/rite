@@ -158,10 +158,21 @@ def postmortem(status):
 
 # ---------- progress / token accounting ----------
 
-# goose records per-request usage in its session database. In the container HOME
-# is /cache/home and /cache is bind-mounted from the host, so the ledger
-# survives the run and can be read after it too.
-GOOSE_DB = Path(os.environ.get("HOME", "~")) / ".local/share/goose/sessions/sessions.db"
+# goose keeps its sessions and its per-request usage ledger in ONE SQLite file.
+# In the container HOME is /cache/home and /cache is bind-mounted from the host, so
+# the ledger survives the run and can be read after it too.
+#
+# Resolved exactly as goose resolves it ($XDG_DATA_HOME/goose, else
+# ~/.local/share/goose) so the watchdog reads the ledger this run is writing. Get
+# that wrong and the run either reports "tokens: n/a" or, worse, sums the host's
+# store while the run writes its own.
+def goose_session_db():
+    base = os.environ.get("XDG_DATA_HOME")
+    root = Path(base) if base else Path(os.environ.get("HOME", "~")) / ".local/share"
+    return root / "goose" / "sessions" / "sessions.db"
+
+
+GOOSE_DB = goose_session_db()
 
 
 def goose_tokens_used():
@@ -751,6 +762,11 @@ def covered_ids(tests):
 # (our timeout) so the caller can say why and keep its three-strike budget intact.
 WATCHDOG_RC = 125
 
+# How long to wait before the single retry of an iteration that lost the session
+# store's write lock. Long enough for a closing goose session to let go of it,
+# short enough that a store which stays busy is reported instead of hidden.
+LOCK_RETRY_WAIT_S = 20
+
 
 def run_goose(recipe, i, escalated, failures_file, models, timeout_s, attempt="",
               base_commit="", watch=None):
@@ -1201,18 +1217,31 @@ GOOSE_FATAL = [
      "the recipe could not be loaded"),
     ("env", r"(?i)command not found|: goose: not found",
      "the goose binary is not on PATH inside the image"),
+    # SQLite permits one writer per database, and goose writes every message and
+    # every usage row to the same store. A second goose process on the host — an
+    # interactive session left open, which is the normal state of a developer's
+    # machine — makes an iteration die mid-run with this, having saved nothing.
+    # No test and no model is involved, so it is not the agent's failure; it is
+    # worth one retry, because the other writer is often a session being closed.
+    ("locking", r"(?i)database is locked|database table is locked|SQLITE_BUSY",
+     "another goose process is writing goose's session database and SQLite allows one "
+     "writer (this run prints the store it writes at the start). Close the other goose "
+     "session, or give the run its own store — run-headless.sh already exports "
+     "XDG_DATA_HOME — then start it again"),
     ("model", r"(?i)model .{0,60}(not found|not available|does not exist)|unknown model",
      "the model id in .workflow/config.yaml is not available to the provider"),
 ]
 
 
 def goose_failure_reason(log_path, rc):
-    """Classify a failed goose run as ("env"|"model", reason), or (None, None).
+    """Classify a failed goose run as ("env"|"model"|"locking", reason), or (None, None).
 
     "env": the toolchain cannot run at all (no provider, bad key, missing recipe
     or binary). "model": a model id the account cannot serve — which is worth
     distinguishing, because the DEFAULT model being missing is fatal while the
-    STRONG one being missing only means escalation is unavailable.
+    STRONG one being missing only means escalation is unavailable. "locking": the
+    session store had another writer — fatal, but only after one retry, because
+    the other writer is usually a goose session that is closing.
 
     Returns (None, None) for rc == 0 and for failures worth retrying (a timeout,
     a crash mid-run), so the caller keeps its retry budget for those.
@@ -1414,6 +1443,25 @@ def main():
     if tokens_total is not None:
         log(f"tokens so far this session: {fmt_tokens(tokens_total)}")
 
+    # Which store this run writes, and whether a second goose process already holds
+    # it. Losing that lock mid-iteration is the one failure with no useful retry
+    # story, so the store path is on the console before the first goose call.
+    log(f"goose store: {GOOSE_DB}")
+    if GOOSE_DB.exists():
+        import sqlite3
+
+        try:
+            probe = sqlite3.connect(str(GOOSE_DB), timeout=2)
+            try:
+                probe.execute("BEGIN IMMEDIATE")   # the lock goose needs, taken and dropped
+                probe.execute("ROLLBACK")
+            finally:
+                probe.close()
+        except sqlite3.OperationalError as e:
+            log(f"WARNING: the store is locked right now ({e}). Another goose session is "
+                f"writing it; close that before this run needs to save, or give this run "
+                f"its own XDG_DATA_HOME")
+
     if args.baseline_only:
         finish("ok", f"baseline is usable: {len(base_ids)} tests, "
                      f"{len(base['failing'])} failing for the right reason", 0,
@@ -1499,6 +1547,24 @@ def main():
             log_path = goose_log_path(i, "-fallback")
             rc = run_goose(args.recipe, i, escalated, failures_file, models, goose_to,
                            attempt="-fallback", base_commit=start_sha, watch=watch)
+        if kind == "locking":
+            # The store had a second writer while this iteration saved its work, so
+            # the iteration ended without a verdict — not a failed fix, a lost one.
+            # Wait for the other writer and repeat the same iteration once, with a
+            # fresh watchdog budget because the tokens the dead attempt spent were
+            # not spent on code. A second lock means the other writer is not going
+            # away; then stop and name it rather than spend the retry budget on it.
+            log(f"goose could not write its session store: {fatal}")
+            log(f"retrying iteration {i} once in {LOCK_RETRY_WAIT_S} s")
+            time.sleep(LOCK_RETRY_WAIT_S)
+            watch["start_tokens"] = goose_tokens_used()
+            log_path = goose_log_path(i, "-locked")
+            rc = run_goose(args.recipe, i, escalated, failures_file, models, goose_to,
+                           attempt="-locked", base_commit=start_sha, watch=watch)
+            kind, fatal = goose_failure_reason(log_path, rc)
+            if kind == "locking":
+                log("the session store is still locked; stopping instead of "
+                    "spending three iterations to learn the same thing")
         goose_ok = rc == 0
         if rc == WATCHDOG_RC:
             notes.append(

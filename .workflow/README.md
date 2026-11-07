@@ -166,6 +166,34 @@ the goose log, recognises "No provider configured" (and a bad key, a bad model
 id, a missing recipe) and stops on the first iteration with that reason instead
 of retrying three times, escalating to the strong model, and blaming the agent.
 
+## One store, one writer (why the native run gets its own)
+goose keeps its sessions and its `usage_ledger` in ONE SQLite file:
+`$XDG_DATA_HOME/goose/sessions/sessions.db`, or
+`~/.local/share/goose/sessions/sessions.db` when that variable is unset. SQLite
+allows one writer, and `--no-session` does not opt out — the headless goose still
+holds the file open and writes every message and every usage row to it.
+
+On a developer's machine that is the same file every interactive goose session
+writes. When the loop lost the lock, the iteration died saving its own message:
+
+```
+Error: error returned from database: (code: 5) database is locked
+```
+
+No test had run, no model was at fault, and the iteration's tokens were gone. The
+native runner now exports `XDG_DATA_HOME=$CACHE/goose-data`, so the only writer of that
+store is the run. Only the store moves: `~/.config/goose` (provider, extensions,
+the mempalace command's absolute path) and the login keychain stay where they are.
+`WORKFLOW_GOOSE_DATA` overrides the location. The container already has a private
+`HOME`, so it needs no equivalent.
+
+The lock is also its own failure class, not a bad iteration: the orchestrator
+retries that iteration once after 20 s with a fresh watchdog budget, and if the
+store is still locked it stops there with the remedy in the message — rather than
+spending three iterations to end with "goose failed 3 iterations in a row", which
+blamed the agent. Every run prints the store it writes and takes the write lock
+once at the start, so a second writer is named before the first goose call.
+
 ## When a run stops: resume it instead of rebuilding
 A run that ends in `needs_human` keeps its work tree, and the launcher now also
 preserves the work on `origin` as `wip/<branch>` and prints the exact command to
@@ -257,11 +285,14 @@ Every iteration logs one line and appends a JSON line to
 [orchestrator 13:03:11] progress: 12/31 passing, 19 failing (+4 vs previous) | 6.4 min | 212k tokens this iteration | 4.81M total
 ```
 
-Token counts come from goose's own `usage_ledger` table in
-`~/.local/share/goose/sessions/sessions.db`. In the container `HOME` is
-`/cache/home` and `/cache` is bind-mounted from the host, so the ledger survives
-the run and the totals stay cumulative across runs. If the ledger is missing or
-a goose build has no usage table, the line says `n/a` rather than failing.
+Token counts come from goose's own `usage_ledger` table in the store the run
+writes: `$XDG_DATA_HOME/goose/sessions/sessions.db`, or
+`~/.local/share/goose/sessions/sessions.db` when the variable is unset. In the
+container `HOME` is `/cache/home` and `/cache` is bind-mounted from the host, so
+the ledger survives the run and the totals stay cumulative across runs; the
+native runner keeps its own store under `$CACHE/goose-data` for the same reason. If the
+ledger is missing or a goose build has no usage table, the line says `n/a` rather
+than failing.
 
 ## Host preconditions that will bite you
 - **npm 11 or newer.** The lockfile here is only installable by npm >= 11: npm 10

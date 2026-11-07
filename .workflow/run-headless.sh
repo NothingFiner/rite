@@ -348,6 +348,18 @@ if [ "$RUNNER" = "native" ]; then
   (
     cd "$WORK/repo" || exit 1
     export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$CACHE/target}"
+    # goose keeps sessions and the usage ledger in ONE SQLite file under
+    # $XDG_DATA_HOME/goose. Inheriting the host HOME means sharing that file with
+    # every interactive goose session the developer has open, and SQLite has one
+    # writer: a concurrent session makes an iteration die while saving its own
+    # message ("database is locked"), which no test and no model can repair and
+    # which costs an iteration's tokens for nothing. Give the run its own store.
+    # Only the store moves — ~/.config/goose (provider, extensions) and the macOS
+    # keychain stay where goose and the operator expect them.
+    # WORKFLOW_GOOSE_DATA overrides the location; the container already has a
+    # private HOME, so this is the native runner's equivalent.
+    export XDG_DATA_HOME="${WORKFLOW_GOOSE_DATA:-$CACHE/goose-data}"
+    mkdir -p "$XDG_DATA_HOME/goose/sessions"
     python3 .workflow/orchestrator.py --config .workflow/config.yaml "$@"
   )
   RC=$?
