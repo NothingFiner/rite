@@ -90,6 +90,12 @@ dead code.
 
 - **Heading levels**: chapter 1, section 2, in both the editor and the manuscript
   markup.
+- **Heading attribute order**: `role="heading"` then `aria-level` sit immediately
+  after the `class` attribute, before the `data-*` attributes and
+  `contenteditable`. The reconciler's byte-identity tests pin this exact order.
+- **Hidden manuscript titles**: a hidden section's manuscript title
+  (`p.ms-para.section-hidden`) keeps its current markup and gains no heading
+  attributes, because it is not rendered as a visible title.
 - **Skip link**: one, "Skip to manuscript", first in the tab order, hidden until
   focused, moving focus to the editor sheet.
 - **Landmarks**: `role` attributes on the four existing containers, with a name on

@@ -46,11 +46,11 @@ describe('buildEditorHTML', () => {
 
     // Chapter title: locked prefix span + editable subtitle span, contenteditable
     // false (not fresh). The derived prefix is the injected formatChapter(1).
-    expect(html).toContain('<div class="section-title chapter" data-section-id="s1" data-section-type="chapter" contenteditable="false">')
+    expect(html).toContain('<div class="section-title chapter" role="heading" aria-level="1" data-section-id="s1" data-section-type="chapter" contenteditable="false">')
     expect(html).toContain('<span class="chapter-prefix" contenteditable="false">Ch1: </span>')
     expect(html).toContain('<span class="section-subtitle">The Reveal</span>')
     // Section title: a single editable title-text span, no prefix, no chapter class.
-    expect(html).toContain('<div class="section-title" data-section-id="s2" data-section-type="section" contenteditable="false"><span class="section-title-text">Opening</span></div>')
+    expect(html).toContain('<div class="section-title" role="heading" aria-level="2" data-section-id="s2" data-section-type="section" contenteditable="false"><span class="section-title-text">Opening</span></div>')
     // Paragraphs carry their para id + section id. p1 is the first paragraph of
     // its section (indent 0) so it gets the no-indent class.
     expect(html).toContain('class="paragraph no-indent" data-para-id="p1" data-section-id="s1"')

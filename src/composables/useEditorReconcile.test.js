@@ -249,7 +249,7 @@ describe('renderBlockHTML', () => {
     const block = { kind: 'section-title', sectionId: 's1', sectionType: 'chapter', title: 'The Reveal', chapterIndex: 1 }
     const html = renderBlockHTML(block, { freshSectionId: null, formatChapter: fmt })
     expect(html).toBe(
-      '<div class="section-title chapter" data-section-id="s1" data-section-type="chapter" contenteditable="false">'
+      '<div class="section-title chapter" role="heading" aria-level="1" data-section-id="s1" data-section-type="chapter" contenteditable="false">'
       + '<span class="chapter-prefix" contenteditable="false">Chapter 1: </span>'
       + '<span class="section-subtitle">The Reveal</span></div>'
     )
@@ -259,7 +259,7 @@ describe('renderBlockHTML', () => {
     const block = { kind: 'section-title', sectionId: 's2', sectionType: 'section', title: 'Opening', chapterIndex: null }
     const html = renderBlockHTML(block, { freshSectionId: null, formatChapter: fmt })
     expect(html).toBe(
-      '<div class="section-title" data-section-id="s2" data-section-type="section" contenteditable="false">'
+      '<div class="section-title" role="heading" aria-level="2" data-section-id="s2" data-section-type="section" contenteditable="false">'
       + '<span class="section-title-text">Opening</span></div>'
     )
   })
@@ -268,7 +268,7 @@ describe('renderBlockHTML', () => {
     const block = { kind: 'section-title', sectionId: 's3', sectionType: 'section', title: 'Epigram', chapterIndex: null, hidden: true }
     const html = renderBlockHTML(block, { freshSectionId: null, formatChapter: fmt })
     expect(html).toBe(
-      '<div class="section-title section-hidden" data-section-id="s3" data-section-type="section" data-section-hidden="true" contenteditable="false">'
+      '<div class="section-title section-hidden" role="heading" aria-level="2" data-section-id="s3" data-section-type="section" data-section-hidden="true" contenteditable="false">'
       + '<span class="section-title-text">Epigram</span></div>'
     )
   })
