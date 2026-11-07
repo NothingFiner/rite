@@ -12,14 +12,21 @@ parameters:
     input_type: string
     requirement: required
     description: "Files or directories this coder may edit"
+  - key: base_commit
+    input_type: string
+    requirement: optional
+    default: ""
+    description: "The commit this run started from, for comment_check.py --base"
 
 instructions: |
   Implement exactly one work unit.
 
   ## Coding standards (read these first)
   The project's coding standards are copied into `.workflow-out/standards/` before every
-  run. Read every `.md` file there before you edit anything, in filename order: the files
-  compose, and when two disagree the later one wins. They are part of the task, not advice —
+  run as `NN-<name>.md`, numbered in composition order. Read every `.md` file there before
+  you edit anything, in filename order: the files compose, and when two disagree the later
+  one wins. Those numbers are the filenames — do not look for the unnumbered names that
+  config.yaml lists. They are part of the task, not advice —
   naming, comment style, token use, error handling and test posture all follow them.
   If the directory is missing or empty, continue without them and say so in your summary.
 
@@ -28,6 +35,15 @@ instructions: |
   - Never touch tests, test configs, SPEC.md, .github or .workflow. Never skip or weaken tests.
   - Implement real behaviour. No hardcoded expected values, no special-casing test inputs.
   - Read the relevant tests first so names, signatures and error messages match what they assert.
+
+  ## Cost discipline
+  Every tool result is re-sent to the model on every later turn, so a long conversation is
+  quadratic. Measured failure on 5.17: one iteration spent 9.81 M tokens to clear 3 tests.
+  - Run at most the one spec file this unit fixes, and only if you need it. Never run the
+    whole suite and never `npx playwright test`: the orchestrator runs every layer after you.
+  - Do not run `git diff` on the working tree. `git diff --stat` is enough.
+  - For the comment rules, use the base commit you were given ({{ base_commit }}) with
+    `comment_check.py --base`. Do not derive it with git, and never guess it.
   - You may run the relevant layer command (see .workflow/config.yaml) to check your work.
   - Do not commit or push.
   - Finish with a short summary: files changed and anything you could not do.
@@ -41,11 +57,6 @@ extensions:
     name: developer
     timeout: 300
     bundled: true
-  - type: stdio
-    name: repomix
-    cmd: npx
-    args: ["-y", "repomix", "--mcp"]
-    timeout: 300
 settings:
   goose_provider: "ollama_cloud"
   temperature: 0.3

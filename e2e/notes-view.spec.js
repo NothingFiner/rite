@@ -224,7 +224,12 @@ test('S-017: the section jump returns to the note section in the view the writer
   await jump.click()
 
   await expect(page.locator('.editor-sheet')).toBeVisible()
-  await expect(page.locator('.editor-sheet [data-section-id="s1"]')).toBeInViewport()
+  // The section title, not any paragraph of the section: both carry
+  // data-section-id in the editor (the manuscript does not), so the unscoped
+  // selector resolved to two elements and Playwright's strict mode rejected it
+  // before it could check the thing S-017 is about. The jump scrolls to the
+  // first element with the id in document order, and that is the title.
+  await expect(page.locator('.editor-sheet .section-title[data-section-id="s1"]')).toBeInViewport()
 
   await manuscriptTab(page).click()
   await expect(page.locator('.manuscript-viewport')).toBeVisible({ timeout: 5000 })

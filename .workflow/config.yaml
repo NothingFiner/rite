@@ -39,6 +39,25 @@ test_layers:
     parser: junit
     report: .workflow-out/e2e.xml
 
+# Reuse a layer's result instead of re-running it when the result cannot have
+# changed. This narrows work, never the verdict: green still requires every layer
+# to have run, because a layer is only reused while another layer is red or while
+# nothing it tests has changed.
+#
+# Measured on 5.17's run: unit 7 s, rust 26 s, e2e 41 s, with ~170 s of model
+# time per iteration. e2e was the slowest layer and was red for every iteration
+# in which units were also red — it could not have gone green first.
+layer_reuse:
+  enabled: true
+  # A layer named as a dependency in `scope_depends_on` is not run while any of
+  # its dependencies is red in the same iteration. Every e2e failure is a symptom
+  # of a vue or rust defect, so e2e is never the layer that goes green first.
+  skip_dependents_when_red: true
+  # Per layer: reuse while no tracked file under this path changed since the
+  # start commit. A new untracked file counts as a change.
+  unchanged_paths:
+    rust: src-tauri/
+
 # Globs the coding agent may never change (create, edit, delete). Checked by the
 # orchestrator after every iteration; violations are reverted and counted.
 # `**` crosses directories, `*` does not.
@@ -128,6 +147,28 @@ limits:
   # Set 0 to disable scoping: every failure reaches the planner, exactly as it did
   # before this key existed. That is the control arm if you ever want to compare.
   failures_in_scope: 3
+
+  # An iteration is "spinning" when it costs more than `tokens_per_iteration`
+  # (prompt + completion, from goose's usage ledger) AND its rate is worse than
+  # `tokens_per_cleared_failure` per failure it cleared. Then the cheap model is
+  # circling, not working. One spin escalates the next iteration to
+  # `models.strong`; a second stops the run as `needs_human`.
+  #
+  # `no_gain` cannot see this case. Measured on 5.17: iteration 4 spent 9.81 M
+  # tokens to clear 3 e2e tests — 3.3 M per failure, against ~0.7 M in its
+  # neighbours. The failure count fell, so `no_gain` reset and escalation never
+  # fired. Both keys set to 0 to disable the guard.
+  tokens_per_iteration: 4000000
+  tokens_per_cleared_failure: 2000000
+
+  # The guard above judges an iteration after it ends. The watchdog reads goose's
+  # usage ledger every 20 s while it works: it logs a warning at the first multiple
+  # and stops the iteration at the second, because an iteration that has already
+  # spent three budgets is not going to become cheap. A stopped iteration returns
+  # WATCHDOG_RC, keeps the three-strike goose budget intact, and the next
+  # iteration escalates. Set either multiple to 0 to disable that half.
+  watchdog_warn_multiple: 1.5
+  watchdog_kill_multiple: 3
 
 # A layer that cannot be a coherent unit of work while another layer is red. Every
 # e2e failure is a symptom of a vue or rust defect, and playwright is the slowest

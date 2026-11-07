@@ -20,6 +20,11 @@ parameters:
     requirement: optional
     default: ".workflow-out/last_failures.md"
     description: "Markdown file with the current failing tests and output tails"
+  - key: base_commit
+    input_type: string
+    requirement: optional
+    default: ""
+    description: "The commit this run started from. Pass it to every coder and to comment_check.py."
 
 instructions: |
   You are the planner for a headless build. Tests already exist and define what "done" means.
@@ -42,11 +47,18 @@ instructions: |
 
   ## Steps
   1. Read SPEC.md, .workflow/config.yaml, .workflow/TESTING.md and the failures file.
-  2. Use repomix (compressed) to understand the codebase. Re-pack after large changes, since a
-     packed snapshot goes stale as soon as files are edited.
+     The coding standards are numbered `.workflow-out/standards/NN-*.md` in composition order —
+     that numbering is the destination name, not a rename of the ones config.yaml lists.
+  2. Use `rg` to find the files that matter, then read only those (whole file for a component,
+     a line range for a test). Do not pack the repository: a packed snapshot goes stale the
+     moment the first unit edits a file, and the failure it causes looks like a bad fix.
   3. Read the failing tests. Group the failures into work units whose file sets do NOT overlap.
-     Write the plan to .workflow-out/plan-iter-<iteration>.md: each unit lists its S-IDs and the
-     files it owns.
+     Write the plan to .workflow-out/plan-iter-<iteration>.md, one heading per unit and nothing
+     else at that level:
+       ## Work unit A — S-016, S-017 — src/App.vue, src/components/DocumentRenderer.vue
+     One unit per failing test, or per family of tests that share an S-ID. Never make one unit
+     out of two tests that live on different surfaces: measured on 5.17, a single unit spanning
+     pagination and view navigation burned its whole coder turn budget and had to be resumed.
      The failures file opens with a Scope section. If it names one layer and a count, those
      failures — and only those — are your work for this iteration. The failures listed under
      Deferred are out of scope: do not plan units for them, do not widen a unit to reach them.
@@ -55,29 +67,40 @@ instructions: |
      as before and do the smallest coherent unit rather than all of them.
   4. Delegate each unit to the coder sub-recipe, one at a time (never in parallel; they share one
      working tree). Give each coder its task, the S-IDs, and its owned paths.
-  5. You may run a layer's command from config to sanity-check, but the orchestrator is the
-     only authority on pass/fail. Do not claim success.
+  5. You may run the ONE test file a unit is fixing, but the orchestrator is the only authority
+     on pass/fail. Do not run the whole suite, and never Playwright: three layers already run
+     after you, and their output in your context buys nothing. Do not claim success.
   6. Stop with a summary of at most three lines: what changed, what is still uncertain.
 
+  ## Cost discipline
+  Every tool result is re-sent to the model on every later turn, so a long conversation is
+  quadratic. Measured failure on 5.17: one iteration spent 9.81 M tokens because it ran the
+  full suite twice and Playwright twice, dumped `git diff`, and guessed the base commit for
+  `comment_check.py` five times.
+  - The base commit is given to you: {{ base_commit }}. Pass it to `comment_check.py --base`
+    and to every coder. Do not derive it with git, and never guess.
+  - Do not run `git diff` on the working tree. The orchestrator reviews the diff, and
+    `git diff --stat` is enough to check that your edit survived.
+  - Delegate the test running to the orchestrator. A coder may run the one spec file it is
+    fixing; nobody runs `npx vitest run` or `npx playwright test` here. Do not scaffold a
+    harness of your own under `.workflow-out/`: a probe config is another context to carry and
+    the orchestrator already runs that layer.
+
   ## If escalated is true
-  Earlier attempts failed on the same tests repeatedly. Do not repeat them. Re-read the spec and
+  Earlier attempts were expensive or failed on the same tests repeatedly. Do not repeat them. Re-read the spec and
   the exact failure output, state what your earlier assumption probably was, check it against the
   code, and take a different approach.
 
 prompt: |
   Iteration {{ iteration }}. Escalated: {{ escalated }}.
   The current failures are in {{ failures_file }}. Plan the work and delegate it to coders.
+  This run started at {{ base_commit }}; give that to every coder.
 
 extensions:
   - type: builtin
     name: developer
     timeout: 300
     bundled: true
-  - type: stdio
-    name: repomix
-    cmd: npx
-    args: ["-y", "repomix", "--mcp"]
-    timeout: 300
 
 # Sub-recipes cannot nest, so coders cannot spawn their own helpers. Escalation to a
 # stronger model is done by the orchestrator (GOOSE_MODEL), not by the coder.
