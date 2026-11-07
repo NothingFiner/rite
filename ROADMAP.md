@@ -1,6 +1,6 @@
 # Rite — Roadmap
 
-Status as of **2026-11-04**, `development` at `2f43055` (word menu #17, iteration scoping #18 and writing stats #19 merged).
+Status as of **2026-11-06**, `development` at `0b3b85e` (comment gate #24, history change navigation #25, color controls #27 merged).
 
 Tauri v1 → v2 migration landed as PR #15 — a prerequisite for 5.11's context menu, not a roadmap item of its own.
 
@@ -20,18 +20,20 @@ The last feature phase. When this is done, Rite is feature-complete for a first 
 | 5.4 | Writing stats: daily word target + progress graph in a sidebar item | done (#19) |
 | 5.5 | Outline drag-reorder + `MoveSection` | done |
 | 5.6 | Editor extraction (cursor → page-nav → readback → render) | done (PR1–4) |
-| **5.7** | **Accessibility pass** | **open** |
+| **5.7** | **Accessibility pass** | **open — keyboard pass done (#21), semantics and polish remain (now 5.7a / 5.7b)** |
+| **5.7a** | **Editor, toolbar and activity-bar semantics** | **open — next** |
+| **5.7b** | **Reduced motion, `:focus-visible`, landmarks and the `Ruler.vue` decision** | **open** |
 | 5.8 / 5.8a | Spellcheck (native squiggles + context menu) | done |
 | 5.9 | Subtitle-less chapters | done |
 | 5.10 | Hidden sections replace epigrams | done |
 | 5.11 | Thesaurus | done (#16) |
-| **5.12** | **History diff next/previous change navigation** | **open — moved from 6.1** |
-| **5.13** | **Move the colour/theme picker into Text Options (with font, zoom, margins)** | **open — new, 2026-11-03** |
+| 5.12 | History diff next/previous change navigation | done (#25) |
+| 5.13 | Color controls in Text Options: background, text and accent rows plus presets | done (#27) |
 | 5.14 | `NSSpellChecker` spelling actions | absorbed into 5.15 |
 | 5.15 | Restored word menu: Cut / Copy / Paste / Select All + Learn / Ignore Spelling | done (#17) |
 | **5.16** | **Word cloud of frequently used words, excluding articles and pronouns** | **open — idea, not scoped** |
 | **5.17** | **Summary / outline view: per-section synopses in a navigable overview** | **open — data layer already built, needs presentation** |
-| **5.18** | **Tab characters + fixed 0.5-inch tab stops, with a Tab-set first-line indent** | **open — spec + failing tests, `feature/5.18-tab-characters`** |
+| 5.18 | Tab characters + fixed 0.5-inch tab stops, with a Tab-set first-line indent | done (#22) |
 
 ### 5.15 — Restored word menu (done, #17)
 
@@ -112,40 +114,49 @@ thesaurus popover, and all four settings accordion headers being real `<button>`
 **Mouse-only surfaces.** These carry `@click` on a `div` or `li`, so they have no
 role, no tab stop, and no Enter/Space:
 
-- `NavigationDrawer.vue` — every section row (`.nav-section`), plus the rename,
-  delete, type and hidden controls nested inside it.
-- `HistoryListDrawer.vue` — every history entry is an `li` with `@click`.
-- `StatusBar.vue` — the theme-picker trigger and each colour swatch.
-- `Ruler.vue` — the strip that sets an indent from the click position.
+- ~~`NavigationDrawer.vue`~~ — done (#21): rows are real controls with a roving tabindex.
+- ~~`HistoryListDrawer.vue`~~ — done (#21): entries are `li[role=button]` with `tabindex`.
+- ~~`StatusBar.vue`~~ — gone: #27 deletes the picker, and the drawer's swatches are buttons.
+- ~~`Ruler.vue`~~ — nothing to fix: no component mounts `Ruler.vue`. It is dead code
+  with a live spec, so 5.7b deletes it or wires it up.
 
-**Focus management.** The format buttons carry `tabindex="-1"` to keep the caret
-in the editor; Cmd+B/I/U mitigate that, but they still need a name and an
-`aria-pressed` state. No drawer or modal traps or restores focus, so tabbing out
-of an open drawer walks into the page behind it. `Toolbar.vue` declares
-`role="tablist"` with three `role="tab"` buttons but no arrow-key navigation and
-no roving tabindex.
+**Focus management.** Done in #21 for the drawers: opening one focuses its active
+row, Escape returns focus to the opener, and Tab deliberately leaves (S-018). Still
+open: the format buttons carry `tabindex="-1"` to keep the caret in the editor, and
+Cmd+B/I/U mitigates that, but they still need a name and an `aria-pressed` state.
+`Toolbar.vue` declares `role="tablist"` with three `role="tab"` buttons but no
+arrow-key navigation and no roving tabindex.
 
 **Then, naming and structure.** The editor (`editorDisplay.vue`) is a bare
 `contenteditable="true"` div: no `role="textbox"`, no `aria-multiline`, no label,
-and no headings, so the manuscript cannot be navigated by section. 59 `<button>`
-elements against 24 `aria-*` attributes in six of roughly fifteen components;
-`ActivityBar`'s icons rely on `title` alone, and a tooltip is not an accessible
-name.
+and no headings, so the manuscript cannot be navigated by section. 66 `<button>`
+elements against 27 `aria-*` attributes; `ActivityBar`'s icons rely on the `title`
+attribute alone, and a tooltip is not an accessible name.
 
 **Last, polish.** No landmarks or skip link. No `prefers-reduced-motion`, so the
-drawer and format animations ignore the setting. Eight `outline: none` rules
-re-style a border on `:focus` but nothing uses `:focus-visible`.
+drawer and format animations ignore the setting. Several `outline: none` rules
+re-style a border on `:focus` and nothing uses `:focus-visible`.
 
 Scope note: a markup, focus and CSS pass — not a redesign, and no new dependency.
 
+**Split.** 5.7a is the semantics half: editor role and label, `Toolbar` tablist
+behaviour, the format buttons' name and pressed state, `ActivityBar` names. 5.7b is
+the CSS and structure half: `prefers-reduced-motion`, `:focus-visible`, landmarks and
+skip link, and the `Ruler.vue` decision.
+
 ### 5.13 — Colour picker consolidation
 
-The theme swatches currently live in the StatusBar (`StatusBar.vue` owns the
-picker and its open/closed state), while font, zoom, margin and manuscript
-format live in `TextOptionsDrawer.vue`. Move the picker into that drawer so all
-text-appearance controls are in one place, and remove the status-bar copy.
-Not a feature — a UI consolidation, but it touches `StatusBar.vue`,
-`TextOptionsDrawer.vue`, `App.vue` and `StatusBar.spec.js`.
+The theme swatches lived in the StatusBar (`StatusBar.vue` owned the picker and
+its open state), while font, zoom, margin and manuscript format lived in
+`TextOptionsDrawer.vue`.
+
+Shipped in #27, and larger than the note above: free hex entry was rejected
+because a writer can set text and background to the same color and lose the
+manuscript. Color is now three independent rows of swatches drawn from the
+`THEMES` palette, one swatch per distinct color, plus one preset button per
+theme. A color already chosen in another row is disabled, so the trap cannot be
+re-entered. Persistence moved to `rite-bg` / `rite-text` / `rite-accent`, with
+the old `rite-theme` index read as a fallback for existing installs.
 
 ---
 
@@ -159,7 +170,7 @@ in this phase turns out to be a feature, it belongs in Phase 5 instead.
 | 6.1 | ~~History diff next/previous change~~ | **moved to 5.12** |
 | 6.2 | History flow redesign (change counts, compare-then-restore) | open |
 | 6.3 | PDF export | open — **blocked on a decision**: webview print vs `export_pdf.rs` in Rust |
-| 6.4 | Error-handling sweep (`console.error` → user-visible reporting) | open — 14 sites remain |
+| 6.4 | Error-handling sweep (`console.error` → user-visible reporting) | open — 15 sites remain |
 | 6.5 | Release / build packaging (icons, signing, notarization, updater) | partly — `identifier: com.rite.app` set |
 | 6.6 | Manuscript view unification (use the 5.6 composables) | open |
 | 6.7 | Final accessibility + manual QA | blocked on 5.7 |
