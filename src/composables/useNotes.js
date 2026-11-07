@@ -43,9 +43,9 @@ export function readNote(notes, id) {
   return notes?.sections?.[id] ?? ''
 }
 
-// Returns a new record with one entry's text set; the caller swaps the record
-// in, so the input record and its sections stay untouched. A blank text for a
-// section deletes the key instead of storing one: an empty note is "no note",
+// Returns a new record with one entry's text set. The caller swaps the record
+// in, so the input record and its sections stay untouched. Blank text for a
+// section deletes the key instead of storing one. An empty note is "no note",
 // which keeps `readNote` misses and `notesToText` skips consistent.
 export function writeNote(notes, id, text) {
   const record = {
@@ -91,6 +91,24 @@ export function notesToText(notes, sections) {
   return lines.join('\n\n')
 }
 
+// Moves one deleted section's note into the single orphaned draft under that
+// section's title. Successive calls append after a blank line, so the one
+// draft accumulates deletions in the order they happen. A blank note still
+// deletes the key, because an empty section note is "no note" (the rule
+// `writeNote` states).
 export function orphanSectionNote(notes, section) {
-  return notes
+  const record = {
+    overview: notes?.overview ?? '',
+    sections: { ...notes?.sections },
+    orphaned: notes?.orphaned ?? '',
+  }
+  const text = record.sections[section.id] ?? ''
+  delete record.sections[section.id]
+  if (!text.trim()) return record
+
+  const heading = `## ${section.title}`
+  record.orphaned = record.orphaned.trim()
+    ? `${record.orphaned.trim()}\n\n${heading}\n\n${text}`
+    : `${heading}\n\n${text}`
+  return record
 }

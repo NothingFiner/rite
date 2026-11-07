@@ -24,9 +24,27 @@
         <div class="note-title">{{ selectedTitle }}</div>
         <!-- The pencil stays last in .note-head. The spot after .note-title is
              reserved for the section jump (SPEC.md 5.17), and .note-title +
-             .note-jump stays adjacent. -->
+             .note-jump stays adjacent. While editing the pencil gives way to
+             check and reset, which reading mode never shows. -->
+        <template v-if="isEditing">
+          <button
+            type="button"
+            class="note-save"
+            title="Save note"
+            aria-label="Save note"
+            @click="saveDraft"
+          >✓</button>
+          <span class="note-edit-divider"></span>
+          <button
+            type="button"
+            class="note-reset"
+            title="Reset edit"
+            aria-label="Reset edit"
+            @click="resetDraft"
+          >↺</button>
+        </template>
         <button
-          v-if="!isEditing"
+          v-else
           type="button"
           class="note-edit"
           title="Edit note"
@@ -86,7 +104,7 @@ const selectedTitle = computed(
 const noteText = computed(() => readNote(props.store.notes, selectedEntryId.value))
 
 // One draft at a time, owned by the entry selected when it opened. Reading
-// mode is the default; the pencil starts the session at the committed text.
+// mode is the default. The pencil starts the session at the committed text.
 const isEditing = ref(false)
 const draftText = ref('')
 
@@ -111,6 +129,21 @@ function selectEntry(entryId) {
   isEditing.value = false
   selectedEntryId.value = entryId
   emit('select', entryId)
+}
+
+// The check commits the draft for the still-selected entry, then ends the
+// session. The commit runs before the flag drops, because a sessionless
+// draft skips the write.
+function saveDraft() {
+  commitDirtyDraft()
+  isEditing.value = false
+}
+
+// The reset lifts the committed text over the draft and keeps the session
+// open, per SPEC.md 5.17. Nothing writes to the record, because the stored
+// note did not change.
+function resetDraft() {
+  draftText.value = readNote(props.store.notes, selectedEntryId.value)
 }
 
 // The view closing is not a discard: a dirty draft lands on the same entry,
@@ -182,8 +215,11 @@ onBeforeUnmount(commitDirtyDraft)
   color: var(--text-primary);
 }
 
-.note-edit {
-  /* Glyph size stands off the row font so the pencil is a quiet affordance. */
+.note-edit,
+.note-save,
+.note-reset {
+  /* Glyph size stands off the row font, so a head control is a quiet
+     affordance. */
   flex: none;
   font: inherit;
   font-size: 12px;
@@ -197,9 +233,21 @@ onBeforeUnmount(commitDirtyDraft)
   transition: color 0.15s, background 0.15s;
 }
 
-.note-edit:hover {
+.note-edit:hover,
+.note-save:hover,
+.note-reset:hover {
   color: var(--text-primary);
   background: var(--hover-bg);
+}
+
+.note-edit-divider {
+  /* A thin vertical rule, sized to the small glyph row so it centers between
+     the check and reset buttons. */
+  flex: none;
+  width: 1px;
+  height: 14px;
+  align-self: center;
+  background: var(--bg-glass-border);
 }
 
 .note-source {

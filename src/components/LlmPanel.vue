@@ -156,9 +156,9 @@
              re-fetched per send. Generate them from the AI options drawer first;
              an empty store surfaces a "generate summaries first" notice. -->
         <option value="summaries">Summaries</option>
-        <!-- S-009 Notes scope: feeds the author's notes about the manuscript
-             as the context — not manuscript prose — read from the notes
-             record via notesToText (SPEC.md 5.17). -->
+        <!-- S-009 Notes scope: feeds the author's notes about the manuscript as the
+             context, not manuscript prose. notesToText in useNotes.js builds the
+             string (SPEC.md 5.17). -->
         <option value="notes">Notes</option>
         <!-- Phase 4.4: embed the question, cosine-rank the manuscript's indexed
              chunks, inject the top-k. A sibling to Whole document for
