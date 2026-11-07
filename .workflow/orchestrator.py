@@ -611,6 +611,25 @@ def changed_paths(start_sha):
     return paths
 
 
+def layer_is_red(statuses):
+    """Whether a layer's result is evidence of a defect a dependent layer inherits.
+
+    "Not green" and "red" are different questions. A skipped test is not green —
+    that is load bearing, because otherwise an agent could silence a test with
+    `#[ignore]`, `.skip` or `test.fixme` instead of making it pass (see
+    `failing_excluding_baseline_skips`). But a skip is not a failure either, and a
+    dependent layer cannot inherit anything from it: three `#[ignore]`d
+    live-network rust tests say nothing about whether the browser tests can pass.
+
+    Treating a skip as red froze the e2e layer for a whole 5.17 run: rust always
+    reported those three as skipped, so e2e was always "a dependent of a red
+    layer", always reused, and the failing set never changed. Two iterations and
+    3.9M tokens were then spent proving that code which was already green was
+    green, while the e2e verdict stayed at the baseline from before the fix.
+    """
+    return any(st == "failed" for st in statuses)
+
+
 def skip_reason(layer, reuse, prev_status, red_layers, cfg):
     """Why this layer can be reused from the previous iteration, or None to run it."""
     if not reuse.get("enabled") or not prev_status:
@@ -656,7 +675,7 @@ def run_layers(cfg, timeout_s, live=False, prev_status=None, reuse=None):
                 per_layer[name] = {"rc": 0, "failing": bad, "log": str(OUT / f"{name}.log"),
                                    "report": None, "seconds": 0.0, "skipped": reason}
                 log(f"running layer {name}: reused, {reason}")
-                if bad:
+                if layer_is_red(carried.values()):
                     red_layers.add(name)
                 continue
         log(f"running layer {name}")
@@ -685,7 +704,10 @@ def run_layers(cfg, timeout_s, live=False, prev_status=None, reuse=None):
         failing += bad
         per_layer[name] = {"rc": rc, "failing": bad, "log": str(logfile),
                            "report": str(report) if report else None, "seconds": elapsed}
-        if bad:
+        # A non-zero exit is red whatever the parse says (a compile error, a
+        # timeout, a crash before the first test). Otherwise only a real failure
+        # marks the layer red for its dependents; see layer_is_red.
+        if rc != 0 or layer_is_red(st for _, st in parsed):
             red_layers.add(name)
     return {"tests": tests, "failing": failing, "per_layer": per_layer}
 
