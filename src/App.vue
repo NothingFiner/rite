@@ -16,6 +16,12 @@
       '--editor-font': format.editorFont,
     }"
   >
+    <a
+      href="#editor-sheet"
+      class="skip-link"
+      @click.prevent="onSkipLinkActivate"
+    >Skip to manuscript</a>
+
     <ActivityBar
       ref="activityBarRef"
       :active-id="leftDrawerMode"
@@ -90,7 +96,7 @@
       </div>
     </div>
 
-    <div class="scroll-layer" ref="scrollLayerRef" :class="['mode-' + viewMode, { 'right-pad': rightDrawerOpen }]" @click="nav.selectedNavId = null">
+    <div class="scroll-layer" role="main" ref="scrollLayerRef" :class="['mode-' + viewMode, { 'right-pad': rightDrawerOpen }]" @click="nav.selectedNavId = null">
       <div class="editor-wrapper" :class="'mode-' + viewMode">
         <HistoryView
           v-if="viewMode === 'history'"
@@ -570,6 +576,15 @@ function focusDrawerOpener() {
   activityBarRef.value?.focusItem?.(leftDrawerMode.value)
 }
 
+// Resolve the sheet the way useFocusMode.js resolves it, so both paths land
+// on the same element.
+function onSkipLinkActivate() {
+  const el = editorRef.value?.$el
+  if (!el) return
+  const sheet = el.classList?.contains('editor-sheet') ? el : el.querySelector?.('.editor-sheet')
+  sheet?.focus()
+}
+
 // Focus / typewriter mode (5.3). One shared shell instance: the keyboard
 // shortcuts toggle/exit/recentre through it, the root element's focus-mode
 // class reads `active` (destructured as focusActive so the template
@@ -781,6 +796,35 @@ onUnmounted(() => {
 }
 .app-container.focus-mode .scroll-layer.right-pad {
   padding-right: 0;
+}
+
+/* Skip link (S-003): a 1x1 box out of the flow until focused, then a real
+   box at the top-left. The test reads the box right after focus, so no
+   transition on the link. */
+.skip-link {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  background: var(--glass-bg);
+  color: var(--text-primary);
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.skip-link:focus {
+  top: 8px;
+  left: 8px;
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip-path: none;
+  padding: 10px 16px;
+  border: 1px solid var(--bg-glass-border);
+  border-radius: var(--radius-sm);
+  /* Above the toolbar and the drawers, below the toast layer. */
+  z-index: 30;
 }
 
 </style>
