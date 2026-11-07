@@ -66,10 +66,12 @@ describe('Toolbar', () => {
 // tab key handler has to move focus itself, and these cases attach the component
 // to the document to read where focus landed.
 
-// S-010 widens this tablist from three tabs to four, with Notes third. The
+// S-010 widened this tablist from three tabs to four, with the notes third. The
 // 5.7a expectations below assume the old width, so they move with the order.
-const VIEW_MODES = ['editor', 'manuscript', 'notes', 'history']
-const VIEW_LABELS = ['Editor', 'Manuscript', 'Notes', 'History']
+// S-001 (5.20) puts References in that third slot, and the notes become one of
+// its tabs.
+const VIEW_MODES = ['editor', 'manuscript', 'references', 'history']
+const VIEW_LABELS = ['Editor', 'Manuscript', 'References', 'History']
 
 const viewTabs = (wrapper) => wrapper.findAll('.view-tabs .view-tab')
 
@@ -130,11 +132,11 @@ describe('Toolbar view tablist', () => {
 // SPEC.md 5.17 S-010. The four view tabs keep the one-tab-stop contract
 // 5.7a established and extend the arrow / Home / End walk to the new tab.
 describe('Toolbar four view tabs', () => {
-  it('S-010: renders Editor, Manuscript, Notes and History in that order', () => {
-    const wrapper = mount(Toolbar, { props: { mode: 'notes' } })
+  it('S-010: renders Editor, Manuscript, References and History in that order', () => {
+    const wrapper = mount(Toolbar, { props: { mode: 'references' } })
     const tabs = viewTabs(wrapper)
 
-    expect(tabs.map((tab) => tab.text())).toEqual(['Editor', 'Manuscript', 'Notes', 'History'])
+    expect(tabs.map((tab) => tab.text())).toEqual(['Editor', 'Manuscript', 'References', 'History'])
     expect(tabs.map((tab) => tab.attributes('role'))).toEqual(['tab', 'tab', 'tab', 'tab'])
     expect(tabs.map((tab) => tab.attributes('aria-selected'))).toEqual([
       'false',
@@ -145,20 +147,50 @@ describe('Toolbar four view tabs', () => {
     expect(tabs.filter((tab) => tab.attributes('tabindex') === '0')).toHaveLength(1)
   })
 
-  it('S-010: reaches Notes with the arrow keys and moves focus with it', async () => {
+  it('S-010: reaches References with the arrow keys and moves focus with it', async () => {
     const wrapper = mountTablist('manuscript')
 
     await viewTabs(wrapper)[1].trigger('keydown', { key: 'ArrowRight' })
 
-    expect(lastMode(wrapper)).toBe('notes')
+    expect(lastMode(wrapper)).toBe('references')
     expect(document.activeElement).toBe(viewTabs(wrapper)[2].element)
   })
 
-  it('S-010: marks Notes as the active tab in notes mode', () => {
-    const wrapper = mount(Toolbar, { props: { mode: 'notes' } })
+  it('S-010: marks References as the active tab in references mode', () => {
+    const wrapper = mount(Toolbar, { props: { mode: 'references' } })
 
     expect(viewTabs(wrapper)[2].classes()).toContain('active')
     expect(viewTabs(wrapper)[2].attributes('tabindex')).toBe('0')
+  })
+})
+
+// SPEC.md 5.20 S-001. References takes the third slot and the rail stays four
+// wide, so the order the writer already knows is unchanged.
+describe('Toolbar References tab', () => {
+  it('S-001: offers References in place of Notes, keeping four view buttons in order', () => {
+    const wrapper = mount(Toolbar)
+    const labels = viewTabs(wrapper).map((tab) => tab.text())
+
+    expect(labels).toEqual(['Editor', 'Manuscript', 'References', 'History'])
+    expect(labels).not.toContain('Notes')
+    expect(viewTabs(wrapper)).toHaveLength(4)
+  })
+
+  it('S-001: emits setMode references when the References tab is chosen', async () => {
+    const wrapper = mount(Toolbar)
+
+    const references = viewTabs(wrapper).find((tab) => tab.text() === 'References')
+    expect(references).toBeTruthy()
+    await references.trigger('click')
+
+    expect(lastMode(wrapper)).toBe('references')
+  })
+
+  it('S-001: marks References selected and keeps one tab stop on it', () => {
+    const wrapper = mount(Toolbar, { props: { mode: 'references' } })
+
+    expect(viewTabs(wrapper)[2].attributes('aria-selected')).toBe('true')
+    expect(viewTabs(wrapper).filter((tab) => tab.attributes('tabindex') === '0')).toHaveLength(1)
   })
 })
 

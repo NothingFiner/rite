@@ -210,6 +210,33 @@ describe('NotesView recaps and the section jump', () => {
     expect(wrapper.find('.note-insert-recap').exists()).toBe(true)
   })
 
+  // SPEC.md 5.20 S-022, bug B-004. A generated summary beside the writer's note
+  // must say what it is. Unlabelled model prose in the same pane reads as the
+  // writer's own words.
+  it('S-022: labels the generated summary shown beside a note', async () => {
+    const store = makeStore({ overview: '', sections: { s1: 'My plan.' }, orphaned: '' })
+    const wrapper = mountView(store, { recaps: { s1: 'A neutral summary of the door.' } })
+    await selectEntry(wrapper, 's1')
+
+    const block = wrapper.find('.note-recap')
+    expect(block.exists()).toBe(true)
+
+    const label = block.find('.note-recap-label')
+    expect(label.exists()).toBe(true)
+    expect(label.text()).toMatch(/summary/i)
+    // The label belongs to the generated block and sits above its text, so the
+    // reader meets the attribution before the prose.
+    const text = block.find('.note-recap-text')
+    expect(text.exists()).toBe(true)
+    expect(
+      label.element.compareDocumentPosition(text.element) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    // A record with no summary shows no label, so nothing claims to be one.
+    const bare = mountView(makeStore(), { recaps: {} })
+    await selectEntry(bare, 's1')
+    expect(bare.find('.note-recap-label').exists()).toBe(false)
+  })
+
   it('S-024: appends the recap to the draft and enters editing from Insert into note', async () => {
     const store = makeStore({ overview: '', sections: { s1: 'My plan.' }, orphaned: '' })
     const wrapper = mountView(store, { recaps: { s1: 'A neutral recap.' } })

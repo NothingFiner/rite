@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { useLlmSettings, resetLlmSettingsForTests } from './useLlmSettings.js'
+import { useLlmSettings, resetLlmSettingsForTests, llmConfigured } from './useLlmSettings.js'
 
 const localStorageMock = (() => {
   let store = {}
@@ -108,5 +108,27 @@ describe('useLlmSettings', () => {
     const llm = useLlmSettings()
     llm.loadPrefs() // should not throw
     expect(llm.settings.value.endpoint).toBe('http://localhost:11434')
+  })
+})
+// SPEC.md 5.20 S-021. The cases for `llmConfigured`, the gate the Outline and
+// the assistant panel share.
+describe('llmConfigured', () => {
+  it('S-021: is true only when a model is configured', () => {
+    expect(llmConfigured({ endpoint: 'http://localhost:11434', model: 'llama3', apiKey: '' })).toBe(true)
+    expect(llmConfigured({ endpoint: 'http://localhost:11434', model: '', apiKey: '' })).toBe(false)
+    expect(llmConfigured({ endpoint: '', model: '', apiKey: 'sk-abc' })).toBe(false)
+  })
+
+  it('S-021: does not require an API key, because local Ollama has none', () => {
+    const local = { endpoint: 'http://localhost:11434', model: 'llama3', apiKey: '' }
+    expect(llmConfigured(local)).toBe(true)
+
+    // Whitespace is not a model: a cleared field must close the gate.
+    expect(llmConfigured({ ...local, model: '   ' })).toBe(false)
+  })
+
+  it('S-021: tolerates a missing settings object', () => {
+    expect(llmConfigured(null)).toBe(false)
+    expect(llmConfigured(undefined)).toBe(false)
   })
 })
