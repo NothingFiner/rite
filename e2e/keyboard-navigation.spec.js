@@ -1,6 +1,5 @@
 import { test, expect } from '@playwright/test'
 import { emitMenu, installTauriIpc } from './helpers/tauri-ipc.js'
-import { THEMES } from '../src/constants/themes.js'
 
 // Keyboard navigation across the app chrome (SPEC.md S-004 … S-019, roadmap 5.7).
 //
@@ -199,68 +198,6 @@ test('S-009: Enter on a focused history entry loads that version into the previe
   })
 })
 
-// --- theme picker ------------------------------------------------------------
-
-async function focusThemeTrigger(page) {
-  const trigger = page.locator('.theme-swatch.current')
-  await expect(trigger).toBeVisible({ timeout: 5000 })
-  await trigger.focus()
-  return trigger
-}
-
-const focusedControlName = (page) =>
-  page.evaluate(() => {
-    const active = document.activeElement
-    return active ? (active.getAttribute('aria-label') || active.textContent || '').trim() : ''
-  })
-
-test('S-013: Enter on the focused theme trigger opens the picker and Tab reaches the first swatch', async ({ page }) => {
-  await openApp(page)
-  await focusThemeTrigger(page)
-
-  await page.keyboard.press('Enter')
-  await expect(page.locator('.theme-tooltip')).toBeVisible({ timeout: 3000 })
-
-  await page.keyboard.press('Tab')
-  expect(await focusedControlName(page)).toBe(THEMES[0].name.trim())
-})
-
-test('S-014: Enter on a focused swatch applies that theme', async ({ page }) => {
-  await openApp(page)
-  await focusThemeTrigger(page)
-  await page.keyboard.press('Enter')
-  await expect(page.locator('.theme-tooltip')).toBeVisible({ timeout: 3000 })
-
-  // Tab to the second swatch, which is not the current theme.
-  await page.keyboard.press('Tab')
-  await page.keyboard.press('Tab')
-  expect(await focusedControlName(page)).toBe(THEMES[1].name.trim())
-
-  await page.keyboard.press('Enter')
-
-  const changed = await page.evaluate((hex) => {
-    const probe = document.createElement('div')
-    probe.style.backgroundColor = hex
-    document.body.appendChild(probe)
-    const want = getComputedStyle(probe).backgroundColor
-    probe.remove()
-    return getComputedStyle(document.querySelector('.editor-sheet')).backgroundColor === want
-  }, THEMES[1].bg)
-  expect(changed, 'the editor sheet did not take the chosen theme background').toBe(true)
-})
-
-test('S-015: Escape closes the theme picker and leaves focus on the trigger', async ({ page }) => {
-  await openApp(page)
-  const trigger = await focusThemeTrigger(page)
-  await page.keyboard.press('Enter')
-  await expect(page.locator('.theme-tooltip')).toBeVisible({ timeout: 3000 })
-
-  await page.keyboard.press('Escape')
-
-  await expect(page.locator('.theme-tooltip')).toHaveCount(0)
-  await expect(trigger).toBeFocused()
-})
-
 // --- focus movement ----------------------------------------------------------
 
 test('S-016: opening the sections drawer focuses its active row', async ({ page }) => {
@@ -320,27 +257,30 @@ test('S-018: Tab from the last control in an open drawer moves out; the drawer d
 
 test('S-019: a control reached with the keyboard shows a visible focus indicator', async ({ page }) => {
   await openApp(page)
-  await focusThemeTrigger(page)
-  await page.keyboard.press('Enter')
-  await expect(page.locator('.theme-tooltip')).toBeVisible({ timeout: 3000 })
+  await page.locator('.activity-icon[title="Text Options"]').click()
+  await expect(page.locator('.drawer.left.open')).toBeVisible({ timeout: 5000 })
 
-  // A swatch is only reachable by keyboard once it is a control, so this also
-  // proves the indicator is not being measured on an unfocusable div.
+  // Walk in with real Tab presses: the last zoom button, then the font select.
+  // A select is a control the browser focuses itself, so the indicator below is
+  // measured on a focused control and not on an unfocusable div.
+  await page.locator('.text-options .zoom-btn').last().focus()
   await page.keyboard.press('Tab')
+
   const indicator = await page.evaluate(() => {
     const active = document.activeElement
     if (!active || active === document.body) return { focused: false }
-    const style = getComputedStyle(active)
+    const probe = document.createElement('div')
+    probe.style.borderColor = getComputedStyle(document.querySelector('.app-container'))
+      .getPropertyValue('--accent')
+    document.body.appendChild(probe)
+    const accent = getComputedStyle(probe).borderColor
+    probe.remove()
     return {
-      focused: true,
-      outline: style.outlineStyle,
-      outlineWidth: style.outlineWidth,
-      shadow: style.boxShadow,
+      focused: active.classList.contains('font-select'),
+      border: getComputedStyle(active).borderColor,
+      accent,
     }
   })
-  expect(indicator.focused, 'the swatch did not take keyboard focus').toBe(true)
-  const visible =
-    (indicator.outline && indicator.outline !== 'none' && indicator.outlineWidth !== '0px') ||
-    (indicator.shadow && indicator.shadow !== 'none')
-  expect(visible).toBe(true)
+  expect(indicator.focused, 'the font select did not take keyboard focus').toBe(true)
+  expect(indicator.border, 'the focused control has no visible border change').toBe(indicator.accent)
 })

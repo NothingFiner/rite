@@ -10,46 +10,15 @@
       >{{ saveStatus }}</span>
     </div>
     <div class="status-right">
-      <div class="theme-picker">
-        <!-- A div with a click handler is unnamed and keyboard-unreachable; the
-             trigger is a real button that reports the picker state (S-010). -->
-        <button
-          type="button"
-          class="theme-swatch current"
-          :style="{ background: currentTheme.bg, borderColor: swatchBorder(currentTheme.bg) }"
-          :aria-expanded="showThemePicker"
-          :aria-label="triggerAriaLabel"
-          @click="$emit('toggleThemePicker')"
-        ></button>
-        <div v-if="showThemePicker" class="theme-tooltip">
-          <!-- aria-current (SPEC 5.7, decision 7): only the current theme's swatch is the current item. -->
-          <button
-            v-for="(t, i) in themes"
-            :key="i"
-            type="button"
-            class="theme-swatch"
-            :class="{ active: theme === i }"
-            :style="{ background: t.bg, borderColor: swatchBorder(t.bg) }"
-            :aria-label="swatchAriaLabel(t, i)"
-            :aria-current="theme === i ? 'true' : undefined"
-            @click="$emit('selectTheme', i)"
-          ></button>
-        </div>
-      </div>
       <span class="word-count">{{ wordCount }} words ({{ selectedWordCount }} Selected)</span>
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed } from 'vue'
-
-const props = defineProps({
+defineProps({
   title: { type: String, default: '' },
   saveStatus: { type: String, default: '' },
-  theme: { type: Number, default: 0 },
-  themes: { type: Array, default: () => [] },
-  showThemePicker: { type: Boolean, default: false },
   wordCount: { type: Number, default: 0 },
   selectedWordCount: { type: Number, default: 0 },
   // Basename of the current file, including its extension (`novel.rite`), or
@@ -57,41 +26,6 @@ const props = defineProps({
   // group after the title; blank (nothing shown) while the file is unsaved.
   fileName: { type: String, default: '' },
 })
-
-const currentTheme = computed(() => props.themes[props.theme] || props.themes[0] || { bg: '#333333' })
-
-// The trigger's accessible name: state that the current theme when it has one.
-// Legacy spec mounts feed nameless themes (and one an empty list), so the
-// plain label is the fallback — never "undefined".
-const triggerAriaLabel = computed(() => {
-  const name = currentTheme.value.name
-  if (typeof name === 'string' && name.trim()) {
-    return `Change colour theme (current: ${name.trim()})`
-  }
-  return 'Change colour theme'
-})
-
-// The swatch's accessible name is its theme's `name`; position-based fallback
-// for entries without a usable name, so legacy mounts never read "undefined".
-function swatchAriaLabel(t, i) {
-  const name = t && typeof t.name === 'string' ? t.name : ''
-  return name.trim() ? name : `Theme ${i + 1}`
-}
-
-function isLightColor(hex) {
-  if (!hex) return false
-  const r = parseInt(hex.slice(1, 3), 16)
-  const g = parseInt(hex.slice(3, 5), 16)
-  const b = parseInt(hex.slice(5, 7), 16)
-  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255
-  return luminance > 0.5
-}
-
-function swatchBorder(bg) {
-  return isLightColor(bg) ? 'rgba(0, 0, 0, 0.35)' : 'rgba(255, 255, 255, 0.35)'
-}
-
-defineEmits(['toggleThemePicker', 'selectTheme'])
 </script>
 
 <style scoped>
@@ -160,40 +94,5 @@ defineEmits(['toggleThemePicker', 'selectTheme'])
 
 .word-count {
   color: var(--text-secondary);
-}
-
-.theme-picker {
-  position: relative;
-}
-
-.theme-swatch {
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
-  cursor: pointer;
-  border: 1px solid;
-  /* The swatches are real buttons now: drop the UA button chrome so the
-     16×16 box keeps its size and its inline colours. */
-  padding: 0;
-  appearance: none;
-}
-
-.theme-swatch.active {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.theme-tooltip {
-  position: absolute;
-  bottom: 26px;
-  right: 0;
-  display: flex;
-  gap: 8px;
-  padding: 8px;
-  background: var(--glass-bg);
-  backdrop-filter: blur(12px);
-  border: 1px solid var(--bg-glass-border);
-  border-radius: 8px;
-  z-index: 30;
 }
 </style>

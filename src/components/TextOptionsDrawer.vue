@@ -53,12 +53,50 @@
         >
           <option v-for="f in manuscriptFormat.formats" :key="f.id" :value="f.id">{{ f.name }}</option>
         </select>
+        <!-- Color applies on the click itself, like the zoom and margin
+             controls beside it, so no confirm step exists. Each row keeps
+             out the colors the other two rows hold. :disabled marks them,
+             and applyColor re-checks isHeldElsewhere, because a dispatched
+             click still fires a disabled button's listener. The setters
+             refuse such a hex as well (useTheme.js). -->
+        <template v-for="def in swatchRows" :key="def.row">
+          <div class="drawer-label">{{ def.label }}</div>
+          <div class="swatch-row" :data-row="def.row">
+            <button
+              v-for="color in palette"
+              :key="color.hex"
+              type="button"
+              class="color-swatch"
+              :data-color="color.hex"
+              :aria-label="def.label + ' ' + color.theme + ' ' + color.role"
+              :aria-current="def.current(theme) === color.hex ? 'true' : undefined"
+              :disabled="isHeldElsewhere(theme, def, color)"
+              :style="{ background: color.hex }"
+              @click="applyColor(theme, def, color)"
+            ></button>
+          </div>
+        </template>
+        <div class="drawer-label">Presets</div>
+        <div class="preset-row">
+          <button
+            v-for="(entry, index) in THEMES"
+            :key="entry.name"
+            type="button"
+            class="theme-preset"
+            :class="{ active: theme.matchedPreset === index }"
+            @click="theme.selectTheme(index)"
+          >
+            {{ entry.name }}
+          </button>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
+import { THEMES } from '../constants/themes.js'
+
 // Receives the theme, format, and manuscriptFormat composables as props and
 // drives them directly (setMargin / setZoom / setFont / selectFormat). See
 // GeneralOptionsDrawer for the rationale. manuscriptFormat is a reactive proxy
@@ -70,6 +108,65 @@ defineProps({
   format: { type: Object, required: true },
   manuscriptFormat: { type: Object, required: true },
 })
+
+// Row order is fixed by the drawer layout, so each row's label and setter
+// travel in one definition instead of three hand-written pairs. The
+// accessors read the theme prop, so the marks track the live colors like
+// the preset's active match.
+const swatchRows = [
+  {
+    row: 'background',
+    label: 'Background',
+    setter: 'selectBackground',
+    current: (theme) => theme.editorBg,
+    others: (theme) => [theme.editorText, theme.editorAccent],
+  },
+  {
+    row: 'text',
+    label: 'Text',
+    setter: 'selectText',
+    current: (theme) => theme.editorText,
+    others: (theme) => [theme.editorBg, theme.editorAccent],
+  },
+  {
+    row: 'accent',
+    label: 'Accent',
+    setter: 'selectAccent',
+    current: (theme) => theme.editorAccent,
+    others: (theme) => [theme.editorBg, theme.editorText],
+  },
+]
+
+// True when a row other than def already holds the color's hex. One
+// definition feeds :disabled and applyColor, so the two guards cannot
+// drift apart.
+const isHeldElsewhere = (theme, def, color) => def.others(theme).includes(color.hex)
+
+const applyColor = (theme, def, color) => {
+  if (isHeldElsewhere(theme, def, color)) return
+  theme[def.setter](color.hex)
+}
+
+// Palette for the swatch rows, ordered as the palette section of SPEC.md 5.13
+// defines it, so rows and tests read it the same way. Repeating a hex would
+// offer the same color twice in one row, so first occurrence is kept. Each entry
+// also carries the theme name and the role it played there, because a swatch's
+// aria-label names both.
+const palette = []
+{
+  const knownHexes = new Set()
+  for (const entry of THEMES) {
+    for (const [role, hex] of [
+      ['background', entry.bg],
+      ['text', entry.text],
+      ['accent', entry.accent],
+    ]) {
+      if (knownHexes.has(hex)) continue
+      knownHexes.add(hex)
+      palette.push({ hex, theme: entry.name, role })
+    }
+  }
+}
 </script>
 
 <style scoped>
@@ -186,5 +283,59 @@ defineProps({
   background-repeat: no-repeat;
   background-position: right 8px center;
   padding-right: 24px;
+}
+
+/* S-017: clickable controls show the pointer cursor, as the zoom buttons
+   already do. Each control's browser default says otherwise. */
+.color-swatch,
+.theme-preset,
+.drawer-input {
+  cursor: pointer;
+}
+
+/* The swatch and preset rows wrap: a full palette overflows a fixed-width
+   drawer. */
+.swatch-row,
+.preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.color-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1px solid var(--bg-glass-border);
+  /* UA button padding would dwarf a 16px tint box. */
+  padding: 0;
+  appearance: none;
+}
+
+/* S-016: aria-current alone changes nothing on screen. The outline gives the
+   chosen swatch a visible mark, and the offset leaves a gap, so the ring stays
+   readable against any swatch's fill. */
+.color-swatch[aria-current="true"] {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.theme-preset {
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--bg-glass-border);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+/* The current preset marks itself with the zoom control's active grammar, so
+   both marks read as one pattern inside the drawer. */
+.theme-preset.active {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+  color: var(--accent);
+  font-weight: 600;
 }
 </style>

@@ -48,7 +48,7 @@ const props = defineProps({
   // One shared `usePagination` lives in App.vue (roadmap 2.5); a per-editor copy
   // would measure cold. Each entry is a block index that starts a new page.
   pageBreaks: { type: Array, default: () => [] },
-  theme: { type: Number, default: 0 },
+  theme: { type: [Number, Object], default: 0 },
   zoom: { type: Number, default: 16 },
   margin: { type: String, default: 'compact' },
 })
@@ -92,7 +92,14 @@ function editorClearSearchHighlights() {
 }
 
 const editorStyles = computed(() => {
-  const t = THEMES[props.theme] || THEMES[0]
+  // SPEC 5.13 "Rendering the sheet".
+  // `props.theme` is either a preset index or the `currentTheme` object from
+  // `useTheme.js`. A mixed background, text and accent choice has no preset
+  // index, so the object resolves as itself. Numbers resolve through
+  // `THEMES[props.theme]`.
+  const t = typeof props.theme === 'object' && props.theme !== null
+    ? props.theme
+    : (THEMES[props.theme] || THEMES[0])
   const pad = props.margin === 'manuscript' ? '96px' : '24px 32px'
   return {
     fontSize: props.zoom + 'px',
