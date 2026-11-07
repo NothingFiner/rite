@@ -1244,11 +1244,18 @@ function chatWithNotes(doc, notes, editorRef = { value: null }) {
 
 describe('useChat — Notes scope', () => {
   it("S-001: sends the overview and every non-empty section note in document order", () => {
+    // The third section exists only to prove that a whitespace-only note is
+    // treated as "no note": its heading must not appear at all. It is a real
+    // section of the document, so a heading would be possible.
+    const doc = makeDocument([
+      ...sampleDocument().sections,
+      makeSection('s3', 'Interlude', 'section', [makeParagraph('p4', 'Time passed.')]),
+    ])
     const notes = makeNotes({
       overview: 'The letter drives the plot.',
-      sections: { s1: 'The door is a lie.', s2: 'A quiet closing scene.', c1: '   ' },
+      sections: { s1: 'The door is a lie.', s2: 'A quiet closing scene.', s3: '   ' },
     })
-    const chat = chatWithNotes(sampleDocument(), notes)
+    const chat = chatWithNotes(doc, notes)
     chat.scope.value = 'notes'
 
     const messages = chat.buildContextMessages('is the outline coherent?')
@@ -1258,7 +1265,7 @@ describe('useChat — Notes scope', () => {
     expect(context).toContain('The door is a lie.')
     expect(context).toContain('A quiet closing scene.')
     // A whitespace-only note is "no note", so its section is not headed at all.
-    expect(context).not.toContain('The Arrival')
+    expect(context).not.toContain('Interlude')
 
     const overviewAt = context.indexOf('The letter drives the plot.')
     const doorAt = context.indexOf('The door is a lie.')
