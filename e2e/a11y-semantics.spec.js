@@ -6,8 +6,8 @@ import { installTauriIpc } from './helpers/tauri-ipc.js'
 //
 // The unit layer (src/components/Toolbar.spec.js and ActivityBar.spec.js) covers
 // the tablist's tab stops and the icon names in isolation. What only a real page
-// can show is the accessibility tree the webview builds from those attributes,
-// and that an arrow key actually swaps the view on screen.
+// can show is the accessibility tree the webview builds from those attributes.
+// It is also the only place an arrow key can be seen swapping the view on screen.
 //
 // Tauri IPC is the shared mock from ./helpers/tauri-ipc.js, seeded with a short
 // document so the editor sheet is rendered at load.
@@ -86,8 +86,8 @@ test('S-007: Tab reaches the tablist once and the arrows switch the view', async
   await expect(tabs(page).nth(1)).toBeFocused()
   await expect(page.locator('.editor-wrapper.mode-manuscript')).toBeVisible()
 
-  // Tab from the selected tab leaves the tablist instead of stopping on the next
-  // tab, which is what one tab stop means in a real page.
+  // Tab from the selected tab leaves the tablist rather than stopping on the next
+  // tab. That is what one tab stop means in a real page.
   await page.keyboard.press('Tab')
   await expect(tabs(page).nth(1)).not.toBeFocused()
 
