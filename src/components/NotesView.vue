@@ -19,13 +19,24 @@
         @click="selectEntry(entry.id)"
       >{{ entry.title }}</button>
     </div>
-    <div class="note-pane"></div>
+    <div class="note-pane">
+      <div class="note-head">
+        <div class="note-title">{{ selectedTitle }}</div>
+      </div>
+      <div
+        v-if="noteText.trim()"
+        class="note-rendered"
+        v-html="renderMarkdown(noteText)"
+      ></div>
+      <div v-else class="note-empty">No note yet.</div>
+    </div>
   </div>
 </template>
 
 <script setup>
 import { computed, ref } from 'vue'
-import { noteEntries } from '../composables/useNotes.js'
+import { noteEntries, readNote } from '../composables/useNotes.js'
+import { renderMarkdown } from '../composables/useMarkdown.js'
 
 const props = defineProps({
   // The document store. NotesView reads `store.doc` and `store.notes` and
@@ -49,6 +60,13 @@ const emit = defineEmits(['select', 'jump'])
 const selectedEntryId = ref(props.initialEntryId)
 
 const entries = computed(() => noteEntries(props.store.doc))
+
+// The pane shows the note of the selected entry in reading mode: rendered
+// markdown when there is text, the empty state otherwise (SPEC.md 5.17).
+const selectedTitle = computed(
+  () => entries.value.find((entry) => entry.id === selectedEntryId.value)?.title ?? ''
+)
+const noteText = computed(() => readNote(props.store.notes, selectedEntryId.value))
 
 function selectEntry(entryId) {
   selectedEntryId.value = entryId
@@ -99,5 +117,32 @@ function selectEntry(entryId) {
 .notes-entry:hover,
 .notes-entry.selected {
   background: var(--hover-bg);
+}
+
+.note-pane {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px;
+}
+
+.note-head {
+  margin-bottom: 12px;
+}
+
+.note-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.note-rendered {
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-primary);
+}
+
+.note-empty {
+  font-size: 13px;
+  color: var(--text-secondary);
 }
 </style>

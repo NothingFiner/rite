@@ -34,8 +34,13 @@ export function noteEntries(doc) {
   ]
 }
 
+// Returns the stored note text for an entry id. The overview and orphaned
+// rows have their own record fields, so only those two ids read them. A
+// section with no note has no key in sections, and every miss returns ''.
 export function readNote(notes, id) {
-  return ''
+  if (id === 'overview') return notes?.overview ?? ''
+  if (id === 'orphaned') return notes?.orphaned ?? ''
+  return notes?.sections?.[id] ?? ''
 }
 
 export function writeNote(notes, id, text) {
