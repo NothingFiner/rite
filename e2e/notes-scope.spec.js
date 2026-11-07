@@ -75,8 +75,14 @@ async function openApp(page) {
   await page.waitForSelector('.editor-sheet .paragraph', { timeout: 5000 })
 }
 
+/// Open the assistant drawer unless it is already open. The toggle's title
+/// follows its state, so the opener exists only while the drawer is shut.
+/// S-011 sends twice, and must not toggle it closed on the second send.
 async function openAssistant(page) {
-  await page.locator('button[title="Open Assistant"]').click()
+  const opener = page.locator('button[title="Open Assistant"]')
+  if ((await opener.count()) > 0) {
+    await opener.click()
+  }
   await expect(page.locator('.llm-scope-select')).toBeVisible({ timeout: 5000 })
 }
 
