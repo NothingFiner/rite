@@ -148,6 +148,19 @@ limits:
   # before this key existed. That is the control arm if you ever want to compare.
   failures_in_scope: 3
 
+  # An iteration is "spinning" when it costs more than `tokens_per_iteration`
+  # (prompt + completion, from goose's usage ledger) AND its rate is worse than
+  # `tokens_per_cleared_failure` per failure it cleared. Then the cheap model is
+  # circling, not working. One spin escalates the next iteration to
+  # `models.strong`; a second stops the run as `needs_human`.
+  #
+  # `no_gain` cannot see this case. Measured on 5.17: iteration 4 spent 9.81 M
+  # tokens to clear 3 e2e tests — 3.3 M per failure, against ~0.7 M in its
+  # neighbours. The failure count fell, so `no_gain` reset and escalation never
+  # fired. Both keys set to 0 to disable the guard.
+  tokens_per_iteration: 4000000
+  tokens_per_cleared_failure: 2000000
+
 # A layer that cannot be a coherent unit of work while another layer is red. Every
 # e2e failure is a symptom of a vue or rust defect, and playwright is the slowest
 # thing to boot, so it is never the iteration that gets scoped first.

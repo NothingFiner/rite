@@ -230,7 +230,7 @@ def progress(i, res, prev_failing, started, tokens_before, tokens_total, scope=N
             }) + "\n")
     except OSError:
         pass
-    return total_now
+    return total_now, spent
 
 
 # ---------- git helpers ----------
@@ -561,6 +561,22 @@ def run_streaming(cmd, cwd, timeout_s, logfile):
                 p.kill()
 
 
+def spin_after(previous, spent, cleared_n, lim):
+    """The spin counter after one iteration: over budget and poor yield is a spin.
+
+    Extracted so the rule can be exercised without a model: the whole point is that
+    `no_gain` cannot see this failure — a run that clears one failure per expensive
+    iteration keeps `no_gain` at zero forever.
+    """
+    budget = lim.get("tokens_per_iteration") or 0
+    if not budget or spent is None or spent <= budget:
+        return 0
+    rate = lim.get("tokens_per_cleared_failure") or 0
+    cleared_n = max(cleared_n, 0)
+    poor_yield = cleared_n == 0 or (rate and spent / cleared_n > rate)
+    return previous + 1 if poor_yield else 0
+
+
 def changed_paths(start_sha):
     """Every path touched since the start commit, tracked or not.
 
@@ -725,7 +741,7 @@ def covered_ids(tests):
 
 # ---------- goose ----------
 
-def run_goose(recipe, i, escalated, failures_file, models, timeout_s, attempt=""):
+def run_goose(recipe, i, escalated, failures_file, models, timeout_s, attempt="", base_commit=""):
     env = dict(os.environ)
     model = models.get("strong") if escalated else models.get("default")
     if model:
@@ -733,7 +749,10 @@ def run_goose(recipe, i, escalated, failures_file, models, timeout_s, attempt=""
     cmd = ["goose", "run", "--recipe", recipe, "--no-session",
            "--params", f"iteration={i}",
            "--params", f"escalated={'true' if escalated else 'false'}",
-           "--params", f"failures_file={failures_file}"]
+           "--params", f"failures_file={failures_file}",
+           # The start commit, so the agent never derives or guesses it for
+           # comment_check.py. Guessing it cost five tool calls in one 5.17 iteration.
+           "--params", f"base_commit={base_commit}"]
     try:
         with open(OUT / f"goose-iter{i}{attempt}.log", "w") as fh:
             return subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT, env=env, timeout=timeout_s).returncode
@@ -1378,6 +1397,10 @@ def main():
     # would go quiet exactly when it is needed. This counter is what keeps the
     # strong-model escalation reachable once the set starts churning.
     no_gain = 0
+    # Consecutive iterations that spent more than the token budget without clearing
+    # enough failures to justify it. Same purpose as `no_gain`, for the case
+    # `no_gain` cannot see: a run that keeps making *some* progress.
+    spin = 0
     # Whether the previous iteration's goose run actually completed. A run that
     # never started must not count towards escalation: an unchanged failing set
     # after a no-op is not evidence that the model needs a stronger one.
@@ -1399,14 +1422,15 @@ def main():
 
     for i in range(1, lim["max_iterations"] + 1):
         escalated = goose_ok and strong_ok and (
-            same >= lim["escalate_after"] or no_gain >= lim["escalate_after"])
+            same >= lim["escalate_after"] or no_gain >= lim["escalate_after"] or spin >= 1)
         log(f"iteration {i}/{lim['max_iterations']}" + (" [ESCALATED to strong model]" if escalated else ""))
         notes = []
         iteration_started = time.time()
         tokens_before = goose_tokens_used()
 
         log_path = goose_log_path(i)
-        rc = run_goose(args.recipe, i, escalated, failures_file, models, goose_to)
+        rc = run_goose(args.recipe, i, escalated, failures_file, models, goose_to,
+                       base_commit=start_sha)
         kind, fatal = goose_failure_reason(log_path, rc)
         if kind == "model" and escalated:
             # The strong model can be missing from the account (a plan change, a
@@ -1419,7 +1443,7 @@ def main():
             escalated = False
             log_path = goose_log_path(i, "-fallback")
             rc = run_goose(args.recipe, i, escalated, failures_file, models, goose_to,
-                           attempt="-fallback")
+                           attempt="-fallback", base_commit=start_sha)
         goose_ok = rc == 0
         if rc != 0:
             goose_fails += 1
@@ -1497,9 +1521,27 @@ def main():
         cleared = scoping.update_state(scope_state, scope, prev_failing_ids, res["failing"])
         prev_failing_ids = list(res["failing"])
 
-        tokens_total = progress(i, res, prev_failing, iteration_started, tokens_before,
-                                tokens_total, scope, cleared)
+        tokens_total, spent = progress(i, res, prev_failing, iteration_started, tokens_before,
+                                       tokens_total, scope, cleared)
+        # Measured before `prev_failing` moves: what this iteration bought.
+        cleared_n = prev_failing - len(res["failing"])
         prev_failing = len(res["failing"])
+
+        # A run can clear failures for ten times the tokens and never trip `no_gain`,
+        # because the count *did* fall. That is the spin the measured 5.17 run hit:
+        # 9.81 M tokens to clear three e2e tests on the flash model — 3.3 M per
+        # failure against a usual ~0.7 M — and escalation never fired. An iteration
+        # over the token budget whose rate per cleared failure is above the threshold
+        # counts as a spin, and one spin escalates the next iteration.
+        spin = spin_after(spin, spent, cleared_n, lim)
+        if spin:
+            per = f"{spent / cleared_n / 1000:.0f}k" if cleared_n else "n/a"
+            log(f"spin guard: {fmt_tokens(spent)} bought {cleared_n} cleared failure(s) "
+                f"({per}/failure)" + ("; the next iteration escalates" if strong_ok else ""))
+            notes.append(
+                f"The previous iteration spent {fmt_tokens(spent)} and cleared {cleared_n} "
+                f"failure(s). Work directly: read only the files the failures name, run only "
+                f"the one test file you are fixing, and do not dump the working diff.")
 
         # A green suite is not a finished change when the prose this run added
         # breaks the rules. The verdict is a claim about the whole diff, and the
@@ -1539,6 +1581,13 @@ def main():
                    f"tests pass, but {len(comment_bad)} comment violation(s) remain "
                    f"after {max(same, no_gain)} iterations", 7, iterations=i,
                    comment_violations=comment_bad[:10])
+        if spin >= 2:
+            # The first spin escalated; this one is the strong model doing the same
+            # thing. Another iteration would cost the same and prove the same point.
+            finish("needs_human",
+                   f"spinning: {spin} iterations over budget at more than "
+                   f"{fmt_tokens(lim.get('tokens_per_cleared_failure'))} per cleared failure "
+                   f"(last: {fmt_tokens(spent)} for {cleared_n})", 2, iterations=i)
         if same >= lim["escalate_after"] + lim["strong_attempts"]:
             finish("needs_human", f"stuck on the same {len(res['failing'])} failures", 2,
                    iterations=i, failing=res["failing"][:50])

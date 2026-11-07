@@ -5,6 +5,13 @@ version: "1.0.0"
 title: "Spec to Tests"
 description: "Turn a feature request into approved 'it should...' sentences, then branch, stub, write failing tests, push and open a draft PR."
 
+parameters:
+  - key: base_commit
+    input_type: string
+    requirement: optional
+    default: ""
+    description: "The commit this run started from"
+
 instructions: |
   You turn a feature request into a reviewed, approved set of behaviour sentences,
   and then into failing tests on a new branch. You do NOT implement the feature.
