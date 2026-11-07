@@ -109,6 +109,8 @@
           v-else-if="viewMode === 'notes'"
           :store="store"
           :initial-entry-id="notesEntryId"
+          :origin-view="notesOriginView"
+          @jump="onNotesJump"
         />
         <DocumentRenderer
           ref="editorRef"
@@ -247,6 +249,9 @@ const editorRef = ref(null)
 const scrollLayerRef = ref(null)
 const viewMode = ref('editor')
 const notesEntryId = ref('overview')
+// Remembered when Notes is entered: the view the section jump returns to
+// (SPEC.md 5.17 — from History the default is the editor).
+const notesOriginView = ref('editor')
 const leftDrawerOpen = ref(false)
 const leftDrawerMode = ref('chapters')
 const rightDrawerOpen = ref(false)
@@ -476,11 +481,26 @@ function onSetMode(mode) {
     return
   }
   if (mode === 'notes') {
-    // Notes opens on the entry for the section under the caret (S-015). The
-    // overview is the entry when Notes opens from any other source view.
-    notesEntryId.value = viewMode.value === 'editor'
-      ? (editorRef.value?.getCurrentSectionId?.() || 'overview')
-      : 'overview'
+    // Notes opens on the caret section (S-015), or on the section starting the
+    // manuscript page at the top (S-016); any other source opens the overview.
+    // DocumentRenderer routes getCurrentSectionId to the active view, so the
+    // editor and the manuscript both seed here. The branch runs before the
+    // viewMode assignment below, so viewMode.value is still the source view.
+    // The origin is remembered for the return jump (onNotesJump); from History
+    // it falls back to the editor.
+    const source = viewMode.value
+    notesOriginView.value = source === 'manuscript' ? 'manuscript' : 'editor'
+    notesEntryId.value =
+      source === 'editor' || source === 'manuscript'
+        ? (editorRef.value?.getCurrentSectionId?.() || 'overview')
+        : 'overview'
+  }
+  // Entering the manuscript needs the breaks before its first render; the sync
+  // API skips the 300ms debounce. Without it a just-loaded document renders as
+  // one giant clipped page, and every scroll target below page 2 clamps short
+  // of its section. A warm re-entry reuses the per-section cache, so is cheap.
+  if (mode === 'manuscript' && viewMode.value !== 'manuscript') {
+    paginationRaw.calculateBreaks()
   }
   // Close an open drawer whose button vanishes in the target view (Scheme A:
   // ActivityBar buttons are view-aware via isDrawerModeAllowedIn). Without
@@ -544,6 +564,17 @@ function onToggleVersions() {
 function onScrollTo(id) {
   const forceEditor = viewMode.value === 'history'
   nav.scrollToSection(id, forceEditor ? () => { viewMode.value = 'editor' } : undefined)
+}
+
+// Section jump from a Notes entry (SPEC.md 5.17): the jump returns to the
+// view the writer came from. nav.scrollToSection switches the view (the
+// callback runs before its scroll) then nextTick-scrolls the active inner
+// view. The callback must not go through onSetMode; that would run the notes
+// branch again and re-seed the entry id.
+function onNotesJump(sectionId) {
+  if (!sectionId) return
+  const targetView = notesOriginView.value === 'manuscript' ? 'manuscript' : 'editor'
+  nav.scrollToSection(sectionId, () => { viewMode.value = targetView })
 }
 
 // Manuscript "Go to top" button (5.1b). The manuscript's first page is the

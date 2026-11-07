@@ -74,10 +74,12 @@ function getCurrentPage() {
   return activeRef()?.getCurrentPage?.() ?? 1
 }
 
-// App.vue seeds the entry id in its onSetMode notes branch (SPEC.md 5.17).
-// The manuscript view has no caret, so the forwarder reads the editor view.
+// Route to whichever view is active, like getCurrentPage above (SPEC.md 5.17).
+// The manuscript answers with the section on its current page; the editor
+// answers with the section under the caret. App.vue's notes branch seeds the
+// Notes entry from the answer.
 function getCurrentSectionId() {
-  return editorRef.value?.getCurrentSectionId?.() ?? null
+  return activeRef()?.getCurrentSectionId?.() ?? null
 }
 
 function scrollToPage(n) {
