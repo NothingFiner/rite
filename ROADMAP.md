@@ -1,6 +1,6 @@
 # Rite — Roadmap
 
-Status as of **2026-11-06**, `development` at `0b3b85e` (comment gate #24, history change navigation #25, color controls #27 merged).
+Status as of **2026-11-07**, `development` at `57982fb` (accessibility pass complete: 5.7a #29 and 5.7b #30 merged).
 
 Tauri v1 → v2 migration landed as PR #15 — a prerequisite for 5.11's context menu, not a roadmap item of its own.
 
@@ -20,9 +20,9 @@ The last feature phase. When this is done, Rite is feature-complete for a first 
 | 5.4 | Writing stats: daily word target + progress graph in a sidebar item | done (#19) |
 | 5.5 | Outline drag-reorder + `MoveSection` | done |
 | 5.6 | Editor extraction (cursor → page-nav → readback → render) | done (PR1–4) |
-| **5.7** | **Accessibility pass** | **open — keyboard pass done (#21), semantics and polish remain (now 5.7a / 5.7b)** |
-| **5.7a** | **Editor, toolbar and activity-bar semantics** | **open — next** |
-| **5.7b** | **Reduced motion, `:focus-visible`, landmarks and the `Ruler.vue` decision** | **open** |
+| 5.7 | Accessibility pass | done (#21, #29, #30) |
+| 5.7a | Editor, toolbar and activity-bar semantics | done (#29) |
+| 5.7b | Reduced motion, `:focus-visible`, landmarks and the `Ruler.vue` decision | done (#30) |
 | 5.8 / 5.8a | Spellcheck (native squiggles + context menu) | done |
 | 5.9 | Subtitle-less chapters | done |
 | 5.10 | Hidden sections replace epigrams | done |
@@ -117,25 +117,26 @@ role, no tab stop, and no Enter/Space:
 - ~~`NavigationDrawer.vue`~~ — done (#21): rows are real controls with a roving tabindex.
 - ~~`HistoryListDrawer.vue`~~ — done (#21): entries are `li[role=button]` with `tabindex`.
 - ~~`StatusBar.vue`~~ — gone: #27 deletes the picker, and the drawer's swatches are buttons.
-- ~~`Ruler.vue`~~ — nothing to fix: no component mounts `Ruler.vue`. It is dead code
-  with a live spec, so 5.7b deletes it or wires it up.
+- ~~`Ruler.vue`~~ — deleted in #30 with its spec: no component mounted it, so it was
+  dead code with a live spec.
 
 **Focus management.** Done in #21 for the drawers: opening one focuses its active
-row, Escape returns focus to the opener, and Tab deliberately leaves (S-018). Still
-open: the format buttons carry `tabindex="-1"` to keep the caret in the editor, and
-Cmd+B/I/U mitigates that, but they still need a name and an `aria-pressed` state.
-`Toolbar.vue` declares `role="tablist"` with three `role="tab"` buttons but no
-arrow-key navigation and no roving tabindex.
+row, Escape returns focus to the opener, and Tab deliberately leaves (S-018). The
+format buttons keep `tabindex="-1"` to keep the caret in the editor, with Cmd+B/I/U
+as their route; #29 gives them a name and an `aria-pressed` state. `Toolbar.vue`'s
+view tablist gained arrow-key navigation and a roving tabindex in #29.
 
-**Then, naming and structure.** The editor (`editorDisplay.vue`) is a bare
-`contenteditable="true"` div: no `role="textbox"`, no `aria-multiline`, no label,
-and no headings, so the manuscript cannot be navigated by section. 66 `<button>`
-elements against 27 `aria-*` attributes; `ActivityBar`'s icons rely on the `title`
-attribute alone, and a tooltip is not an accessible name.
+**Then, naming and structure.** The editor (`editorDisplay.vue`) was a bare
+`contenteditable="true"` div. #29 gives it `role="textbox"`, `aria-multiline` and
+the fixed name Manuscript, and #30 turns section titles into level 1 and level 2
+headings in both views, so the manuscript can be navigated by section.
+`ActivityBar`'s icons now carry accessible names rather than relying on `title`
+alone.
 
-**Last, polish.** No landmarks or skip link. No `prefers-reduced-motion`, so the
-drawer and format animations ignore the setting. Several `outline: none` rules
-re-style a border on `:focus` and nothing uses `:focus-visible`.
+**Last, polish.** #30 adds the four landmark roles, a skip link that leads the tab
+order, and a global `prefers-reduced-motion` query. It also replaces the
+`outline: none` rules with a `:focus-visible` ring, so the keyboard sees focus and
+a click does not.
 
 Scope note: a markup, focus and CSS pass — not a redesign, and no new dependency.
 
@@ -143,6 +144,8 @@ Scope note: a markup, focus and CSS pass — not a redesign, and no new dependen
 behaviour, the format buttons' name and pressed state, `ActivityBar` names. 5.7b is
 the CSS and structure half: `prefers-reduced-motion`, `:focus-visible`, landmarks and
 skip link, and the `Ruler.vue` decision.
+
+Both halves shipped: 5.7a in #29 and 5.7b in #30.
 
 ### 5.13 — Colour picker consolidation
 
@@ -173,7 +176,7 @@ in this phase turns out to be a feature, it belongs in Phase 5 instead.
 | 6.4 | Error-handling sweep (`console.error` → user-visible reporting) | open — 15 sites remain |
 | 6.5 | Release / build packaging (icons, signing, notarization, updater) | partly — `identifier: com.rite.app` set |
 | 6.6 | Manuscript view unification (use the 5.6 composables) | open |
-| 6.7 | Final accessibility + manual QA | blocked on 5.7 |
+| 6.7 | Final accessibility + manual QA | open — 5.7 is done, so the final pass can start |
 
 ---
 
