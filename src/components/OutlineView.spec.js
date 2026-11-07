@@ -41,7 +41,13 @@ function mountView({ sections, entries, stale, settings } = {}) {
   })
 }
 
-const row = (wrapper, sectionId) => wrapper.find(`.outline-row[data-section-id="${sectionId}"]`)
+/// Assert-then-query: a missing row must fail as an assertion, not as
+/// @vue/test-utils' "cannot call find on an empty DOMWrapper".
+function row(wrapper, sectionId) {
+  const found = wrapper.find(`.outline-row[data-section-id="${sectionId}"]`)
+  expect(found.exists()).toBe(true)
+  return found
+}
 
 const twoSections = () => [
   section('c1', 'The Arrival', 'chapter'),
