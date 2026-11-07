@@ -1,24 +1,5 @@
 <template>
   <div class="notes-view" :style="notesStyles">
-    <div class="notes-list">
-      <!-- Rows come from `noteEntries(store.doc)` in `useNotes.js`, which owns
-           the order. A click only selects a row and emits `select`. Navigation
-           is the pane's section jump (SPEC.md 5.17). -->
-      <button
-        v-for="entry in entries"
-        :key="entry.id"
-        type="button"
-        class="notes-entry"
-        :class="{
-          'is-chapter': entry.kind === 'chapter',
-          'is-section': entry.kind === 'section',
-          'notes-orphans': entry.kind === 'orphaned',
-          selected: entry.id === selectedEntryId,
-        }"
-        :data-entry-id="entry.id"
-        @click="selectEntry(entry.id)"
-      >{{ entry.title }}</button>
-    </div>
     <div class="note-pane">
       <div class="note-head">
         <div class="note-title">{{ selectedTitle }}</div>
@@ -94,7 +75,7 @@
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { noteDraftUndo, noteEntries, readNote } from '../composables/useNotes.js'
 import { renderMarkdown } from '../composables/useMarkdown.js'
 
@@ -107,17 +88,29 @@ const props = defineProps({
   theme: { type: Object, default: null },
   // Generated per-section recaps, keyed by section id: `{ [sectionId]: text }`.
   recaps: { type: Object, default: () => ({}) },
-  // The entry selected when the view opens.
-  initialEntryId: { type: String, default: 'overview' },
+  // The entry the detail page shows. The selection follows this prop.
+  entryId: { type: String, default: 'overview' },
   // The text view the writer came from. The section jump returns to it.
   originView: { type: String, default: 'editor' },
 })
 
-const emit = defineEmits(['select', 'jump'])
+const emit = defineEmits(['jump'])
 
-// The selected row starts from the id the view was opened with and changes
-// only by clicking a row.
-const selectedEntryId = ref(props.initialEntryId)
+// The selection starts from the prop and follows it. A closing session
+// belongs to the previous entry, so its draft lands on that entry before
+// the selection moves (SPEC.md 5.17).
+const selectedEntryId = ref(props.entryId)
+
+watch(
+  () => props.entryId,
+  (entryId) => {
+    if (entryId === selectedEntryId.value) return
+    commitDirtyDraft()
+    isEditing.value = false
+    noteDraftUndo.end()
+    selectedEntryId.value = entryId
+  }
+)
 
 const entries = computed(() => noteEntries(props.store.doc))
 
@@ -185,16 +178,6 @@ function commitDirtyDraft() {
   props.store.commitNote(selectedEntryId.value, draftText.value)
 }
 
-function selectEntry(entryId) {
-  // A closing session belongs to the previous entry, so its draft lands on
-  // that entry before the selection moves (SPEC.md 5.17).
-  commitDirtyDraft()
-  isEditing.value = false
-  noteDraftUndo.end()
-  selectedEntryId.value = entryId
-  emit('select', entryId)
-}
-
 // The check commits the draft for the still-selected entry, then ends the
 // session. The commit runs before the flag drops, because a sessionless
 // draft skips the write.
@@ -251,48 +234,6 @@ onBeforeUnmount(() => {
   min-height: 100%;
   display: flex;
   align-items: stretch;
-}
-
-.notes-list {
-  flex: 0 0 220px;
-  overflow-y: auto;
-  padding: 16px 8px;
-  background: var(--glass-bg);
-  border-right: 1px solid var(--bg-glass-border);
-}
-
-/* Row chrome mirrors the drawer's .nav-section rows (same flat grammar), with
-   a native button so each row is keyboard-reachable without extra wiring. */
-.notes-entry {
-  display: block;
-  width: 100%;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  text-align: left;
-  color: var(--note-text, var(--text-primary));
-  background: none;
-  border: none;
-  border-radius: var(--radius-sm);
-  padding: 6px 8px;
-  margin-bottom: 2px;
-  cursor: pointer;
-  user-select: none;
-  transition: background 0.15s;
-}
-
-.notes-entry:hover,
-.notes-entry.selected {
-  background: var(--hover-bg);
-}
-
-/* The selected row paints with the theme accent (S-022). The fallback keeps
-   a themeless mount on the chrome accent. */
-.notes-entry.selected {
-  color: var(--note-accent, var(--accent));
 }
 
 .note-pane {
