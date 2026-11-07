@@ -259,3 +259,43 @@ function makePara(content) {
     elements: [{ textRun: { content, textStyle: {} } }],
   }
 }
+// --- headings (SPEC.md 5.7b, S-001) ------------------------------------------
+//
+// One function emits the title markup for both views. The heading levels are
+// asserted here once instead of in each renderer. Chapters are the top unit and
+// a section sits inside one, hence level 1 and level 2.
+
+describe('section titles as headings', () => {
+  const chapter = { id: 's1', title: 'The Arrival', sectionType: 'chapter' }
+  const section = { id: 's2', title: 'Prologue', sectionType: 'section' }
+
+  it('S-001: renders a chapter title as a level 1 heading in the editor markup', () => {
+    const html = sectionTitleToHTML(chapter, 1, 'Chapter 1: ', { fresh: false })
+    expect(html).toContain('role="heading"')
+    expect(html).toContain('aria-level="1"')
+  })
+
+  it('S-001: renders a section title as a level 2 heading in the editor markup', () => {
+    const html = sectionTitleToHTML(section, null, '', { fresh: false })
+    expect(html).toContain('role="heading"')
+    expect(html).toContain('aria-level="2"')
+  })
+
+  it('S-001: renders the manuscript headings at the same two levels', () => {
+    const chapterHtml = sectionTitleToHTML(chapter, 1, 'Chapter 1: ', { manuscript: true })
+    const sectionHtml = sectionTitleToHTML(section, null, '', { manuscript: true })
+
+    expect(chapterHtml).toContain('role="heading"')
+    expect(chapterHtml).toContain('aria-level="1"')
+    expect(sectionHtml).toContain('role="heading"')
+    expect(sectionHtml).toContain('aria-level="2"')
+  })
+
+  it('S-001: keeps the heading attributes on a subtitle-less chapter and a hidden title', () => {
+    const bare = { id: 's3', title: '', sectionType: 'chapter' }
+    const hidden = { id: 's4', title: 'Cut', sectionType: 'section', hidden: true }
+
+    expect(sectionTitleToHTML(bare, 3, 'Chapter 3: ', { fresh: false })).toContain('aria-level="1"')
+    expect(sectionTitleToHTML(hidden, null, '', { fresh: false })).toContain('aria-level="2"')
+  })
+})

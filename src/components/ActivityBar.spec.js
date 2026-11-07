@@ -104,3 +104,15 @@ describe('ActivityBar', () => {
     expect(drawerItems(wrapper)).toHaveLength(4)
   })
 })
+// SPEC.md 5.7b S-005. The rail is the app's own navigation region. It needs a
+// name as well as the role, or a screen reader announces a navigation landmark
+// with nothing to tell it apart.
+describe('ActivityBar landmark', () => {
+  it('S-005: marks the activity bar with the navigation role and a name', () => {
+    const wrapper = mount(ActivityBar)
+    const bar = wrapper.find('.activity-bar')
+
+    expect(bar.attributes('role')).toBe('navigation')
+    expect(bar.attributes('aria-label')).toBeTruthy()
+  })
+})

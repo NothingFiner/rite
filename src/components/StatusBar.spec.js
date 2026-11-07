@@ -57,3 +57,12 @@ describe('StatusBar', () => {
     })
   })
 })
+
+// SPEC.md 5.7b S-005. The bar is the bottom region of the window, so it takes
+// the contentinfo role rather than a new element.
+describe('StatusBar landmark', () => {
+  it('S-005: marks the status bar with the contentinfo role', () => {
+    const wrapper = mount(StatusBar)
+    expect(wrapper.find('.statusbar').attributes('role')).toBe('contentinfo')
+  })
+})
