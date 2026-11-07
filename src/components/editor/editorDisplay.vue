@@ -36,6 +36,7 @@ import {
   navigateSectionPage as navigateSectionPageInSheet,
   scrollToPage as scrollToPageInSheet,
   getCurrentPage as getCurrentPageInSheet,
+  focusPageStart as focusPageStartInSheet,
 } from '../../composables/useEditorPageNav.js'
 import {
   useEditorReadback, PX_PER_INCH,
@@ -698,7 +699,14 @@ function scrollToSection(id) {
   const root = sheetRef.value
   if (!root) return
   const el = root.querySelector(`[data-section-id="${id}"]`)
-  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  if (!el) return
+  // A nav jump is a navigation, so it moves the caret and not only the scroll.
+  // With the caret left where it was, the section the writer chose was not the
+  // page the editor reported, and a switch to the manuscript opened on the last
+  // page of the previous chapter instead. focusPageStart puts the caret in the
+  // first paragraph after a locked title — the same walk page navigation does —
+  // and 'center' keeps the heading readable above it.
+  focusPageStartInSheet(el, 'smooth', 'center')
 }
 
 function renderFromDoc() {
