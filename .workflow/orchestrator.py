@@ -507,15 +507,25 @@ def report_layers(res):
     """
     for name, info in res["per_layer"].items():
         total = sum(1 for tid, _ in res["tests"] if tid.startswith(f"{name}::"))
-        bad = len(info["failing"])
+        # `failing` is everything that is not green, skipped included, because a
+        # skipped test must not read as a pass. Most skips are `#[ignore]`d tests
+        # that need a live server. The console view therefore separates them, so
+        # that a green verdict never sits beside a line that says "failed".
+        skipped_ids = set(info.get("skipped_ids") or [])
+        rest = [f for f in info["failing"] if f not in skipped_ids]
+        bad = len(rest)
+        skipped = len(info["failing"]) - bad
         seconds = info.get("seconds")
         took = f" ({seconds:.0f}s)" if isinstance(seconds, (int, float)) else ""
         if info.get("skipped"):
             log(f"  layer {name}: reused ({info['skipped']})")
             continue
-        log(f"  layer {name}: {total - bad} passed, {bad} failed{took}")
+        counts = f"{total - bad - skipped} passed, {bad} failed"
+        if skipped:
+            counts += f", {skipped} skipped"
+        log(f"  layer {name}: {counts}{took}")
         detail = junit_first_lines(Path(info["report"])) if info.get("report") else {}
-        for f in info["failing"][:REPORT_FAILING_SHOWN]:
+        for f in rest[:REPORT_FAILING_SHOWN]:
             tid = f.split("::", 1)[-1]
             log(f"    FAIL {tid}")
             if detail.get(tid):
@@ -673,7 +683,9 @@ def run_layers(cfg, timeout_s, live=False, prev_status=None, reuse=None):
                 bad = [f"{name}::{tid}" for tid, st in carried.items() if st != "passed"]
                 failing += bad
                 per_layer[name] = {"rc": 0, "failing": bad, "log": str(OUT / f"{name}.log"),
-                                   "report": None, "seconds": 0.0, "skipped": reason}
+                                   "report": None, "seconds": 0.0, "skipped": reason,
+                                   "skipped_ids": [f"{name}::{tid}" for tid, st in carried.items()
+                                                   if st == "skipped"]}
                 log(f"running layer {name}: reused, {reason}")
                 if layer_is_red(carried.values()):
                     red_layers.add(name)
@@ -703,7 +715,9 @@ def run_layers(cfg, timeout_s, live=False, prev_status=None, reuse=None):
             bad.append(f"{name}::{SYNTHETIC[1]}")
         failing += bad
         per_layer[name] = {"rc": rc, "failing": bad, "log": str(logfile),
-                           "report": str(report) if report else None, "seconds": elapsed}
+                           "report": str(report) if report else None, "seconds": elapsed,
+                           "skipped_ids": [f"{name}::{tid}" for tid, st in parsed
+                                           if st == "skipped"]}
         # A non-zero exit is red whatever the parse says (a compile error, a
         # timeout, a crash before the first test). Otherwise only a real failure
         # marks the layer red for its dependents; see layer_is_red.
