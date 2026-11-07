@@ -5,8 +5,9 @@ import { installTauriIpc } from './helpers/tauri-ipc.js'
 //
 // The unit layer covers the heading markup (src/composables/useParagraphHTML.test.js)
 // and the landmark roles on the three chrome components. What only a real page
-// can show is the accessibility tree built from that markup, where one Tab press
-// lands, and two computed styles: a motion duration and a focus ring.
+// can show is the accessibility tree built from that markup, and where one Tab
+// press lands. It also owns two computed styles: a motion duration and a focus
+// ring.
 //
 // Tauri IPC is the shared mock from ./helpers/tauri-ipc.js.
 
