@@ -73,18 +73,26 @@ const emit = defineEmits(['toggleRight', 'setMode', 'goToTop'])
 // mode to emit.
 const VIEW_MODES = ['editor', 'manuscript', 'history']
 
-// Delegated tablist keys (S-005). ArrowRight and ArrowLeft move and select,
-// wrapping at the ends. Automatic activation means emit and focus here: the
-// parent re-render that updates tabindex happens later.
+// Delegated tablist keys. ArrowRight and ArrowLeft move and select, wrapping
+// at the ends. Home and End select the first and last tab. Automatic
+// activation means emit and focus here: the parent re-render that updates
+// tabindex happens later.
 function onViewTabsKeydown(event) {
-  if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return
+  const isEdgeKey = event.key === 'Home' || event.key === 'End'
+  const isArrowKey = event.key === 'ArrowRight' || event.key === 'ArrowLeft'
+  if (!isEdgeKey && !isArrowKey) return
   const tabs = Array.from(event.currentTarget.querySelectorAll('.view-tab'))
   const pressedIndex = tabs.indexOf(event.target)
   if (pressedIndex === -1) return
-  // (index plus step) modulo tab count wraps the ends; the added tab count
-  // keeps the ArrowLeft result positive.
-  const step = event.key === 'ArrowRight' ? 1 : -1
-  const targetIndex = (pressedIndex + step + tabs.length) % tabs.length
+  let targetIndex
+  if (isEdgeKey) {
+    targetIndex = event.key === 'Home' ? 0 : tabs.length - 1
+  } else {
+    // (index plus step) modulo tab count wraps the ends. The added tab count
+    // keeps the ArrowLeft result positive.
+    const step = event.key === 'ArrowRight' ? 1 : -1
+    targetIndex = (pressedIndex + step + tabs.length) % tabs.length
+  }
   event.preventDefault()
   emit('setMode', VIEW_MODES[targetIndex])
   tabs[targetIndex].focus()
@@ -193,8 +201,8 @@ function onViewTabsKeydown(event) {
 
 /* View-switch tabs: a connected, segmented tab group so the buttons read as
    view navigation rather than generic toolbar buttons. The group container
-   supplies the shared border + outer rounding; inner dividers separate tabs.
-   Active tab is accent-filled, inactive tabs are muted — both states reuse
+   supplies the shared border + outer rounding. Inner dividers separate tabs.
+   Active tab is accent-filled, inactive tabs are muted. Both states reuse
    theme tokens so the look follows the active editor theme (light or dark). */
 .view-tabs {
   display: flex;
@@ -222,7 +230,7 @@ function onViewTabsKeydown(event) {
 }
 
 .view-tab.active {
-  /* The group container draws the outline; the accent fill marks the selected
+  /* The group container draws the outline. The accent fill marks the selected
      view. Keep the inner divider at the group border color so dividers stay
      consistent across active/inactive tabs (override .tool-btn.active, which
      would tint the divider accent). */
