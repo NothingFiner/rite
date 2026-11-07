@@ -1225,3 +1225,193 @@ describe('useChat — stop + clear', () => {
     await sendPromise
   })
 })
+// --- Notes scope (SPEC.md 5.17a, B-001) ------------------------------------
+//
+// The Notes scope answers questions about the author's notes, not the prose.
+// The record is threaded in as `useChat`'s fifth argument, a ref-like
+// `{ value: notes }` mirroring `docRef`. `useNotes.js` owns the string
+// translation (`notesToText`). These sentences pin that the chat path uses it,
+// and that no other scope leaks into it.
+
+// The notes record exactly as the store holds it (see `emptyNotes`).
+function makeNotes(overrides = {}) {
+  return { overview: '', sections: {}, orphaned: '', ...overrides }
+}
+
+function chatWithNotes(doc, notes, editorRef = { value: null }) {
+  return useChat(docRef(doc), makeLlmSettings(), makeNav(), editorRef, { value: notes })
+}
+
+describe('useChat — Notes scope', () => {
+  it("S-001: sends the overview and every non-empty section note in document order", () => {
+    // The third section exists only to prove that a whitespace-only note is
+    // treated as "no note": its heading must not appear at all. It is a real
+    // section of the document, so a heading would be possible.
+    const doc = makeDocument([
+      ...sampleDocument().sections,
+      makeSection('s3', 'Interlude', 'section', [makeParagraph('p4', 'Time passed.')]),
+    ])
+    const notes = makeNotes({
+      overview: 'The letter drives the plot.',
+      sections: { s1: 'The door is a lie.', s2: 'A quiet closing scene.', s3: '   ' },
+    })
+    const chat = chatWithNotes(doc, notes)
+    chat.scope.value = 'notes'
+
+    const messages = chat.buildContextMessages('is the outline coherent?')
+    const context = messages[0].content
+
+    expect(context).toContain('The letter drives the plot.')
+    expect(context).toContain('The door is a lie.')
+    expect(context).toContain('A quiet closing scene.')
+    // A whitespace-only note is "no note", so its section is not headed at all.
+    expect(context).not.toContain('Interlude')
+
+    const overviewAt = context.indexOf('The letter drives the plot.')
+    const doorAt = context.indexOf('The door is a lie.')
+    const closingAt = context.indexOf('A quiet closing scene.')
+    expect(overviewAt).toBeLessThan(doorAt)
+    expect(doorAt).toBeLessThan(closingAt)
+  })
+
+  it('S-002: sends no manuscript prose for the Notes scope, including an unrecognised scope', () => {
+    const doc = sampleDocument()
+
+    // The pure builder refuses the notes scope outright instead of falling
+    // through to the whole document.
+    expect(documentToText(doc, 'notes')).toBe('')
+    // And an unknown scope must not be a synonym for "whole document" either.
+    expect(documentToText(doc, 'a-scope-that-does-not-exist')).toBe('')
+
+    const chat = chatWithNotes(doc, makeNotes({ overview: 'Outline first.' }))
+    chat.scope.value = 'notes'
+    for (const message of chat.buildContextMessages('is the outline coherent?')) {
+      expect(message.content).not.toContain('The door opened.')
+    }
+  })
+
+  it("S-003: labels the Notes context as the author's notes", () => {
+    const chat = chatWithNotes(sampleDocument(), makeNotes({ overview: 'Outline first.' }))
+    chat.scope.value = 'notes'
+    const context = chat.buildContextMessages('thoughts?')[0].content
+
+    expect(context).toContain("author's notes")
+    // Neither of the accidental fallbacks the label used before the fix.
+    expect(context).not.toContain('current section')
+    expect(context).not.toContain('full manuscript')
+  })
+
+  it('S-004: keeps the Notes scope when the editor has a live selection', () => {
+    const chat = chatWithNotes(
+      sampleDocument(),
+      makeNotes({ overview: 'Outline first.' }),
+      makeEditorRef({ hasSelection: true, selectionText: 'the chosen passage' }),
+    )
+    chat.scope.value = 'notes'
+
+    // A selection is manuscript text. It must not capture a notes question.
+    expect(chat.effectiveScope.value).toBe('notes')
+    const context = chat.buildContextMessages('thoughts?')[0].content
+    expect(context).toContain('Outline first.')
+    expect(context).not.toContain('the chosen passage')
+  })
+
+  it('S-005: counts the notes in the context-size readout and not the manuscript', () => {
+    const notes = makeNotes({ overview: 'Outline first.', sections: { s1: 'The door is a lie.' } })
+    const shortDoc = sampleDocument()
+    const longDoc = makeDocument([
+      makeSection('s1', 'The Arrival', 'chapter', [
+        makeParagraph('p1', 'The door opened. '.repeat(200)),
+      ]),
+      makeSection('s2', 'Notes', 'section', [makeParagraph('p3', 'A quiet scene. '.repeat(200))]),
+    ])
+
+    const tokensFor = (doc, record) => {
+      const chat = chatWithNotes(doc, record)
+      chat.scope.value = 'notes'
+      return estimateContextTokens(chat.buildContextMessages('thoughts?'))
+    }
+
+    // The readout is the same function the drawer's counter uses. The
+    // manuscript's length must not move it.
+    expect(tokensFor(longDoc, notes)).toBe(tokensFor(shortDoc, notes))
+
+    // The notes must.
+    const richer = makeNotes({ overview: 'Outline first. '.repeat(100) })
+    expect(tokensFor(shortDoc, richer)).toBeGreaterThan(tokensFor(shortDoc, notes))
+  })
+
+  it('S-006: still sends the author-notes preamble when every note is empty, and no manuscript text', () => {
+    const chat = chatWithNotes(sampleDocument(), makeNotes())
+    chat.scope.value = 'notes'
+    const context = chat.buildContextMessages('thoughts?')[0].content
+
+    expect(context).toMatch(/author/i)
+    expect(context).toMatch(/not/i)
+    expect(context).not.toContain('The door opened.')
+  })
+
+  it('S-007: omits the orphaned-notes draft even when the draft has text', () => {
+    const notes = makeNotes({
+      overview: 'Outline first.',
+      orphaned: '## The Door\n\nThe door is a lie.',
+    })
+    const chat = chatWithNotes(sampleDocument(), notes)
+    chat.scope.value = 'notes'
+    const context = chat.buildContextMessages('thoughts?')[0].content
+
+    expect(context).toContain('Outline first.')
+    expect(context).not.toContain('The door is a lie.')
+  })
+
+  it("S-008: includes a hidden section's note, matching the Notes list", () => {
+    const doc = makeDocument([
+      {
+        ...makeSection('e1', 'Epigram', 'section', [makeParagraph('p1', 'Only connect.')]),
+        hidden: true,
+      },
+      makeSection('s1', 'The Arrival', 'chapter', [makeParagraph('p2', 'The door opened.')]),
+    ])
+    const notes = makeNotes({ sections: { e1: 'Keep the epigraph for the epilogue.' } })
+    const chat = chatWithNotes(doc, notes)
+    chat.scope.value = 'notes'
+    const context = chat.buildContextMessages('thoughts?')[0].content
+
+    // The note is author commentary about a row the Notes list still shows,
+    // so it is included. The hidden section's prose, by contrast, stays
+    // header-less in the manuscript scopes (5.10).
+    expect(context).toContain('Keep the epigraph for the epilogue.')
+    expect(context).toContain('Epigram')
+  })
+
+  it("S-009: heads an unnamed chapter's note with its derived chapter title", () => {
+    const doc = makeDocument([
+      makeSection('c1', '', 'chapter', [makeParagraph('p1', 'The door opened.')]),
+    ])
+    const notes = makeNotes({ sections: { c1: 'The letter arrives.' } })
+    const chat = chatWithNotes(doc, notes)
+    chat.scope.value = 'notes'
+    const context = chat.buildContextMessages('thoughts?')[0].content
+
+    // A Chapter's stored title is its subtitle. Blank is legitimate (5.9), so
+    // the heading must derive the number rather than emit a bare "## ".
+    expect(context).toContain('## Chapter 1')
+    expect(context).toContain('The letter arrives.')
+    expect(context).not.toContain('## \n')
+  })
+
+  it("S-014: sends no deleted section's note, because the orphaned draft is not sent", () => {
+    // The state after a deletion: the section key is gone, and the text lives
+    // only in `orphaned`, which describes prose the manuscript has dropped.
+    const notes = makeNotes({
+      sections: { s2: 'Still part of the manuscript.' },
+      orphaned: '## The Door\n\nThe door is a lie.',
+    })
+    const chat = chatWithNotes(sampleDocument(), notes)
+    chat.scope.value = 'notes'
+    const context = chat.buildContextMessages('thoughts?')[0].content
+
+    expect(context).toContain('Still part of the manuscript.')
+    expect(context).not.toContain('The door is a lie.')
+  })
+})

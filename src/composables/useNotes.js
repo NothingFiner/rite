@@ -143,6 +143,17 @@ export function orphanSectionNote(notes, section, displayTitle = section?.title)
   return record
 }
 
+// Orphans one section's note as part of its deletion. The caller passes the
+// pre-deletion document, because a deleted section keeps no title or chapter
+// index to derive the heading from. When the document holds no section with
+// the id, `writeNote` with blank text just cleans the record's key.
+export function orphanDeletedSection(doc, notes, sectionId) {
+  const sections = Array.isArray(doc?.sections) ? doc.sections : []
+  const found = sectionsWithChapterIndex(sections).find(({ section }) => section.id === sectionId)
+  if (!found) return writeNote(notes, sectionId, '')
+  return orphanSectionNote(notes, found.section, sectionDisplayTitle(found.section, found.chapterIndex))
+}
+
 // --- Note draft undo (S-026) ---
 //
 // The macOS menu owns Undo and Redo. While a note draft session is open, the

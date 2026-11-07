@@ -8,7 +8,8 @@
 // established pattern — see useNavigation/useSectionFormat). Needs the
 // document store's `doc` (for context), `llmSettings` (provider config), and
 // `nav` (for the current/nav-selected section id). `editorRef` supplies the
-// live text selection for the `selection` scope.
+// live text selection for the `selection` scope. An optional `notesRef`
+// mirrors `docRef` so the `notes` scope reads the author's notes record.
 //
 // The conversation is ephemeral for v1 (cleared on app restart / panel close).
 // `buildContextMessages` is structured as a pluggable step so a future RAG
@@ -19,6 +20,7 @@ import { ref, reactive, computed } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { flattenSections } from './useSectionBlocks.js'
+import { notesToText } from './useNotes.js'
 
 /// Maximum prior turns of conversation history sent with each message.
 /// Bounds the token cost — Ollama is stateless server-side, so we resend
@@ -131,6 +133,8 @@ function paragraphToText(paragraph) {
 ///   `document` — all sections in order, each with a header line.
 ///   `sectionId` (4th arg, optional) — the nav-selected section id for the
 ///     `section` scope.
+/// An unrecognised scope, `notes` included, returns '' rather than widening
+/// to the whole document (5.17a).
 /// Uses `flattenSections` so chapter numbering matches the editor's render
 /// (derived, never stored). Plain text only — no HTML.
 export function documentToText(doc, scope, selectionText = '', sectionId = null) {
@@ -139,6 +143,11 @@ export function documentToText(doc, scope, selectionText = '', sectionId = null)
   if (scope === 'selection') {
     return selectionText || ''
   }
+
+  // Any other scope, `notes` included (5.17a), contributes no text. Serving
+  // manuscript prose under a scope this builder cannot name is the leak this
+  // guard closes.
+  if (scope !== 'section' && scope !== 'document') return ''
 
   // Helper: header + paragraph body for one section, looked up by id in the
   // original (nested) doc so we get the real paragraphs, not just the title
@@ -314,7 +323,7 @@ export function formatSummaries(entries) {
   return lines.join('\n')
 }
 
-export function useChat(docRef, llmSettings, nav, editorRef) {
+export function useChat(docRef, llmSettings, nav, editorRef, notesRef) {
   const messages = ref([])
   const input = ref('')
   const scope = ref('section')
@@ -334,12 +343,11 @@ export function useChat(docRef, llmSettings, nav, editorRef) {
   // selection on top of it: "selection wins, except the whole-manuscript
   // scopes". A selection upgrades any localized scope to `selection` (so
   // highlighting a passage and asking "critique this" targets the passage, not
-  // the whole section); an explicit `document`, `passages`, `structure`, OR
-  // `summaries` choice short-circuits and is always respected — all four are
-  // whole-manuscript choices (pacing needs the full dump; `passages` needs to
-  // rank against the whole index; `structure` needs the complete per-chapter
-  // breakdown; `summaries` needs every section's recap to trace the arc), so a
-  // stray selection must not derail any of them. Separating intent (`scope`)
+  // the whole section). An explicit whole-manuscript scope short-circuits and
+  // is always respected. Each needs the full record: `document` the prose
+  // dump, `passages` the whole index, `structure` the per-chapter breakdown,
+  // `summaries` every recap. `notes` joins them because a selection is
+  // manuscript text and must not answer notes questions. Separating intent (`scope`)
   // from what's used (`effectiveScope`) means the auto-override never mutates
   // `scope`, so there's no sticky state — clearing the selection reverts on the
   // next read. `editorRef.value.hasSelection` is the reactive boolean forwarded
@@ -349,7 +357,8 @@ export function useChat(docRef, llmSettings, nav, editorRef) {
       scope.value === 'document' ||
       scope.value === 'passages' ||
       scope.value === 'structure' ||
-      scope.value === 'summaries'
+      scope.value === 'summaries' ||
+      scope.value === 'notes'
     if (editorRef?.value?.hasSelection && !isWholeManuscriptScope) {
       return 'selection'
     }
@@ -374,7 +383,8 @@ export function useChat(docRef, llmSettings, nav, editorRef) {
   /// calls it in a computed, which can't await), so the async retrieval happens
   /// in `send` BEFORE this is called and is threaded in here. When `null` (the
   /// readout, or any non-passages scope) the context is built from
-  /// `documentToText` per `effectiveScope` as before. For the `passages` scope
+  /// `documentToText` per `effectiveScope`. The `notes` scope builds its
+  /// context from `notesToText` instead. For the `passages` scope
   /// with no `retrievedContext` (the readout case), the context is empty — the
   /// readout can't preview async-retrieved passages, so it under-estimates
   /// (accepted, same philosophy as the `getSelectionText` caveat in 3.4).
@@ -410,6 +420,11 @@ export function useChat(docRef, llmSettings, nav, editorRef) {
       // by design (same accepted caveat as the passages scope).
       contextText = ''
       label = ''
+    } else if (effectiveScope.value === 'notes') {
+      // The notes record sits outside `Document`, so `notesToText` translates
+      // it (5.17a).
+      contextText = notesToText(notesRef?.value, docRef?.value?.sections || [])
+      label = scopeLabel(effectiveScope.value)
     } else {
       contextText = documentToText(
         docRef?.value || docRef,
@@ -441,6 +456,7 @@ export function useChat(docRef, llmSettings, nav, editorRef) {
   function scopeLabel(s) {
     if (s === 'selection') return 'selected text'
     if (s === 'document') return 'full manuscript'
+    if (s === 'notes') return "author's notes"
     if (s === 'passages') return 'relevant manuscript passages'
     if (s === 'structure') return 'manuscript structure'
     if (s === 'summaries') return 'section summaries'
@@ -653,8 +669,9 @@ export function useChat(docRef, llmSettings, nav, editorRef) {
 // presents them as tabs in the right drawer, so a writer can hold a Writing
 // Assistant tab and a Critic tab at the same time, each with its own history.
 //
-// `useChat` is left UNCHANGED: the existing `useChat.test.js` suite keeps
-// exercising it directly, and the manager just calls it once per tab. Each
+// Every session shares the `notesRef` the caller passes, so each tab builds
+// its `notes` scope from the live record at send time. `useChat.test.js`
+// exercises `useChat` directly. Each
 // session is wrapped in `reactive()` so its nested refs (`busy`, `messages`,
 // `selectedRoleName` …) auto-unwrap — exactly the way `reactive(useChat(...))`
 // worked when there was a single chat. The manager itself is wrapped in
@@ -687,7 +704,7 @@ function nextSessionId() {
 /// single-chat panel used to auto-select on mount.
 const DEFAULT_ROLE_NAME = 'Writing Assistant'
 
-export function useChatManager(docRef, llmSettings, nav, editorRef) {
+export function useChatManager(docRef, llmSettings, nav, editorRef, notesRef) {
   const roles = ref([])
   const sessions = ref([])
   const activeId = ref('')
@@ -699,7 +716,7 @@ export function useChatManager(docRef, llmSettings, nav, editorRef) {
   /// untouched, so `useChat`'s own `send`/`stop`/`setRole` still mutate them
   /// and the proxy reflects the changes.
   function makeSession() {
-    const session = useChat(docRef, llmSettings, nav, editorRef)
+    const session = useChat(docRef, llmSettings, nav, editorRef, notesRef)
     session.id = nextSessionId()
     return reactive(session)
   }
