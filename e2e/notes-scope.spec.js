@@ -3,10 +3,10 @@ import { installTauriIpc, ipcCalls } from './helpers/tauri-ipc.js'
 
 // The Notes scope end to end (SPEC.md 5.17a, B-001 and B-002).
 //
-// jsdom cannot answer these: S-010/S-011 need the drawer, the scope select and
-// the real request the app ships to Rust, and S-015 needs the Sections drawer,
-// a deletion and a page reload. The unit layer pins the context string; this
-// layer pins that the drawer and the deletion path are actually wired to it.
+// jsdom cannot answer these. S-010 and S-011 need the drawer, the scope select
+// and the real request the app ships to Rust. S-015 needs the Sections drawer,
+// a deletion and a page reload. The unit layer pins the context string, and
+// this layer pins that the drawer and the deletion path reach it.
 
 const textStyle = { bold: false, italic: false, underline: false, fontSize: null }
 
@@ -47,11 +47,17 @@ const seededDoc = {
 /// where `retrieve_notes` reads it back. Without the localStorage round trip a
 /// reload would come up with empty notes and S-015's "keep it" half would be
 /// vacuous.
+///
+/// The seed is written only when the store is empty. An init script runs on
+/// every navigation, so an unconditional write would rewind the record on the
+/// reload it is supposed to survive.
 async function installNotes(page, notes, doc = seededDoc) {
   await installTauriIpc(page, { doc })
   await page.addInitScript((seed) => {
     const empty = { overview: '', sections: {}, orphaned: '' }
-    localStorage.setItem('e2e-notes', JSON.stringify(seed))
+    if (!localStorage.getItem('e2e-notes')) {
+      localStorage.setItem('e2e-notes', JSON.stringify(seed))
+    }
     window.__tauriMock
       .route('update_notes', (args) => {
         localStorage.setItem('e2e-notes', JSON.stringify(args.notes))
@@ -146,12 +152,25 @@ test("S-015: shows a deleted section's note under Orphaned notes and keeps it af
 }) => {
   await installNotes(page, { overview: '', sections: { s1: 'The door is a lie.' }, orphaned: '' })
   // `delete_section` answers with the document minus the section, the way Rust
-  // does; the notes are the store's business, not Rust's.
+  // does. The notes are the store's business, not Rust's. The document is
+  // persisted beside the notes as well, because the reopened file has to hold
+  // the deletion too. A reload that hands the section back would resurrect its
+  // id and the orphaned draft would stop being orphaned.
   await page.addInitScript((doc) => {
-    window.__tauriMock.route('delete_section', () => ({
-      ...doc,
-      sections: doc.sections.filter((entry) => entry.id !== 's1'),
-    }))
+    if (!localStorage.getItem('e2e-doc')) {
+      localStorage.setItem('e2e-doc', JSON.stringify(doc))
+    }
+    const current = () => JSON.parse(localStorage.getItem('e2e-doc'))
+    window.__tauriMock
+      .route('get_document', () => current())
+      .route('delete_section', (args) => {
+        const next = {
+          ...current(),
+          sections: current().sections.filter((entry) => entry.id !== args.id),
+        }
+        localStorage.setItem('e2e-doc', JSON.stringify(next))
+        return next
+      })
   }, seededDoc)
   await openApp(page)
 
