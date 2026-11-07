@@ -213,6 +213,7 @@ import { useWordCount } from './composables/useWordCount.js'
 import { useWritingStats } from './composables/useWritingStats.js'
 import { usePagination } from './composables/usePagination.js'
 import { useManuscriptFormat } from './composables/useManuscriptFormat.js'
+import { usePointerModality } from './composables/usePointerModality.js'
 import { isDrawerModeAllowedIn } from './constants/drawerVisibility.js'
 import DocumentRenderer from './components/DocumentRenderer.vue'
 import Toolbar from './components/Toolbar.vue'
@@ -619,6 +620,8 @@ useKeyboardShortcuts({
   focusDrawerOpener,
   focusMode,
 })
+
+usePointerModality()
 
 onMounted(async () => {
   theme.loadPrefs()
