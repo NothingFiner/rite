@@ -76,12 +76,14 @@
 
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { noteDraftUndo, noteEntries, readNote } from '../composables/useNotes.js'
+import { noteDraftUndo, noteEntries, readNote, writeNote } from '../composables/useNotes.js'
 import { renderMarkdown } from '../composables/useMarkdown.js'
 
 const props = defineProps({
-  // The document store. NotesView reads `store.doc` and `store.notes` and
-  // commits through `store.commitNote(entryId, text)`.
+  // The document store. NotesView reads `store.doc` and `store.notes`. It
+  // commits through `store.commitNote(entryId, text)` when the store exposes
+  // that action. A minimal store still gets the record written with
+  // `writeNote` and marked modified.
   store: { type: Object, required: true },
   // The active theme (`{ bg, text, accent }`), the same object the editor
   // surface is painted with.
@@ -187,7 +189,19 @@ function onDraftInput(event) {
 function commitDirtyDraft() {
   if (!isEditing.value) return
   if (draftText.value === noteText.value) return
-  props.store.commitNote(selectedEntryId.value, draftText.value)
+  commitNote(selectedEntryId.value, draftText.value)
+}
+
+// Commits one note on the store, per the `store` prop contract above. The
+// action is the real document store's path and persists in Rust. A minimal
+// store carries only `notes`, so the record is swapped in locally.
+function commitNote(entryId, text) {
+  if (typeof props.store.commitNote === 'function') {
+    props.store.commitNote(entryId, text)
+    return
+  }
+  props.store.notes = writeNote(props.store.notes, entryId, text)
+  if (typeof props.store.markModified === 'function') props.store.markModified()
 }
 
 // The check commits the draft for the still-selected entry, then ends the
