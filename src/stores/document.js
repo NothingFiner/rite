@@ -277,9 +277,20 @@ export const useDocumentStore = defineStore('document', {
       }
     },
 
-    /// Load the open document's notes from Rust.
+    /// Load the open document's notes from Rust and shape them into the
+    /// record the Notes view reads. A null or partial payload keeps the
+    /// empty shape, because unmodelled e2e commands resolve null.
     async retrieveNotes() {
-      return null
+      try {
+        const notes = await invoke('retrieve_notes')
+        this.notes = {
+          overview: notes?.overview ?? '',
+          sections: { ...(notes?.sections ?? {}) },
+          orphaned: notes?.orphaned ?? '',
+        }
+      } catch (e) {
+        this.notifyError(e, 'Failed to load notes')
+      }
     },
 
     /// Commit one note entry: `overview`, a section id, or `orphaned`. The

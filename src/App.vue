@@ -105,6 +105,11 @@
           @back="onSetMode('editor')"
           @toggle-versions="onToggleVersions"
         />
+        <NotesView
+          v-else-if="viewMode === 'notes'"
+          :store="store"
+          :initial-entry-id="notesEntryId"
+        />
         <DocumentRenderer
           ref="editorRef"
           :modelValue="store.doc"
@@ -189,7 +194,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, reactive, nextTick, toRef } from 'vue'
+import { ref, computed, onMounted, onUnmounted, reactive, nextTick, toRef, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useDocumentStore } from './stores/document.js'
 import { useTheme } from './composables/useTheme.js'
@@ -225,6 +230,7 @@ import TextOptionsDrawer from './components/TextOptionsDrawer.vue'
 import StatsDrawer from './components/StatsDrawer.vue'
 import HistoryListDrawer from './components/HistoryListDrawer.vue'
 import HistoryView from './components/HistoryView.vue'
+import NotesView from './components/NotesView.vue'
 import ActivityBar from './components/ActivityBar.vue'
 import LlmPanel from './components/LlmPanel.vue'
 import Toaster from './components/Toaster.vue'
@@ -240,6 +246,7 @@ const editorRef = ref(null)
 // manuscript back to its title page.
 const scrollLayerRef = ref(null)
 const viewMode = ref('editor')
+const notesEntryId = ref('overview')
 const leftDrawerOpen = ref(false)
 const leftDrawerMode = ref('chapters')
 const rightDrawerOpen = ref(false)
@@ -468,6 +475,13 @@ function onSetMode(mode) {
     history.loadHistory()
     return
   }
+  if (mode === 'notes') {
+    // Notes opens on the entry for the section under the caret (S-015). The
+    // overview is the entry when Notes opens from any other source view.
+    notesEntryId.value = viewMode.value === 'editor'
+      ? (editorRef.value?.getCurrentSectionId?.() || 'overview')
+      : 'overview'
+  }
   // Close an open drawer whose button vanishes in the target view (Scheme A:
   // ActivityBar buttons are view-aware via isDrawerModeAllowedIn). Without
   // this, switching Editor→Manuscript with Text Options open would leave the
@@ -630,6 +644,7 @@ onMounted(async () => {
   llmSettings.loadPrefs()
   document.execCommand('styleWithCSS', false, true)
   await store.loadInitialDocument()
+  await store.retrieveNotes()
 
   autosaveTimer = setInterval(() => { store.autosaveDocument() }, AUTOSAVE_INTERVAL_MS)
   // Coarse tick so the "Saved Xm ago" label refreshes. 15s is well below the
@@ -643,6 +658,10 @@ onUnmounted(() => {
   if (autosaveTimer) clearInterval(autosaveTimer)
   if (clockTimer) clearInterval(clockTimer)
 })
+
+// Opening a document installs that file's notes in Rust (loadDocument sets
+// lastPath), so lastPath is the trigger to re-read them (SPEC.md 5.17).
+watch(() => store.lastPath, () => { store.retrieveNotes() })
 </script>
 
 <style scoped>

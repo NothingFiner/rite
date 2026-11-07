@@ -176,7 +176,7 @@ function resetDraft() {
   draftText.value = readNote(props.store.notes, selectedEntryId.value)
 }
 
-// Inserting appends the recap to the draft without committing; the writes
+// Inserting appends the recap to the draft without committing. The writes
 // happen at the check, an entry change or the view closing (SPEC.md 5.17).
 // A closed session seeds the committed text first, so the writer's words
 // precede the recap. The trimEnd keeps exactly one blank line between them,
@@ -190,8 +190,8 @@ function insertRecap() {
     : selectedRecap.value
 }
 
-// The pane jumps back to the section the selected note is about (SPEC.md
-// 5.17). Only section-backed rows carry a sectionId, so nothing else emits.
+// Emits the selected row's sectionId, deferring the view switch and the
+// scroll to the parent (SPEC.md 5.17).
 function jumpToSection() {
   if (selectedSectionId.value) emit('jump', selectedSectionId.value)
 }

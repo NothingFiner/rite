@@ -74,6 +74,12 @@ function getCurrentPage() {
   return activeRef()?.getCurrentPage?.() ?? 1
 }
 
+// App.vue seeds the entry id in its onSetMode notes branch (SPEC.md 5.17).
+// The manuscript view has no caret, so the forwarder reads the editor view.
+function getCurrentSectionId() {
+  return editorRef.value?.getCurrentSectionId?.() ?? null
+}
+
 function scrollToPage(n) {
   activeRef()?.scrollToPage?.(n)
 }
@@ -122,6 +128,7 @@ defineExpose({
   scrollToSection,
   scrollToPage,
   getCurrentPage,
+  getCurrentSectionId,
   selectLine,
   navigatePage,
   navigateSectionPage,
