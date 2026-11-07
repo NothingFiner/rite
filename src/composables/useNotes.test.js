@@ -44,6 +44,25 @@ describe('noteEntries', () => {
       orphaned: 'orphaned',
     })
   })
+
+  it('S-001: names a subtitle-less chapter from its derived chapter number instead of leaving the row blank', () => {
+    const unnamed = {
+      sections: [
+        { id: 'c1', title: '', sectionType: 'chapter', paragraphs: [] },
+        { id: 's1', title: '', sectionType: 'section', paragraphs: [] },
+        { id: 'c2', title: 'Ash', sectionType: 'chapter', paragraphs: [] },
+      ],
+    }
+
+    const titles = Object.fromEntries(noteEntries(unnamed).map((entry) => [entry.id, entry.title]))
+
+    // A Chapter's stored title is its subtitle, so an unnamed chapter is blank
+    // unless the row derives the number. Its number is its position among
+    // chapters, so the blank Section between them must not shift it.
+    expect(titles.c1).toBe('Chapter 1')
+    expect(titles.c2).toBe('Chapter 2: Ash')
+    expect(titles.s1).toBe('Untitled Section')
+  })
 })
 
 describe('notesToText', () => {
@@ -96,6 +115,16 @@ describe('notesToText', () => {
     expect(text).toContain('A note.')
     expect(text).not.toContain('A draft about text that no longer exists.')
   })
+
+  it('S-009: heads a subtitle-less chapter note with its derived chapter number, never a blank heading', () => {
+    const unnamed = [{ id: 'c1', title: '', sectionType: 'chapter', paragraphs: [] }]
+    const notes = { overview: '', sections: { c1: 'The letter arrives.' }, orphaned: '' }
+
+    const text = notesToText(notes, unnamed)
+
+    expect(text).toContain('## Chapter 1\n\nThe letter arrives.')
+    expect(text).not.toContain('## \n')
+  })
 })
 
 describe('orphanSectionNote', () => {
@@ -125,5 +154,13 @@ describe('orphanSectionNote', () => {
     expect(second.orphaned).toContain('First note.')
     expect(second.orphaned).toContain('Two')
     expect(second.orphaned.indexOf('One')).toBeLessThan(second.orphaned.indexOf('Two'))
+  })
+
+  it('S-007: heads an unnamed chapter note with the caller-supplied display title instead of a blank heading', () => {
+    const notes = { overview: '', sections: { c1: 'The letter arrives.' }, orphaned: '' }
+
+    const after = orphanSectionNote(notes, { id: 'c1', title: '' }, 'Chapter 1')
+
+    expect(after.orphaned).toBe('## Chapter 1\n\nThe letter arrives.')
   })
 })

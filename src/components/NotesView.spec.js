@@ -90,6 +90,24 @@ describe('NotesView entries', () => {
     expect(wrapper.find('.note-delete').exists()).toBe(false)
     expect(row(wrapper, 's2').exists()).toBe(true)
   })
+
+  it('S-001: titles an unnamed chapter from its derived number, in the row and the note header', async () => {
+    const store = makeStore()
+    store.doc = {
+      ...doc,
+      sections: [
+        { id: 'c1', title: '', sectionType: 'chapter', hidden: false, paragraphs: [] },
+        { id: 's1', title: 'The Door', sectionType: 'section', hidden: false, paragraphs: [] },
+      ],
+    }
+    const wrapper = mountView(store)
+
+    // A Chapter's stored title is its subtitle, so a subtitle-less chapter is
+    // blank unless the row derives the number — a blank row is unreachable.
+    expect(row(wrapper, 'c1').text()).toContain('Chapter 1')
+    await selectEntry(wrapper, 'c1')
+    expect(wrapper.find('.note-head .note-title').text()).toBe('Chapter 1')
+  })
 })
 
 describe('NotesView reading and editing', () => {

@@ -28,6 +28,21 @@ function defaultFormat() {
   return { prefix: 'Chapter', numbering: 'arabic' }
 }
 
+/// The locked chapter prefix for the index-th chapter, e.g. "Chapter 3: ".
+/// Pure over an explicit format record so the module-level display-title rule
+/// can render without a composable instance.
+function chapterPrefixFor(format, index) {
+  const numStr = formatNumber(format.numbering, index)
+  const parts = [format.prefix, numStr].filter(Boolean)
+  return parts.join(' ') + ': '
+}
+
+function formatNumber(numbering, index) {
+  if (numbering === 'roman') return toRoman(index)
+  if (numbering === 'arabic') return String(index)
+  return ''
+}
+
 // Module-level shared ref so every caller of useSectionFormat sees the same
 // format. The editor (editorDisplay.vue) and the General Options drawer
 // (GeneralOptionsDrawer.vue) must share one source of truth, or the editor
@@ -47,21 +62,11 @@ export function resetSectionFormatForTests() {
 export function useSectionFormat() {
   const sectionFormat = sharedSectionFormat()
 
-  function formatNumber(numbering, index) {
-    if (numbering === 'roman') return toRoman(index)
-    if (numbering === 'arabic') return String(index)
-    return ''
-  }
-
   /// Render the locked, non-editable chapter prefix for the index-th chapter,
   /// e.g. "Chapter 3: " (with trailing separator) or "Chapter 3 " when no
   /// numbering. The subtitle is appended by the caller.
   function formatChapter(index) {
-    const fmt = sectionFormat.value
-    const numStr = formatNumber(fmt.numbering, index)
-    const parts = [fmt.prefix, numStr].filter(Boolean)
-    const base = parts.join(' ')
-    return base + ': '
+    return chapterPrefixFor(sectionFormat.value, index)
   }
 
   function loadPrefs() {
@@ -92,4 +97,28 @@ export function useSectionFormat() {
     savePrefs,
     setFormat,
   }
+}
+/// The chapter prefix for the index-th chapter, e.g. "Chapter 3: ", using the
+/// shared format. Reading the shared ref here keeps a caller inside a computed
+/// reactive to the writer's prefix/numbering choice.
+export function chapterPrefix(index) {
+  return chapterPrefixFor(sharedSectionFormat().value, index)
+}
+
+/// The display title for a section, wherever a row, heading or note draft names
+/// it. A Chapter reads its derived prefix plus its subtitle ("Chapter 3: Ash"),
+/// or the prefix alone when the subtitle is empty — a Chapter's stored `title`
+/// IS the subtitle, so it is legitimately blank (roadmap 5.9). A Section reads
+/// its literal title, or "Untitled Section".
+///
+/// ONE rule for every surface that shows a section name: the navigation
+/// outline, the Notes list and note headings, and the assistant's notes context.
+/// Do not show `section.title` raw: for a Chapter that is the subtitle only and
+/// renders blank.
+export function sectionDisplayTitle(section, chapterIndex) {
+  if (section?.sectionType === 'chapter') {
+    const prefix = chapterPrefix(chapterIndex)
+    return section.title ? prefix + section.title : prefix.replace(/: $/, '')
+  }
+  return section.title || 'Untitled Section'
 }
