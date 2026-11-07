@@ -2,8 +2,13 @@ import { describe, it, expect } from 'vitest'
 import { DRAWER_MODES_ALLOWED_IN_VIEW, isDrawerModeAllowedIn } from './drawerVisibility.js'
 
 describe('DRAWER_MODES_ALLOWED_IN_VIEW', () => {
-  it('exposes the three views', () => {
-    expect(Object.keys(DRAWER_MODES_ALLOWED_IN_VIEW).sort()).toEqual(['editor', 'history', 'manuscript'])
+  it('exposes every view, References included', () => {
+    expect(Object.keys(DRAWER_MODES_ALLOWED_IN_VIEW).sort()).toEqual([
+      'editor',
+      'history',
+      'manuscript',
+      'references',
+    ])
   })
 })
 
@@ -26,8 +31,19 @@ describe('isDrawerModeAllowedIn', () => {
     expect(isDrawerModeAllowedIn('text-options', 'history')).toBe(false)
   })
 
-  it('never allows the history mode — it has no ActivityBar button', () => {
-    // The version list is toggled from the History view's in-header Versions
+  it('allows the References drawer in the references view only', () => {
+    // 5.20a S-001 / S-002: References is the drawer mode for its own view.
+    expect(isDrawerModeAllowedIn('references', 'references')).toBe(true)
+    expect(isDrawerModeAllowedIn('references', 'editor')).toBe(false)
+    expect(isDrawerModeAllowedIn('references', 'manuscript')).toBe(false)
+    // The document tree and the text options do not apply there.
+    expect(isDrawerModeAllowedIn('chapters', 'references')).toBe(false)
+    expect(isDrawerModeAllowedIn('text-options', 'references')).toBe(false)
+    expect(isDrawerModeAllowedIn('general-options', 'references')).toBe(true)
+    expect(isDrawerModeAllowedIn('stats', 'references')).toBe(true)
+  })
+
+  it('never allows the history mode — it has no ActivityBar button', () => {    // The version list is toggled from the History view's in-header Versions
     // button, not an ActivityBar icon, so 'history' is intentionally absent
     // from every view's allowed list.
     expect(isDrawerModeAllowedIn('history', 'editor')).toBe(false)
