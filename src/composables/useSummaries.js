@@ -58,6 +58,9 @@ export function useSummaries(store, llmSettings) {
   /// are non-streaming), just local-Ollama resource contention + UX clarity.
   const summariesBusy = ref(false)
 
+  /// The recaps from the last status read. Feeds the References outline.
+  const summaryEntries = ref([])
+
   /// Re-query the store for the readout counts. A pure-Rust read of the
   /// sidecar-backed summaries (no network) via `retrieve_summaries`, which
   /// returns each summarized section with a `stale` flag. On an empty store
@@ -74,10 +77,12 @@ export function useSummaries(store, llmSettings) {
         total,
         stale: entries.filter((entry) => entry.stale).length,
       }
+      summaryEntries.value = entries
     } catch {
       // Empty store, or a (near-impossible) poisoned lock — either way the
       // readout shows 0/0. Not a generation error, so no `summaryError`.
       summaryProgress.value = { done: 0, total, stale: 0 }
+      summaryEntries.value = []
     }
   }
 
@@ -199,6 +204,7 @@ export function useSummaries(store, llmSettings) {
   return {
     summaryStatus,
     summaryProgress,
+    summaryEntries,
     summaryError,
     summariesBusy,
     generateSummaries,
