@@ -42,8 +42,9 @@ instructions: |
 
   ## Steps
   1. Read SPEC.md, .workflow/config.yaml, .workflow/TESTING.md and the failures file.
-  2. Use repomix (compressed) to understand the codebase. Re-pack after large changes, since a
-     packed snapshot goes stale as soon as files are edited.
+  2. Use `rg` to find the files that matter, then read only those (whole file for a component,
+     a line range for a test). Do not pack the repository: a packed snapshot goes stale the
+     moment the first unit edits a file, and the failure it causes looks like a bad fix.
   3. Read the failing tests. Group the failures into work units whose file sets do NOT overlap.
      Write the plan to .workflow-out/plan-iter-<iteration>.md: each unit lists its S-IDs and the
      files it owns.
@@ -73,11 +74,6 @@ extensions:
     name: developer
     timeout: 300
     bundled: true
-  - type: stdio
-    name: repomix
-    cmd: npx
-    args: ["-y", "repomix", "--mcp"]
-    timeout: 300
 
 # Sub-recipes cannot nest, so coders cannot spawn their own helpers. Escalation to a
 # stronger model is done by the orchestrator (GOOSE_MODEL), not by the coder.

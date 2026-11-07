@@ -107,10 +107,53 @@ def finish(status, reason, code, **extra):
         )
         status, code = "wrong_platform", 6
     (OUT / "result.json").write_text(
-        json.dumps({"status": status, "reason": reason, "platform": here, **extra}, indent=2)
+        json.dumps({"status": status, "reason": reason, "platform": here,
+                    "evidence": evidence_files(), **extra}, indent=2)
     )
+    if status not in ("green", "ok"):
+        postmortem(status)
     log(f"{status}: {reason}")
     sys.exit(code)
+
+
+def evidence_files():
+    """The files that answer "what happened", newest first, that actually exist."""
+    names = []
+    for pattern in ("test-objection.md", "last_failures.md", "plan-iter-*.md",
+                    "goose-iter*.log", "progress.jsonl"):
+        matches = sorted(OUT.glob(pattern), key=lambda p: p.stat().st_mtime)
+        if matches:
+            names.append(matches[-1].name)
+    return [f".workflow-out/{n}" for n in names]
+
+
+def postmortem(status):
+    """Print where to look, so a stopped run explains itself without a human.
+
+    The verdict line names a reason in one sentence. This adds the last measured
+    iteration and the files behind the reason, because otherwise the operator has
+    to ask someone which log to open — or re-run the thing to find out.
+    """
+    last = None
+    try:
+        rows = [json.loads(ln) for ln in (OUT / "progress.jsonl").read_text().splitlines() if ln.strip()]
+        last = rows[-1]
+    except (OSError, ValueError, IndexError):
+        pass
+    log("--- where to look ---")
+    if last:
+        log(f"last iteration {last.get('iteration')}: {last.get('passing')}/{last.get('total')} passing, "
+            f"{last.get('failing')} failing | {last.get('seconds')}s | "
+            f"{fmt_tokens(last.get('tokens_iteration'))} tokens")
+    try:
+        plan = sorted(OUT.glob("plan-iter-*.md"), key=lambda p: p.stat().st_mtime)[-1]
+        heads = [ln.strip()[3:] for ln in plan.read_text().splitlines() if ln.startswith("## ")]
+        if heads:
+            log(f"last plan: {' | '.join(heads[:4])}")
+    except (OSError, IndexError):
+        pass
+    log("evidence: " + ", ".join(evidence_files()))
+    log("full detail: .workflow/why.py (status, plan, and where the run stopped)")
 
 
 # ---------- progress / token accounting ----------
@@ -409,22 +452,195 @@ def parse_cargo(text):
     return [(name, status[s]) for name, s in CARGO_LINE.findall(text)]
 
 
-def run_layers(cfg, timeout_s):
+# How many failing test names one layer prints. The rest stay in the layer log and
+# in `last_failures.md`; a terminal that repeats the whole suite every iteration
+# stops being something a human reads.
+REPORT_FAILING_SHOWN = 10
+
+
+def junit_first_lines(report):
+    """`{test id: first line of its failure message}` for one layer's junit report.
+
+    The id shape matches `parse_junit` exactly, because the caller looks these up
+    with the ids it already has from the parsed run.
+    """
+    if not report or not report.exists():
+        return {}
+    try:
+        root = ET.parse(report).getroot()
+    except ET.ParseError:
+        return {}
+    out = {}
+    for tc in root.iter("testcase"):
+        node = tc.find("failure") if tc.find("failure") is not None else tc.find("error")
+        if node is None:
+            continue
+        name, cls = tc.get("name", "?"), tc.get("classname", "")
+        tid = f"{cls}::{name}" if cls else name
+        body = (node.get("message") or node.text or "").strip()
+        out[tid] = next((ln.strip() for ln in body.splitlines() if ln.strip()), "")[:200]
+    return out
+
+
+def report_layers(res):
+    """Print each layer's tally and the first line of every failure.
+
+    Costs no tokens: this is the console view of what `last_failures.md` carries
+    to the coder, so the operator can follow an iteration without tailing a log.
+    """
+    for name, info in res["per_layer"].items():
+        total = sum(1 for tid, _ in res["tests"] if tid.startswith(f"{name}::"))
+        bad = len(info["failing"])
+        seconds = info.get("seconds")
+        took = f" ({seconds:.0f}s)" if isinstance(seconds, (int, float)) else ""
+        if info.get("skipped"):
+            log(f"  layer {name}: reused ({info['skipped']})")
+            continue
+        log(f"  layer {name}: {total - bad} passed, {bad} failed{took}")
+        detail = junit_first_lines(Path(info["report"])) if info.get("report") else {}
+        for f in info["failing"][:REPORT_FAILING_SHOWN]:
+            tid = f.split("::", 1)[-1]
+            log(f"    FAIL {tid}")
+            if detail.get(tid):
+                log(f"         {detail[tid]}")
+        hidden = bad - REPORT_FAILING_SHOWN
+        if hidden > 0:
+            log(f"    … {hidden} more in .workflow-out/{name}.log")
+
+
+def report_plan(i):
+    """Print the headings of the plan the agent wrote, so its intent is visible.
+
+    The planner and the coder are one goose call, so this arrives slightly late to
+    watch live — but it answers "what did it decide to do" without opening a file.
+    """
+    plan = OUT / f"plan-iter-{i}.md"
+    try:
+        heads = [ln.strip()[3:] for ln in plan.read_text().splitlines()
+                 if ln.startswith("## ")]
+    except OSError:
+        return
+    if heads:
+        log("  plan: " + " | ".join(heads[:6]))
+
+
+def report_digest(start_sha, res, prev_failing_ids):
+    """Print the diffstat and which tests this iteration cleared."""
+    stat = [ln.strip() for ln in git("diff", "--stat", start_sha).splitlines() if ln.strip()]
+    log(f"  changed: {stat[-1] if stat else 'nothing'}")
+    cleared = sorted(set(prev_failing_ids) - set(res["failing"]))
+    if cleared:
+        names = ", ".join(c.split("::")[-1][:70] for c in cleared[:5])
+        more = f" (+{len(cleared) - 5} more)" if len(cleared) > 5 else ""
+        log(f"  cleared {len(cleared)}: {names}{more}")
+
+
+def run_streaming(cmd, cwd, timeout_s, logfile):
+    """Run a layer command, echoing it line by line, and keep the same log.
+
+    Same contract as the captured path — returns the combined text and the return
+    code — so `run_layers` parses it identically either way.
+    """
+    started, lines = time.time(), []
+    with logfile.open("w") as fh:
+        p = subprocess.Popen(cmd, shell=True, cwd=cwd, text=True, bufsize=1,
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        try:
+            for line in p.stdout:
+                lines.append(line)
+                fh.write(line)
+                fh.flush()
+                print(f"  | {line.rstrip()}", flush=True)
+                if time.time() - started > timeout_s:
+                    p.kill()
+                    lines.append(f"TIMEOUT after {timeout_s}s")
+                    return "".join(lines), 124
+            return "".join(lines), p.wait()
+        finally:
+            if p.poll() is None:
+                p.kill()
+
+
+def changed_paths(start_sha):
+    """Every path touched since the start commit, tracked or not.
+
+    The coder's new files are untracked until the orchestrator commits at the end
+    of an iteration, so `git diff` alone would miss exactly the files that make a
+    layer worth running.
+    """
+    out = git("diff", "--name-only", start_sha) + "\n" + git("status", "--porcelain", "-uall")
+    paths = set()
+    for ln in out.splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        paths.add(ln.split(" -> ")[-1].split()[-1])
+    return paths
+
+
+def skip_reason(layer, reuse, prev_status, red_layers, cfg):
+    """Why this layer can be reused from the previous iteration, or None to run it."""
+    if not reuse.get("enabled") or not prev_status:
+        return None
+    name = layer["name"]
+    if reuse.get("skip_dependents_when_red"):
+        deps = (cfg.get("scope_depends_on") or {}).get(name) or []
+        red = [d for d in deps if d in red_layers]
+        if red:
+            return " and ".join(red) + " is red"
+    root = (reuse.get("unchanged_paths") or {}).get(name)
+    if root:
+        changed = changed_paths(reuse.get("start_sha", "HEAD"))
+        if not any(p.startswith(root) for p in changed):
+            return f"nothing under {root} changed"
+    return None
+
+
+def run_layers(cfg, timeout_s, live=False, prev_status=None, reuse=None):
+    """Run each layer, optionally reusing one whose result cannot have changed.
+
+    `reuse` narrows work, never the verdict: a layer is skipped only while another
+    layer is already red, or while nothing under its source root changed. A green
+    verdict therefore always means every layer ran, because green requires no red
+    anywhere.
+    """
+    reuse = reuse or {}
     tests, failing, per_layer = [], [], {}
+    red_layers = set()
     for layer in cfg["test_layers"]:
         name = layer["name"]
         report = Path(layer["report"]) if layer.get("report") else None
         if report:
             report.unlink(missing_ok=True)  # never trust a stale report
+        reason = skip_reason(layer, reuse, prev_status, red_layers, cfg)
+        if reason:
+            carried = {tid.split("::", 1)[1]: st for tid, st in prev_status.items()
+                       if tid.startswith(f"{name}::")}
+            if carried:
+                tests += [(f"{name}::{tid}", st) for tid, st in carried.items()]
+                bad = [f"{name}::{tid}" for tid, st in carried.items() if st != "passed"]
+                failing += bad
+                per_layer[name] = {"rc": 0, "failing": bad, "log": str(OUT / f"{name}.log"),
+                                   "report": None, "seconds": 0.0, "skipped": reason}
+                log(f"running layer {name}: reused, {reason}")
+                if bad:
+                    red_layers.add(name)
+                continue
         log(f"running layer {name}")
-        try:
-            p = subprocess.run(layer["cmd"], shell=True, cwd=layer.get("cwd", "."),
-                               capture_output=True, text=True, timeout=timeout_s)
-            text, rc = p.stdout + "\n" + p.stderr, p.returncode
-        except subprocess.TimeoutExpired:
-            text, rc = f"TIMEOUT after {timeout_s}s", 124
         logfile = OUT / f"{name}.log"
-        logfile.write_text(text)
+        started = time.time()
+        if live:
+            text, rc = run_streaming(layer["cmd"], layer.get("cwd", "."), timeout_s, logfile)
+        else:
+            try:
+                p = subprocess.run(layer["cmd"], shell=True, cwd=layer.get("cwd", "."),
+                                   capture_output=True, text=True, timeout=timeout_s)
+                text, rc = p.stdout + "\n" + p.stderr, p.returncode
+            except subprocess.TimeoutExpired:
+                text, rc = f"TIMEOUT after {timeout_s}s", 124
+        elapsed = time.time() - started
+        if not live:
+            logfile.write_text(text)
 
         parsed = parse_junit(report) if layer.get("parser", "junit") == "junit" else parse_cargo(text)
         tests += [(f"{name}::{tid}", st) for tid, st in parsed]
@@ -434,7 +650,10 @@ def run_layers(cfg, timeout_s):
         if rc == 0 and not parsed:
             bad.append(f"{name}::{SYNTHETIC[1]}")
         failing += bad
-        per_layer[name] = {"rc": rc, "failing": bad, "log": str(logfile)}
+        per_layer[name] = {"rc": rc, "failing": bad, "log": str(logfile),
+                           "report": str(report) if report else None, "seconds": elapsed}
+        if bad:
+            red_layers.add(name)
     return {"tests": tests, "failing": failing, "per_layer": per_layer}
 
 
@@ -485,7 +704,9 @@ def write_failures(path, res, notes, scope=None, tail_lines=60, cap=8000):
             continue
         parts.append(f"## Layer {name} (exit code {info['rc']})\nFailing:\n"
                      + "\n".join(f"- {f}" for f in shown[:50]))
-        tail = "\n".join(Path(info["log"]).read_text().splitlines()[-tail_lines:])
+        log_path = Path(info["log"])
+        tail = ("\n".join(log_path.read_text().splitlines()[-tail_lines:])
+                if log_path.exists() else "reused from the previous iteration; see the layer log")
         parts.append(f"```\n{tail}\n```")
     if scope is not None:
         deferred = scoping.deferred_note(scope)
@@ -993,6 +1214,8 @@ def main():
     # an agent failure.
     ap.add_argument("--baseline-only", action="store_true",
                     help="run setup + baseline checks, then stop before any goose call")
+    ap.add_argument("--live-tests", action="store_true",
+                    help="echo each test layer's output to the console as it runs")
     ap.add_argument("--resume", action="store_true",
                     help="continue in a work tree that already holds implementation work: "
                          "previously-passing tests may not regress, but the suite is no longer "
@@ -1075,9 +1298,13 @@ def main():
                 finish("error", "setup command failed (see .workflow-out/setup.log)", 1)
 
     # Baseline: tests must be red for the right reason, and every SPEC.md sentence must have a test.
-    base = run_layers(cfg, test_to)
+    base = run_layers(cfg, test_to, live=args.live_tests)
     base_status = dict(base["tests"])
+    # The previous iteration's per-test statuses, so a layer whose inputs did not
+    # change can be carried forward instead of re-run.
+    prev_tests = dict(base["tests"])
     base["failing"] = failing_excluding_baseline_skips(base, base_status)
+    report_layers(base)
     broken = [f for f in base["failing"] if f.endswith(SYNTHETIC)]
     if broken:
         finish("error", f"baseline tests are broken (errors, not assertion failures): {broken}", 1)
@@ -1211,6 +1438,8 @@ def main():
         else:
             goose_fails = 0
 
+        report_plan(i)
+
         objection = OUT / "test-objection.md"
         if fresh_write(objection, iteration_started):
             finish("needs_human", "agent objected to the tests: " + objection.read_text()[:500], 2, iterations=i)
@@ -1239,12 +1468,18 @@ def main():
                 commit(f"wip: iteration {i} (aborted, test tampering)")
                 finish("tampering", f"test regions modified twice: {touched}", 3, iterations=i)
 
-        res = run_layers(cfg, test_to)
+        reuse = {**(cfg.get("layer_reuse") or {}), "start_sha": start_sha}
+        res = run_layers(cfg, test_to, live=args.live_tests,
+                         prev_status=prev_tests, reuse=reuse)
+        prev_tests = dict(res["tests"])
         res["failing"] = failing_excluding_baseline_skips(res, base_status)
         gone = sorted(base_ids - {t for t, _ in res["tests"]})
         if gone:
             res["failing"] += [f"MISSING::{t}" for t in gone]
             notes.append(f"{len(gone)} baseline tests no longer run (deleted or filtered). Example: {gone[0]}")
+
+        report_layers(res)
+        report_digest(start_sha, res, prev_failing_ids)
 
         commit(f"wip: iteration {i}, {len(res['failing'])} failing")
 

@@ -39,6 +39,25 @@ test_layers:
     parser: junit
     report: .workflow-out/e2e.xml
 
+# Reuse a layer's result instead of re-running it when the result cannot have
+# changed. This narrows work, never the verdict: green still requires every layer
+# to have run, because a layer is only reused while another layer is red or while
+# nothing it tests has changed.
+#
+# Measured on 5.17's run: unit 7 s, rust 26 s, e2e 41 s, with ~170 s of model
+# time per iteration. e2e was the slowest layer and was red for every iteration
+# in which units were also red — it could not have gone green first.
+layer_reuse:
+  enabled: true
+  # A layer named as a dependency in `scope_depends_on` is not run while any of
+  # its dependencies is red in the same iteration. Every e2e failure is a symptom
+  # of a vue or rust defect, so e2e is never the layer that goes green first.
+  skip_dependents_when_red: true
+  # Per layer: reuse while no tracked file under this path changed since the
+  # start commit. A new untracked file counts as a change.
+  unchanged_paths:
+    rust: src-tauri/
+
 # Globs the coding agent may never change (create, edit, delete). Checked by the
 # orchestrator after every iteration; violations are reverted and counted.
 # `**` crosses directories, `*` does not.

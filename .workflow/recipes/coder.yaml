@@ -41,11 +41,6 @@ extensions:
     name: developer
     timeout: 300
     bundled: true
-  - type: stdio
-    name: repomix
-    cmd: npx
-    args: ["-y", "repomix", "--mcp"]
-    timeout: 300
 settings:
   goose_provider: "ollama_cloud"
   temperature: 0.3
