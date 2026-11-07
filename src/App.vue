@@ -105,16 +105,20 @@
           @back="onSetMode('editor')"
           @toggle-versions="onToggleVersions"
         />
-        <!-- Notes is a working view: its surface paints from the same
+        <!-- References is a working view: its surface paints from the same
              currentTheme the editor sheet binds, not the glass chrome
              (S-022). -->
-        <NotesView
-          v-else-if="viewMode === 'notes'"
+        <ReferencesView
+          v-else-if="viewMode === 'references'"
           :store="store"
           :theme="theme.currentTheme"
-          :initial-entry-id="notesEntryId"
-          :origin-view="notesOriginView"
-          @jump="onNotesJump"
+          :tab="referencesTab"
+          :summaries="summaries"
+          :settings="llmSettings"
+          :notes-entry-id="notesEntryId"
+          :notes-origin-view="notesOriginView"
+          @update:tab="referencesTab = $event"
+          @jump="onReferencesJump"
         />
         <DocumentRenderer
           ref="editorRef"
@@ -237,7 +241,7 @@ import TextOptionsDrawer from './components/TextOptionsDrawer.vue'
 import StatsDrawer from './components/StatsDrawer.vue'
 import HistoryListDrawer from './components/HistoryListDrawer.vue'
 import HistoryView from './components/HistoryView.vue'
-import NotesView from './components/NotesView.vue'
+import ReferencesView from './components/ReferencesView.vue'
 import ActivityBar from './components/ActivityBar.vue'
 import LlmPanel from './components/LlmPanel.vue'
 import Toaster from './components/Toaster.vue'
@@ -258,8 +262,11 @@ const editorRef = ref(null)
 const scrollLayerRef = ref(null)
 const viewMode = ref('editor')
 const notesEntryId = ref('overview')
-// Remembered when Notes is entered: the view the section jump returns to
-// (SPEC.md 5.17 — from History the default is the editor).
+// App owns the References tab selection so it survives a view switch
+// (SPEC.md 5.20 wiring decision 2, unit S-004/S-005 contract).
+const referencesTab = ref('outline')
+// Remembered when References is entered: the view the section jump returns to
+// (SPEC.md 5.20). From History the default is the editor.
 const notesOriginView = ref('editor')
 const leftDrawerOpen = ref(false)
 const leftDrawerMode = ref('chapters')
@@ -491,14 +498,15 @@ function onSetMode(mode) {
     history.loadHistory()
     return
   }
-  if (mode === 'notes') {
-    // Notes opens on the caret section (S-015), or on the section starting the
-    // manuscript page at the top (S-016); any other source opens the overview.
-    // DocumentRenderer routes getCurrentSectionId to the active view, so the
-    // editor and the manuscript both seed here. The branch runs before the
-    // viewMode assignment below, so viewMode.value is still the source view.
-    // The origin is remembered for the return jump (onNotesJump); from History
-    // it falls back to the editor.
+  if (mode === 'references') {
+    // References opens on the caret section (S-015), or on the section
+    // starting the manuscript page at the top (S-016). Any other source opens
+    // the overview. The seed rides entering References. The notes tab consumes
+    // it on its first mount. DocumentRenderer routes getCurrentSectionId to
+    // the active view, so the editor and the manuscript both seed here. The
+    // branch runs before the viewMode assignment below, so viewMode.value is
+    // still the source view. The origin is remembered for the return jump
+    // (onNotesJump). From History it falls back to the editor.
     const source = viewMode.value
     notesOriginView.value = source === 'manuscript' ? 'manuscript' : 'editor'
     notesEntryId.value =
@@ -586,6 +594,18 @@ function onNotesJump(sectionId) {
   if (!sectionId) return
   const targetView = notesOriginView.value === 'manuscript' ? 'manuscript' : 'editor'
   nav.scrollToSection(sectionId, () => { viewMode.value = targetView })
+}
+
+// Jump from a References tab (SPEC.md 5.20 wiring decision 6). The notes tab
+// routes through onNotesJump, back to notesOriginView. The outline tab opens
+// the section in the editor, the same route a note's Go to section uses.
+function onReferencesJump(sectionId) {
+  if (!sectionId) return
+  if (referencesTab.value === 'notes') {
+    onNotesJump(sectionId)
+    return
+  }
+  nav.scrollToSection(sectionId, () => { viewMode.value = 'editor' })
 }
 
 // Manuscript "Go to top" button (5.1b). The manuscript's first page is the
