@@ -1,5 +1,5 @@
 <template>
-  <div class="toolbar toolbar-top" data-tauri-drag-region>
+  <div class="toolbar toolbar-top" data-tauri-drag-region role="banner">
     <div class="toolbar-spacer"></div>
     <div class="toolbar-brand">
       <span class="brand-text">rite</span>
