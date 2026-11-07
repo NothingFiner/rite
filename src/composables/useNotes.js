@@ -42,8 +42,29 @@ export function writeNote(notes, id, text) {
   return notes
 }
 
+// Builds the context string for the Notes scope (S-009). The preamble is
+// unconditional, so `emptyNotes()` still tells the assistant what the text
+// is. Whitespace-only notes count as empty. The orphaned draft stays out
+// because it describes text the manuscript does not contain.
 export function notesToText(notes, sections) {
-  return ''
+  const storedNotes = notes ?? emptyNotes()
+  const list = Array.isArray(sections) ? sections : []
+  const lines = ["These are the author's notes about the manuscript, not manuscript prose."]
+
+  const overview = storedNotes.overview ?? ''
+  if (overview.trim()) {
+    lines.push('## Story overview', overview)
+  }
+
+  for (const section of list) {
+    const text = storedNotes.sections?.[section.id] ?? ''
+    if (!text.trim()) {
+      continue
+    }
+    lines.push(`## ${section.title}`, text)
+  }
+
+  return lines.join('\n\n')
 }
 
 export function orphanSectionNote(notes, section) {
