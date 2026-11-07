@@ -65,13 +65,19 @@ def main():
 
     rows = [json.loads(ln) for ln in read_text(out / "progress.jsonl").splitlines() if ln.strip()]
     if rows:
-        print("\niteration  passing/total  failing  delta   seconds  tokens   scope")
+        print("\niteration  passing/total  failing  delta   seconds  tokens    Mtok/fail  scope")
         for r in rows:
+            rate = r.get("tokens_per_cleared")
+            rate_s = f"{rate / 1e6:.1f}" if rate else "-"
+            # `!` marks an iteration the spin guard would count: more than the
+            # usual ~0.7 M per cleared failure.
+            hot = "!" if rate and rate > 2_000_000 else " "
             print(
                 f"{r.get('iteration', '?'):>9}  "
                 f"{r.get('passing', '?')}/{r.get('total', '?')}".ljust(23)
                 + f"{r.get('failing', '?'):>7}  {r.get('delta', 0):>+5}  "
                 f"{r.get('seconds', 0):>7.0f}  {r.get('tokens_iteration') or 0:>9,}  "
+                f"{rate_s:>8}{hot}  "
                 f"{r.get('scope_layer') or '-'} {r.get('scope_in') or ''}"
             )
 

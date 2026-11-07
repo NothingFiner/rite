@@ -193,7 +193,8 @@ def fmt_tokens(n):
     return str(n)
 
 
-def progress(i, res, prev_failing, started, tokens_before, tokens_total, scope=None, cleared=None):
+def progress(i, res, prev_failing, started, tokens_before, tokens_total, scope=None,
+             cleared=None, total_cleared=None):
     """One line per iteration: pass/fail counts, delta, wall clock, tokens.
 
     The scope fields are the measurement that makes runs comparable to each other:
@@ -227,6 +228,11 @@ def progress(i, res, prev_failing, started, tokens_before, tokens_total, scope=N
                 "scope_in": len(scope.in_scope) if scope is not None else None,
                 "scope_deferred": len(scope.deferred) if scope is not None else None,
                 "scope_cleared": cleared,
+                # The rate the spin guard judges, written down so a finished run can
+                # show where the tokens went.
+                "cleared_total": total_cleared,
+                "tokens_per_cleared": (round(spent / total_cleared)
+                                       if spent and total_cleared and total_cleared > 0 else None),
             }) + "\n")
     except OSError:
         pass
@@ -741,7 +747,21 @@ def covered_ids(tests):
 
 # ---------- goose ----------
 
-def run_goose(recipe, i, escalated, failures_file, models, timeout_s, attempt="", base_commit=""):
+# Return code for "the watchdog stopped this iteration", kept distinct from 124
+# (our timeout) so the caller can say why and keep its three-strike budget intact.
+WATCHDOG_RC = 125
+
+
+def run_goose(recipe, i, escalated, failures_file, models, timeout_s, attempt="",
+              base_commit="", watch=None):
+    """Run goose to completion, watching the token ledger while it works.
+
+    The spin guard can only judge an iteration after it ends, which is how 5.17's
+    iteration 5 spent ten minutes and millions of tokens on one work unit. This
+    polls goose's own usage ledger every 20 s and stops the iteration at the
+    ceiling, so the next one starts with a different model and a shorter brief.
+    """
+    watch = watch or {}
     env = dict(os.environ)
     model = models.get("strong") if escalated else models.get("default")
     if model:
@@ -753,11 +773,38 @@ def run_goose(recipe, i, escalated, failures_file, models, timeout_s, attempt=""
            # The start commit, so the agent never derives or guesses it for
            # comment_check.py. Guessing it cost five tool calls in one 5.17 iteration.
            "--params", f"base_commit={base_commit}"]
-    try:
-        with open(OUT / f"goose-iter{i}{attempt}.log", "w") as fh:
-            return subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT, env=env, timeout=timeout_s).returncode
-    except subprocess.TimeoutExpired:
-        return 124
+    started = time.time()
+    warned = False
+    with open(OUT / f"goose-iter{i}{attempt}.log", "w") as fh:
+        proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT, env=env)
+        try:
+            while True:
+                try:
+                    return proc.wait(timeout=20)
+                except subprocess.TimeoutExpired:
+                    pass
+                if time.time() - started > timeout_s:
+                    proc.kill()
+                    proc.wait()
+                    return 124
+                now = goose_tokens_used()
+                if now is None or not watch.get("enabled"):
+                    continue
+                spent = now - (watch.get("start_tokens") or now)
+                if watch.get("warn_tokens") and spent > watch["warn_tokens"] and not warned:
+                    warned = True
+                    log(f"watchdog: iteration {i} has spent {fmt_tokens(spent)} "
+                        f"(budget {fmt_tokens(watch['warn_tokens'])}) and is still working")
+                if watch.get("kill_tokens") and spent > watch["kill_tokens"]:
+                    proc.kill()
+                    proc.wait()
+                    log(f"watchdog: stopped iteration {i} at {fmt_tokens(spent)} "
+                        f"(ceiling {fmt_tokens(watch['kill_tokens'])}); "
+                        f"the next iteration escalates and is told to work directly")
+                    return WATCHDOG_RC
+        finally:
+            if proc.poll() is None:
+                proc.kill()
 
 
 def goose_log_path(i, attempt=""):
@@ -1429,8 +1476,16 @@ def main():
         tokens_before = goose_tokens_used()
 
         log_path = goose_log_path(i)
+        watch = {
+            "enabled": bool(lim.get("tokens_per_iteration")),
+            "warn_tokens": int((lim.get("tokens_per_iteration") or 0)
+                               * lim.get("watchdog_warn_multiple", 1.5)),
+            "kill_tokens": int((lim.get("tokens_per_iteration") or 0)
+                               * lim.get("watchdog_kill_multiple", 3)),
+            "start_tokens": tokens_before,
+        }
         rc = run_goose(args.recipe, i, escalated, failures_file, models, goose_to,
-                       base_commit=start_sha)
+                       base_commit=start_sha, watch=watch)
         kind, fatal = goose_failure_reason(log_path, rc)
         if kind == "model" and escalated:
             # The strong model can be missing from the account (a plan change, a
@@ -1443,8 +1498,14 @@ def main():
             escalated = False
             log_path = goose_log_path(i, "-fallback")
             rc = run_goose(args.recipe, i, escalated, failures_file, models, goose_to,
-                           attempt="-fallback", base_commit=start_sha)
+                           attempt="-fallback", base_commit=start_sha, watch=watch)
         goose_ok = rc == 0
+        if rc == WATCHDOG_RC:
+            notes.append(
+                "The previous iteration was stopped at the token ceiling, part-way through "
+                "its work. Check what it left behind before planning: some of it may be "
+                "half-finished.")
+            rc = 0
         if rc != 0:
             goose_fails += 1
             kind, fatal = goose_failure_reason(log_path, rc)
@@ -1521,10 +1582,10 @@ def main():
         cleared = scoping.update_state(scope_state, scope, prev_failing_ids, res["failing"])
         prev_failing_ids = list(res["failing"])
 
-        tokens_total, spent = progress(i, res, prev_failing, iteration_started, tokens_before,
-                                       tokens_total, scope, cleared)
         # Measured before `prev_failing` moves: what this iteration bought.
         cleared_n = prev_failing - len(res["failing"])
+        tokens_total, spent = progress(i, res, prev_failing, iteration_started, tokens_before,
+                                       tokens_total, scope, cleared, total_cleared=cleared_n)
         prev_failing = len(res["failing"])
 
         # A run can clear failures for ten times the tokens and never trip `no_gain`,

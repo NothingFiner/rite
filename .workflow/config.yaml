@@ -161,6 +161,15 @@ limits:
   tokens_per_iteration: 4000000
   tokens_per_cleared_failure: 2000000
 
+  # The guard above judges an iteration after it ends. The watchdog reads goose's
+  # usage ledger every 20 s while it works: it logs a warning at the first multiple
+  # and stops the iteration at the second, because an iteration that has already
+  # spent three budgets is not going to become cheap. A stopped iteration returns
+  # WATCHDOG_RC, keeps the three-strike goose budget intact, and the next
+  # iteration escalates. Set either multiple to 0 to disable that half.
+  watchdog_warn_multiple: 1.5
+  watchdog_kill_multiple: 3
+
 # A layer that cannot be a coherent unit of work while another layer is red. Every
 # e2e failure is a symptom of a vue or rust defect, and playwright is the slowest
 # thing to boot, so it is never the iteration that gets scoped first.
