@@ -5,11 +5,12 @@
       <span class="brand-text">rite</span>
     </div>
     <div class="toolbar-group">
-      <div class="view-tabs" role="tablist" aria-label="View">
+      <div class="view-tabs" role="tablist" aria-label="View" @keydown="onViewTabsKeydown">
         <button
           class="tool-btn view-tab"
           role="tab"
           :aria-selected="mode === 'editor'"
+          :tabindex="mode === 'editor' ? '0' : '-1'"
           :class="{ active: mode === 'editor' }"
           @click="$emit('setMode', 'editor')"
         >
@@ -19,6 +20,7 @@
           class="tool-btn view-tab"
           role="tab"
           :aria-selected="mode === 'manuscript'"
+          :tabindex="mode === 'manuscript' ? '0' : '-1'"
           :class="{ active: mode === 'manuscript' }"
           @click="$emit('setMode', 'manuscript')"
         >
@@ -28,6 +30,7 @@
           class="tool-btn view-tab"
           role="tab"
           :aria-selected="mode === 'history'"
+          :tabindex="mode === 'history' ? '0' : '-1'"
           :class="{ active: mode === 'history' }"
           @click="$emit('setMode', 'history')"
           title="Browse, diff, and restore past versions"
@@ -64,7 +67,36 @@ defineProps({
   rightOpen: { type: Boolean, default: false },
 })
 
-defineEmits(['toggleRight', 'setMode', 'goToTop'])
+const emit = defineEmits(['toggleRight', 'setMode', 'goToTop'])
+
+// Tab order as rendered, so index arithmetic on the tablist DOM resolves the
+// mode to emit.
+const VIEW_MODES = ['editor', 'manuscript', 'history']
+
+// Delegated tablist keys. ArrowRight and ArrowLeft move and select, wrapping
+// at the ends. Home and End select the first and last tab. Automatic
+// activation means emit and focus here: the parent re-render that updates
+// tabindex happens later.
+function onViewTabsKeydown(event) {
+  const isEdgeKey = event.key === 'Home' || event.key === 'End'
+  const isArrowKey = event.key === 'ArrowRight' || event.key === 'ArrowLeft'
+  if (!isEdgeKey && !isArrowKey) return
+  const tabs = Array.from(event.currentTarget.querySelectorAll('.view-tab'))
+  const pressedIndex = tabs.indexOf(event.target)
+  if (pressedIndex === -1) return
+  let targetIndex
+  if (isEdgeKey) {
+    targetIndex = event.key === 'Home' ? 0 : tabs.length - 1
+  } else {
+    // (index plus step) modulo tab count wraps the ends. The added tab count
+    // keeps the ArrowLeft result positive.
+    const step = event.key === 'ArrowRight' ? 1 : -1
+    targetIndex = (pressedIndex + step + tabs.length) % tabs.length
+  }
+  event.preventDefault()
+  emit('setMode', VIEW_MODES[targetIndex])
+  tabs[targetIndex].focus()
+}
 </script>
 
 <style scoped>
@@ -169,8 +201,8 @@ defineEmits(['toggleRight', 'setMode', 'goToTop'])
 
 /* View-switch tabs: a connected, segmented tab group so the buttons read as
    view navigation rather than generic toolbar buttons. The group container
-   supplies the shared border + outer rounding; inner dividers separate tabs.
-   Active tab is accent-filled, inactive tabs are muted — both states reuse
+   supplies the shared border + outer rounding. Inner dividers separate tabs.
+   Active tab is accent-filled, inactive tabs are muted. Both states reuse
    theme tokens so the look follows the active editor theme (light or dark). */
 .view-tabs {
   display: flex;
@@ -198,7 +230,7 @@ defineEmits(['toggleRight', 'setMode', 'goToTop'])
 }
 
 .view-tab.active {
-  /* The group container draws the outline; the accent fill marks the selected
+  /* The group container draws the outline. The accent fill marks the selected
      view. Keep the inner divider at the group border color so dividers stay
      consistent across active/inactive tabs (override .tool-btn.active, which
      would tint the divider accent). */

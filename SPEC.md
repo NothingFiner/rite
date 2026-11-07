@@ -1,168 +1,118 @@
-# 5.13 — Color controls in Text Options
+# 5.7a — Editor, toolbar and activity-bar semantics
 
 Approved sentence list for the spec-to-tests stage. The tests are written and red;
-they define what "done" means. This file is the implementer's whole context —
-nothing here refers to any conversation.
+they define what "done" means. This file is the implementer's whole context.
 
 ## Context
 
-### What the writer gets
+### Where this sits in 5.7
 
-Every text-appearance control in one place, and color treated as three
-independent choices instead of ten fixed bundles:
+The accessibility pass began with non-mouse navigation, because every
+screen-reader user on macOS drives VoiceOver from the keyboard, so a keyboard
+gap is also a screen-reader gap. That half is done: drawer and history rows are
+real controls with a roving tabindex, opening a drawer focuses its active row,
+Escape returns focus to the opener, and Tab deliberately leaves an open drawer.
 
-- A **Background** row of swatches, a **Text** row and an **Accent** row.
-- One **preset button** per existing theme, labelled with its name, applying
-  that theme's three colors together.
-- A swatch applies on the click. There is no OK, Apply or Cancel for color.
-- No color may be chosen twice: a swatch whose color is already chosen in
-  another row is disabled.
-- The chosen swatch in each row carries a visible mark, so the writer can see
-  which color is live without reading the sheet. `aria-current` alone is not
-  enough, because it changes nothing on screen.
-- Swatches, preset buttons and the drawer's selects show a pointer cursor, like
-  the zoom and margin controls beside them.
+This item is the naming and semantics half for three surfaces. The CSS and
+structure half (reduced motion, `:focus-visible`, landmarks, a skip link, and the
+`Ruler.vue` decision) is 5.7b and is not touched here.
 
-The status bar loses its swatch and its picker entirely.
+### The editor sheet
 
-### Why rows instead of hex fields
+`src/components/editor/editorDisplay.vue` renders a bare
+`contenteditable="true"` div. WKWebView's accessibility tree therefore has no
+text field in it: VoiceOver reads the text as static content and cannot tell the
+writer where typing goes. The sheet needs `role="textbox"` with
+`aria-multiline="true"` and an accessible name, and it keeps
+`contenteditable="true"` because that is what makes it editable.
 
-Free hex entry lets a writer set text and background to the same value and lose
-the manuscript behind the sheet. A curated palette removes that failure mode,
-and the per-row disabled state removes the remaining path to it (the same color
-picked for two rows).
+The name is the fixed word **Manuscript**, not the document title. A fixed name
+is stable while the writer types, so VoiceOver does not re-announce the field
+every time the title changes, and it matches the view's own vocabulary.
 
-### The palette
+### The view tablist
 
-`src/constants/themes.js` stays the single source of truth. The palette is every
-distinct color it holds — ten `bg`, ten `text`, ten `accent` values, all thirty
-verified distinct — in **first-appearance order**: theme order, then `bg`,
-`text`, `accent` within each theme. Each of the three rows offers that same
-palette, so any background can be paired with any text.
+`src/components/Toolbar.vue` declares `role="tablist"` with three `role="tab"`
+buttons. It has no keyboard behaviour at all: all three tabs are separate tab
+stops, and arrow keys do nothing. A tablist should be one tab stop, with the
+arrows moving between tabs, which is the pattern VoiceOver announces.
 
-A swatch's accessible name is its row, the theme that contributed the color and
-that theme's role for it, for example `Background Mist accent` or
-`Text Sepia background`. Each theme contributes exactly one color per role, so
-that name is unique inside its row.
+Decisions, so the implementer does not have to invent them:
 
-### The theme model in `useTheme.js`
+- **One tab stop**: the selected tab is `tabindex="0"` and the others
+  `tabindex="-1"`. Tab therefore enters the tablist once and leaves it once.
+- **Automatic activation**: an arrow key moves focus *and* selects, so the view
+  changes as the writer moves. This is the standard behaviour for view tabs
+  whose content is already loaded, and it avoids a second keystroke.
+- **Wrapping**: ArrowRight on the last tab selects the first, ArrowLeft on the
+  first selects the last.
+- **Home and End** select the first and last tab.
+- The component is stateless (it takes `mode` as a prop and emits `setMode`), so
+  it must move focus itself. The parent's re-render then updates which tab is
+  `tabindex="0"`.
 
-Today the selection is an index into `THEMES`, stored as `rite-theme`, and
-`editorDisplay.vue` resolves `THEMES[props.theme]`. A mixed combination has no
-index, so the model becomes three colors:
+### The format buttons and the activity icons
 
-| Export | Kind | Meaning |
-|---|---|---|
-| `editorBg`, `editorText`, `editorAccent` | refs | the chosen hex strings |
-| `currentTheme` | computed | `{ bg, text, accent, accentBg, accentHover }`, the first three from the refs and the last two derived from `accent` |
-| `matchedPreset` | computed | index of the `THEMES` entry whose three colors all match, else `-1` |
-| `selectBackground(hex)`, `selectText(hex)`, `selectAccent(hex)` | functions | set one color, save the prefs |
-| `selectTheme(i)` | function | sets all three from `THEMES[i]`, saves the prefs |
+The B/I/U buttons in `ActivityBar.vue` carry `tabindex="-1"` on purpose, so a
+keyboard writer keeps the caret in the editor and uses Cmd+B/I/U instead. That
+stays. What they lack is a name and a state: the visible glyph is `B`, and a
+glyph is not an accessible name, nor does anything report whether bold is on.
+They get `aria-label` (Bold, Italic, Underline) and `aria-pressed` from the live
+`formats` prop.
 
-`accentBg` and `accentHover` are derived from the chosen accent with the existing
-`hexToRgba(hex, 0.25)` and `darkenHex(hex, …)` helpers. That keeps a mixed
-combination visually coherent without a second palette.
+The four drawer buttons in the same file rely on the `title` attribute alone. A
+tooltip is not an accessible name, so each gets `aria-label` equal to its drawer
+label. Because each button opens a drawer, each also reports `aria-expanded`,
+true for the one whose drawer is open and false for the rest.
 
-Persistence moves to `rite-bg`, `rite-text` and `rite-accent`. `loadPrefs` falls
-back to the legacy `rite-theme` index when those keys are absent, so an existing
-install keeps its theme. A stored set that is unreadable, not a hex color, or
-repeats a color falls back to `THEMES[0]`.
+`title` stays on both groups: it is the visible tooltip, and removing it would
+cost mouse users information.
 
-The three setters must refuse a color already held by another of the three
-fields. The drawer disables those swatches, and the refusal keeps the rule true
-for any other caller.
+### Files in play
 
-### Rendering the sheet
+| File | What changes |
+|---|---|
+| `src/components/editor/editorDisplay.vue` | sheet role, `aria-multiline`, `aria-label` |
+| `src/components/Toolbar.vue` | roving tabindex and the arrow/Home/End keys |
+| `src/components/ActivityBar.vue` | format-button names and pressed state, icon names and expanded state |
 
-`editorDisplay.vue` (and `DocumentRenderer.vue` above it) take the theme as a
-`Number` index today. They must also accept the descriptor object, resolving a
-number through `THEMES[index]` and an object as itself. Numbers keep working so
-the existing rendering tests and the manuscript view are unaffected.
-
-### Existing tests this change moves
-
-These test the status-bar picker, a surface this feature deletes. Their
-guarantees are re-owned, not dropped:
-
-- `src/components/StatusBar.spec.js` — the four theme-picker cases are removed;
-  S-003 replaces them with the assertion that the bar renders no color UI.
-- `src/components/StatusBar.keyboard.spec.js` — its whole subject is the removed
-  trigger and tooltip; the file is deleted. Swatch names, the current mark and
-  keyboard operation are re-owned by S-014 and S-015 against the drawer.
-- `e2e/keyboard-navigation.spec.js` S-013 and S-014 — same reason, same re-owning.
-  S-019 measured the focus ring on the deleted status-bar swatch, so it measures
-  the font select in this drawer instead; that control already draws an accent
-  border on focus.
-- `src/composables/useTheme.test.js` — cases that assert an index in
-  `rite-theme` are rewritten against the three color keys. No case is dropped
-  without a replacement.
-- `src/components/TextOptionsDrawer.spec.js` — `makeProps().theme` grows the new
-  fields; the seven existing cases keep their assertions.
+No other component reads these attributes, so nothing downstream needs to
+change. `Toolbar.spec.js` and `ActivityBar.spec.js` keep every existing case;
+the new tests are appended.
 
 ## Decisions
 
-- **Palette order**: first appearance in `THEMES` (theme order, then `bg`,
-  `text`, `accent`), so the grid is deterministic and a test can name position 0.
-- **Guard**: disabled, not hidden. A row keeps its full palette; the two colors
-  used elsewhere are visibly disabled.
-- **Current preset**: marked only on an exact three-color match. A mixed
-  combination marks no preset.
-- **No confirm**: color is a live preference, like zoom and margin beside it.
-- **Status bar**: no swatch, no picker, no read-only indicator.
-- **Corrupt prefs**: fall back to `THEMES[0]` rather than to a half-applied set.
-- **Visible mark**: the chosen swatch draws a mark the plain swatches do not.
-  The active preset already uses the zoom control's outline grammar, so the
-  swatch follows it. `aria-current` stays for assistive tech but changes nothing
-  on screen, which is why S-016 measures a computed style in a real page.
+- **Editor name**: fixed `Manuscript`.
+- **Section headings**: deferred to 5.7b. Nothing here touches the rendered
+  block structure.
+- **Tab activation**: automatic, focus follows selection.
+- **Format buttons**: stay out of the tab order at `tabindex="-1"`.
+- **`Ruler.vue`**: deferred to 5.7b, where the choice is delete or mount.
+- **`title` attributes**: kept everywhere they already exist.
 
 ## Sentences
 
-### Placement and immediate apply
-
 | ID | Layer | Sentence |
 |---|---|---|
-| S-001 | unit | it should render Background, Text and Accent swatch rows in Text Options, each holding one swatch per distinct color in `THEMES` |
-| S-002 | unit | it should render one preset button per theme, labelled with that theme's name |
-| S-003 | unit | it should render no color swatch and no color picker in the status bar |
-| S-004 | unit | it should apply a swatch's color on the click itself, with no confirm control anywhere for color |
-| S-005 | unit | it should apply a preset's background, text and accent together on one click |
-| S-006 | unit | it should mark a preset current only when all three current colors match it, and mark none for a mixed combination |
-| S-007 | e2e | it should repaint the editor sheet the moment the Forest preset is clicked, with the drawer still open |
-| S-008 | e2e | it should paint the sheet with a mixed background and text, and keep the background when the text swatch is picked afterwards |
+| S-001 | e2e | it should expose the editor sheet as a multiline textbox |
+| S-002 | e2e | it should name the editor sheet Manuscript |
+| S-004 | unit | it should keep one tab stop in the view tablist, on the selected tab |
+| S-005 | unit | it should move the selection and focus between view tabs with ArrowRight and ArrowLeft, wrapping at the ends |
+| S-006 | unit | it should move to the first and last view tab with Home and End |
+| S-007 | e2e | it should reach the tablist once by Tab and switch the visible view with the arrow keys |
+| S-008 | unit | it should name each format button Bold, Italic or Underline |
+| S-009 | unit | it should report each format button's pressed state from the live format |
+| S-010 | unit | it should name each activity icon with its drawer label |
+| S-011 | unit | it should report which activity icon's drawer is open |
 
-### Derived color and persistence
-
-| ID | Layer | Sentence |
-|---|---|---|
-| S-009 | unit | it should derive the accent background and accent hover from whichever accent is chosen |
-| S-010 | unit | it should keep the chosen background, text and accent across a reload |
-| S-011 | unit | it should load a stored combination that matches no preset, and mark no preset current |
-| S-012 | unit | it should fall back to the first preset when the stored colors are corrupt, unreadable, or repeat a color |
-
-### The same-color guard
-
-| ID | Layer | Sentence |
-|---|---|---|
-| S-013 | unit | it should render a swatch whose color is already chosen in another row as disabled, so it cannot be selected from that row |
-
-### Access
-
-| ID | Layer | Sentence |
-|---|---|---|
-| S-014 | unit | it should name each swatch by its row, its source theme and that theme's role, and mark the chosen swatch in each row as current |
-| S-015 | e2e | it should reach the swatches by Tab and apply the focused one with Enter |
-
-### Affordance
-
-| ID | Layer | Sentence |
-|---|---|---|
-| S-016 | e2e | it should give the chosen swatch in each row a visible mark that the free swatches in that row do not carry |
-| S-017 | e2e | it should show a pointer cursor on every swatch, every preset button and both selects in the drawer |
+S-003 is unused: it was reserved for section titles as headings, which moved to
+5.7b. The gap stays so the numbering does not shift.
 
 ## Out of scope
 
-- No free-form hex entry and no color picker widget.
-- No new palette values: the swatches are exactly the colors `THEMES` already
-  holds. Adding a color is a change to `themes.js`.
-- No per-document theme; the choice stays app-global, like zoom and margin.
-- No contrast scoring or automatic text color.
+- No landmarks, skip link, `prefers-reduced-motion` or `:focus-visible` work.
+- No change to the editor's rendering, its block structure or its section titles.
+- No change to the format buttons' tab order, and no new shortcut.
+- No ARIA live region for the word count or the save status.
+- No testing with a real screen reader. These sentences cover the attributes and
+  key presses that VoiceOver reads, not what it says.

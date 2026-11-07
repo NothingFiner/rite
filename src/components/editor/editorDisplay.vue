@@ -1,7 +1,11 @@
 <template>
+  <!-- SPEC 5.7a: the accessible name is the fixed word Manuscript, never the document title. -->
   <div
     class="editor-sheet"
     contenteditable="true"
+    role="textbox"
+    aria-multiline="true"
+    aria-label="Manuscript"
     spellcheck="true"
     autocorrect="off"
     autocapitalize="off"
