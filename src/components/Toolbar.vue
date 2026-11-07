@@ -28,6 +28,10 @@
         </button>
         <button
           class="tool-btn view-tab"
+          role="tab"
+          :aria-selected="mode === 'notes'"
+          :tabindex="mode === 'notes' ? '0' : '-1'"
+          :class="{ active: mode === 'notes' }"
           @click="$emit('setMode', 'notes')"
           title="Story overview and per-section notes"
         >
@@ -78,7 +82,7 @@ const emit = defineEmits(['toggleRight', 'setMode', 'goToTop'])
 
 // Tab order as rendered, so index arithmetic on the tablist DOM resolves the
 // mode to emit.
-const VIEW_MODES = ['editor', 'manuscript', 'history']
+const VIEW_MODES = ['editor', 'manuscript', 'notes', 'history']
 
 // Delegated tablist keys. ArrowRight and ArrowLeft move and select, wrapping
 // at the ends. Home and End select the first and last tab. Automatic

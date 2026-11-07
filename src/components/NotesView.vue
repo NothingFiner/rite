@@ -1,9 +1,9 @@
 <template>
   <div class="notes-view">
     <div class="notes-list">
-      <!-- One row per entry (S-001): the overview first, the sections in
-           document order, the orphaned draft last. Rows only select; the
-           section jump is the pane's control (SPEC.md 5.17). -->
+      <!-- Rows come from `noteEntries(store.doc)` in `useNotes.js`, which owns
+           the order. A click only selects a row and emits `select`. Navigation
+           is the pane's section jump (SPEC.md 5.17). -->
       <button
         v-for="entry in entries"
         :key="entry.id"
@@ -58,8 +58,8 @@ function selectEntry(entryId) {
 
 <style scoped>
 .notes-view {
-  /* Flows inside the App scroll-layer like the other views (HistoryView.vue);
-     no fixed height or internal page scroll. */
+  /* The view flows inside the App scroll-layer, as in HistoryView.vue.
+   * It sets no fixed height and no internal page scroll. */
   min-height: 100%;
   display: flex;
   align-items: stretch;

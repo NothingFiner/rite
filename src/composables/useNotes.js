@@ -12,11 +12,14 @@ export function emptyNotes() {
   return { overview: '', sections: {}, orphaned: '' }
 }
 
-// The Notes list rows (S-001): the story overview first, then every section
-// in document order, then the single orphaned draft. sectionId exists only on
-// section rows, so the pane can map a row back to its section. Hidden
-// sections still list, as in NavigationDrawer.vue. The overview and orphaned
-// titles are display-only.
+// Rows for the Notes pane, in this order: the story overview, every section
+// in document order, then the orphaned draft (S-001). `kind` mirrors the
+// section type and separates chapter rows from section rows. `sectionId`
+// appears only on rows backed by a real section, so the pane resolves a
+// selected row back to that section through it. Hidden sections keep their
+// row, the way NavigationDrawer.vue lists them, so the note stored on a
+// hidden section stays reachable. The overview and orphaned rows carry
+// fixed, display-only titles.
 export function noteEntries(doc) {
   const sections = Array.isArray(doc?.sections) ? doc.sections : []
   return [
