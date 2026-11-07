@@ -31,6 +31,11 @@ export const useDocumentStore = defineStore('document', {
     // failed sync: Rust wouldn't have the new doc, so re-embedding would index
     // stale state.
     docVersion: 0,
+    // Document-level notes (SPEC.md 5.17), mirrored from Rust's `AppState`.
+    // `overview` is the story overview, `sections` is keyed by section id and
+    // holds markdown source, and `orphaned` is the single draft that collects
+    // notes from deleted sections.
+    notes: { overview: '', sections: {}, orphaned: '' },
   }),
 
   actions: {
@@ -269,6 +274,15 @@ export const useDocumentStore = defineStore('document', {
         this.syncTimeout = null
         await this.syncToRust()
       }
+    },
+
+    /// Load the open document's notes from Rust.
+    async retrieveNotes() {
+      return null
+    },
+
+    /// Commit one note entry: `overview`, a section id, or `orphaned`.
+    commitNote(entryId, text) {
     },
 
     markModified() {

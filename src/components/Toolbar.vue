@@ -28,6 +28,13 @@
         </button>
         <button
           class="tool-btn view-tab"
+          @click="$emit('setMode', 'notes')"
+          title="Story overview and per-section notes"
+        >
+          Notes
+        </button>
+        <button
+          class="tool-btn view-tab"
           role="tab"
           :aria-selected="mode === 'history'"
           :tabindex="mode === 'history' ? '0' : '-1'"
