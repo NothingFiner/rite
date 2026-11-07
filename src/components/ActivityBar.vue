@@ -9,6 +9,7 @@
         :class="{ active: activeId === item.id && drawerOpen }"
         :title="item.label"
         :aria-label="item.label"
+        :aria-expanded="item.id === activeId && drawerOpen ? 'true' : 'false'"
         @click="onClick(item.id)"
       >
         <component :is="item.icon" />

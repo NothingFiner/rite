@@ -5,11 +5,12 @@
       <span class="brand-text">rite</span>
     </div>
     <div class="toolbar-group">
-      <div class="view-tabs" role="tablist" aria-label="View">
+      <div class="view-tabs" role="tablist" aria-label="View" @keydown="onViewTabsKeydown">
         <button
           class="tool-btn view-tab"
           role="tab"
           :aria-selected="mode === 'editor'"
+          :tabindex="mode === 'editor' ? '0' : '-1'"
           :class="{ active: mode === 'editor' }"
           @click="$emit('setMode', 'editor')"
         >
@@ -19,6 +20,7 @@
           class="tool-btn view-tab"
           role="tab"
           :aria-selected="mode === 'manuscript'"
+          :tabindex="mode === 'manuscript' ? '0' : '-1'"
           :class="{ active: mode === 'manuscript' }"
           @click="$emit('setMode', 'manuscript')"
         >
@@ -28,6 +30,7 @@
           class="tool-btn view-tab"
           role="tab"
           :aria-selected="mode === 'history'"
+          :tabindex="mode === 'history' ? '0' : '-1'"
           :class="{ active: mode === 'history' }"
           @click="$emit('setMode', 'history')"
           title="Browse, diff, and restore past versions"
@@ -64,7 +67,28 @@ defineProps({
   rightOpen: { type: Boolean, default: false },
 })
 
-defineEmits(['toggleRight', 'setMode', 'goToTop'])
+const emit = defineEmits(['toggleRight', 'setMode', 'goToTop'])
+
+// Tab order as rendered, so index arithmetic on the tablist DOM resolves the
+// mode to emit.
+const VIEW_MODES = ['editor', 'manuscript', 'history']
+
+// Delegated tablist keys (S-005). ArrowRight and ArrowLeft move and select,
+// wrapping at the ends. Automatic activation means emit and focus here: the
+// parent re-render that updates tabindex happens later.
+function onViewTabsKeydown(event) {
+  if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return
+  const tabs = Array.from(event.currentTarget.querySelectorAll('.view-tab'))
+  const pressedIndex = tabs.indexOf(event.target)
+  if (pressedIndex === -1) return
+  // (index plus step) modulo tab count wraps the ends; the added tab count
+  // keeps the ArrowLeft result positive.
+  const step = event.key === 'ArrowRight' ? 1 : -1
+  const targetIndex = (pressedIndex + step + tabs.length) % tabs.length
+  event.preventDefault()
+  emit('setMode', VIEW_MODES[targetIndex])
+  tabs[targetIndex].focus()
+}
 </script>
 
 <style scoped>
