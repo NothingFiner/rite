@@ -153,3 +153,25 @@ html, body, #app {
   border-bottom: 1px solid var(--bg-glass-border, rgba(255, 255, 255, 0.1));
   box-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
 }
+
+/* The ring list covers every native control plus custom rows. The body
+   prefix plus :is lifts specificity above the scoped flat outline-none
+   rules, which compile to (0,2,0) with the component id attribute. */
+body :is(a, button, input, select, textarea, [role="button"], [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+body.pointer-last :is(a, button, input, select, textarea, [role="button"], [tabindex]):focus-visible {
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 1ms !important;
+    transition-delay: 0s !important;
+    animation-duration: 1ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+  }
+}

@@ -1,5 +1,5 @@
 <template>
-  <div class="activity-bar">
+  <div class="activity-bar" role="navigation" aria-label="App panels">
     <div class="activity-icons">
       <button
         v-for="item in items"

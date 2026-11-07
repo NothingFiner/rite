@@ -1,4 +1,4 @@
-# 5.7a — Editor, toolbar and activity-bar semantics
+# 5.7b — Reduced motion, focus rings, landmarks and headings
 
 Approved sentence list for the spec-to-tests stage. The tests are written and red;
 they define what "done" means. This file is the implementer's whole context.
@@ -7,112 +7,123 @@ they define what "done" means. This file is the implementer's whole context.
 
 ### Where this sits in 5.7
 
-The accessibility pass began with non-mouse navigation, because every
-screen-reader user on macOS drives VoiceOver from the keyboard, so a keyboard
-gap is also a screen-reader gap. That half is done: drawer and history rows are
-real controls with a roving tabindex, opening a drawer focuses its active row,
-Escape returns focus to the opener, and Tab deliberately leaves an open drawer.
+5.7a gave the editor, toolbar and activity bar their names and states, and 5.7
+began with the keyboard pass. This is the last slab: what a screen reader reads
+(structural navigation), what a keyboard user sees (a focus ring), and what a
+motion-sensitive writer experiences (less movement). Reachability and naming are
+done; nothing here adds a control.
 
-This item is the naming and semantics half for three surfaces. The CSS and
-structure half (reduced motion, `:focus-visible`, landmarks, a skip link, and the
-`Ruler.vue` decision) is 5.7b and is not touched here.
+### Headings, so VoiceOver can jump between sections
 
-### The editor sheet
+Both views build their title markup in `src/composables/useParagraphHTML.js`.
+`sectionTitleToHTML` emits one shape for the editor
+(`<div class="section-title chapter">`) and another for the manuscript
+(`<p class="ms-para chapter">`), so one change reaches both.
 
-`src/components/editor/editorDisplay.vue` renders a bare
-`contenteditable="true"` div. WKWebView's accessibility tree therefore has no
-text field in it: VoiceOver reads the text as static content and cannot tell the
-writer where typing goes. The sheet needs `role="textbox"` with
-`aria-multiline="true"` and an accessible name, and it keeps
-`contenteditable="true"` because that is what makes it editable.
+A chapter title becomes a level 1 heading and a freeform section title a level 2
+heading, which matches the nesting: chapters are the top unit, and a section sits
+inside one. The title page's own `<h1>` lives in `manuscriptDisplay.vue` front
+matter and is not part of this.
 
-The name is the fixed word **Manuscript**, not the document title. A fixed name
-is stable while the writer types, so VoiceOver does not re-announce the field
-every time the title changes, and it matches the view's own vocabulary.
+Both heading levels go in as `role="heading"` with `aria-level`, because these
+elements are `div` and `p` and their class names already carry the styling.
 
-### The view tablist
+### Skip link
 
-`src/components/Toolbar.vue` declares `role="tablist"` with three `role="tab"`
-buttons. It has no keyboard behaviour at all: all three tabs are separate tab
-stops, and arrow keys do nothing. A tablist should be one tab stop, with the
-arrows moving between tabs, which is the pattern VoiceOver announces.
+The first focusable thing in the document becomes a skip link, so a keyboard
+user lands somewhere useful instead of walking the whole chrome. It reads "Skip
+to manuscript", stays out of sight until it takes focus, and moves focus into
+the editor sheet when activated.
 
-Decisions, so the implementer does not have to invent them:
+It lives in `App.vue` so it precedes every other control in the tab order, and it
+targets the editor sheet rather than adding a new wrapper. Because it is first,
+one Tab from a freshly loaded window must land on it. The link carries the class
+`skip-link`, which is the handle the test uses before it is on screen.
 
-- **One tab stop**: the selected tab is `tabindex="0"` and the others
-  `tabindex="-1"`. Tab therefore enters the tablist once and leaves it once.
-- **Automatic activation**: an arrow key moves focus *and* selects, so the view
-  changes as the writer moves. This is the standard behaviour for view tabs
-  whose content is already loaded, and it avoids a second keystroke.
-- **Wrapping**: ArrowRight on the last tab selects the first, ArrowLeft on the
-  first selects the last.
-- **Home and End** select the first and last tab.
-- The component is stateless (it takes `mode` as a prop and emits `setMode`), so
-  it must move focus itself. The parent's re-render then updates which tab is
-  `tabindex="0"`.
+### Landmarks, by role
 
-### The format buttons and the activity icons
+The four large regions get landmark roles, and every one is a `role` attribute
+rather than a new element, because the existing markup and CSS are built around
+the current tags:
 
-The B/I/U buttons in `ActivityBar.vue` carry `tabindex="-1"` on purpose, so a
-keyboard writer keeps the caret in the editor and uses Cmd+B/I/U instead. That
-stays. What they lack is a name and a state: the visible glyph is `B`, and a
-glyph is not an accessible name, nor does anything report whether bold is on.
-They get `aria-label` (Bold, Italic, Underline) and `aria-pressed` from the live
-`formats` prop.
+| Region | Element today | Role |
+|---|---|---|
+| toolbar | `.toolbar` in `Toolbar.vue` | `banner` |
+| activity bar | `.activity-bar` in `ActivityBar.vue` | `navigation` |
+| editing area | `.scroll-layer` in `App.vue` | `main` |
+| status bar | `.statusbar` in `StatusBar.vue` | `contentinfo` |
 
-The four drawer buttons in the same file rely on the `title` attribute alone. A
-tooltip is not an accessible name, so each gets `aria-label` equal to its drawer
-label. Because each button opens a drawer, each also reports `aria-expanded`,
-true for the one whose drawer is open and false for the rest.
+The activity bar's navigation landmark needs a name, or VoiceOver says
+"navigation" with nothing to distinguish it. Drawers are not landmarks: they are
+transient panels, and four complementary regions would add noise rather than
+structure.
 
-`title` stays on both groups: it is the visible tooltip, and removing it would
-cost mouse users information.
+### Reduced motion, everywhere
 
-### Files in play
+When the system asks for reduced motion, every transition and animation in the
+app must finish in effectively no time. "Everywhere" is the requirement, so the
+rule belongs in the global stylesheet as one media query rather than per
+component, and the test measures several unrelated elements rather than one.
 
-| File | What changes |
-|---|---|
-| `src/components/editor/editorDisplay.vue` | sheet role, `aria-multiline`, `aria-label` |
-| `src/components/Toolbar.vue` | roving tabindex and the arrow/Home/End keys |
-| `src/components/ActivityBar.vue` | format-button names and pressed state, icon names and expanded state |
+The check is a computed duration at or below `0.01s`. The same elements must have
+a real duration without the preference, which is what stops the assertion from
+being vacuous.
 
-No other component reads these attributes, so nothing downstream needs to
-change. `Toolbar.spec.js` and `ActivityBar.spec.js` keep every existing case;
-the new tests are appended.
+### Focus rings
+
+Keyboard focus must be visible on every control, and mouse clicks must not leave
+a ring behind. Rite currently sets a border colour on `:focus` and several rules
+remove the outline, which gives the keyboard no consistent indicator.
+
+The rule is `:focus-visible`: an accent ring around any control focused from the
+keyboard, no ring for a control focused by clicking. Inputs and selects keep
+their border change and gain the ring, because the ring is the only indicator
+that works on a 16px swatch.
+
+### Deleted in this change
+
+`src/components/Ruler.vue` and `src/components/Ruler.spec.js` are removed. No
+component imports `Ruler.vue`, so the strip cannot be reached and its spec guards
+dead code.
 
 ## Decisions
 
-- **Editor name**: fixed `Manuscript`.
-- **Section headings**: deferred to 5.7b. Nothing here touches the rendered
-  block structure.
-- **Tab activation**: automatic, focus follows selection.
-- **Format buttons**: stay out of the tab order at `tabindex="-1"`.
-- **`Ruler.vue`**: deferred to 5.7b, where the choice is delete or mount.
-- **`title` attributes**: kept everywhere they already exist.
+- **Heading levels**: chapter 1, section 2, in both the editor and the manuscript
+  markup.
+- **Heading attribute order**: `role="heading"` then `aria-level` sit immediately
+  after the `class` attribute, before the `data-*` attributes and
+  `contenteditable`. The reconciler's byte-identity tests pin this exact order.
+- **Hidden manuscript titles**: a hidden section's manuscript title
+  (`p.ms-para.section-hidden`) keeps its current markup and gains no heading
+  attributes, because it is not rendered as a visible title.
+- **Skip link**: one, "Skip to manuscript", first in the tab order, hidden until
+  focused, moving focus to the editor sheet.
+- **Landmarks**: `role` attributes on the four existing containers, with a name on
+  the navigation landmark.
+- **Reduced motion**: one global media query covering every transition and
+  animation.
+- **Focus rings**: `:focus-visible` everywhere, inputs and selects included.
+- **`Ruler.vue`**: deleted with its spec.
 
 ## Sentences
 
 | ID | Layer | Sentence |
 |---|---|---|
-| S-001 | e2e | it should expose the editor sheet as a multiline textbox |
-| S-002 | e2e | it should name the editor sheet Manuscript |
-| S-004 | unit | it should keep one tab stop in the view tablist, on the selected tab |
-| S-005 | unit | it should move the selection and focus between view tabs with ArrowRight and ArrowLeft, wrapping at the ends |
-| S-006 | unit | it should move to the first and last view tab with Home and End |
-| S-007 | e2e | it should reach the tablist once by Tab and switch the visible view with the arrow keys |
-| S-008 | unit | it should name each format button Bold, Italic or Underline |
-| S-009 | unit | it should report each format button's pressed state from the live format |
-| S-010 | unit | it should name each activity icon with its drawer label |
-| S-011 | unit | it should report which activity icon's drawer is open |
-
-S-003 is unused: it was reserved for section titles as headings, which moved to
-5.7b. The gap stays so the numbering does not shift.
+| S-001 | unit | it should render a chapter title as a level 1 heading and a section title as a level 2 heading, in both the editor and the manuscript markup |
+| S-002 | e2e | it should expose the rendered titles to the accessibility tree as headings in the editor and in the manuscript view |
+| S-003 | e2e | it should put the skip link first in the tab order, out of sight until it takes focus |
+| S-004 | e2e | it should move focus into the manuscript when the skip link is activated |
+| S-005 | unit | it should mark the toolbar, the activity bar and the status bar with the banner, navigation and contentinfo roles |
+| S-006 | e2e | it should mark the editing area as the main landmark |
+| S-007 | e2e | it should cut every transition and animation to effectively no time when the system asks for reduced motion |
+| S-008 | e2e | it should show a focus ring on a control focused with the keyboard |
+| S-009 | e2e | it should leave no focus ring on a control focused by clicking it |
 
 ## Out of scope
 
-- No landmarks, skip link, `prefers-reduced-motion` or `:focus-visible` work.
-- No change to the editor's rendering, its block structure or its section titles.
-- No change to the format buttons' tab order, and no new shortcut.
-- No ARIA live region for the word count or the save status.
-- No testing with a real screen reader. These sentences cover the attributes and
-  key presses that VoiceOver reads, not what it says.
+- No contrast changes and no new palette values.
+- No change to what the editor announces while typing.
+- No landmarks for drawers, dialogs or panels.
+- No roving tabindex or new shortcut.
+- No headings in the manuscript's title page or table of contents, which already
+  use real `h1` and list markup.

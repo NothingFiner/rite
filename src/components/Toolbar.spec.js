@@ -124,3 +124,12 @@ describe('Toolbar view tablist', () => {
     expect(document.activeElement).toBe(viewTabs(wrapper)[0].element)
   })
 })
+
+// SPEC.md 5.7b S-005. The banner landmark and where it belongs are set out in
+// the landmark table of SPEC.md.
+describe('Toolbar landmark', () => {
+  it('S-005: marks the toolbar with the banner role', () => {
+    const wrapper = mount(Toolbar)
+    expect(wrapper.find('.toolbar').attributes('role')).toBe('banner')
+  })
+})

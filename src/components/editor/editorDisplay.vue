@@ -1,5 +1,4 @@
 <template>
-  <!-- SPEC 5.7a: the accessible name is the fixed word Manuscript, never the document title. -->
   <div
     class="editor-sheet"
     contenteditable="true"
@@ -16,7 +15,7 @@
     @paste="onPaste"
     @beforeinput="onBeforeinput"
     @mousedown="onMousedown"
-  ></div>
+  ><!-- SPEC 5.7a: the accessible name is the fixed word Manuscript, never the document title. --></div>
 </template>
 
 <script setup>

@@ -1,5 +1,5 @@
 <template>
-  <div class="statusbar glass">
+  <div class="statusbar glass" role="contentinfo">
     <div class="status-left">
       <span class="status-title">{{ title || 'Untitled' }}</span>
       <span v-if="fileName" class="status-file">{{ fileName }}</span>
