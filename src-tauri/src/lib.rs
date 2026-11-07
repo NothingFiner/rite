@@ -27,6 +27,7 @@ pub mod export_text;
 pub mod history;
 pub mod llm;
 pub mod menu;
+pub mod notes;
 pub mod retrieval;
 pub mod sidecar;
 pub mod state;
@@ -38,8 +39,8 @@ use commands::{
     apply_text_style, autosave_document, change_section_type, delete_section, diff_against_current,
     get_document, list_history, merge_paragraphs, move_section, open_document, read_import_bytes,
     reconstruct_version, redo, rename_section, replace_all, replace_current, restore_version,
-    save_document, save_snapshot, search_document, set_section_hidden, split_paragraph,
-    sync_document, undo,
+    retrieve_notes, save_document, save_snapshot, search_document, set_section_hidden,
+    split_paragraph, sync_document, undo, update_notes,
 };
 use export_docx::export_docx;
 use export_epub::export_epub;
@@ -183,6 +184,8 @@ pub fn run() {
             reconstruct_version,
             restore_version,
             diff_against_current,
+            retrieve_notes,
+            update_notes,
             sync_document,
             undo,
             redo,

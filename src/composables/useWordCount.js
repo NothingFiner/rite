@@ -51,6 +51,15 @@ export function useWordCount(docRef) {
     () => docRef?.value?.sections,
     () => {
       if (timer) clearTimeout(timer)
+      // A tally still at 0 means the setup pass saw no document yet and this
+      // change is the loaded file arriving. `recompute()` then runs
+      // synchronously, so first paint shows the real count, not "0 words".
+      // Any later change with a live count is a typing burst and resumes the
+      // debounce below.
+      if (wordCount.value === 0) {
+        recompute()
+        return
+      }
       timer = setTimeout(recompute, DEBOUNCE_MS)
     },
     { deep: true },

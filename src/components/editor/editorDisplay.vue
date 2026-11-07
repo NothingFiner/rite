@@ -358,6 +358,17 @@ function getSelectionText() {
   return selectionTextWithin(sheetRef.value)
 }
 
+// The live selection gives the section when the sheet holds the caret. The
+// bookmark resolves the section when focus sits outside the sheet, as a
+// toolbar-tab click does before its handler runs.
+function getCurrentSectionId() {
+  const block = getParagraphAtCursor() || getSectionTitleAtCursor()
+  if (block) return block.dataset.sectionId || null
+  const bookmark = lastEditorSelection.value
+  if (!bookmark) return null
+  return sheetRef.value?.querySelector(blockSelector(bookmark.key))?.dataset.sectionId || null
+}
+
 // --- Page navigation ---------------------------------------------------------
 // The four wrappers below inject the sheet root, so App.vue and useNavigation keep
 // an arg-less surface.
@@ -749,6 +760,7 @@ defineExpose({
   scrollToSection,
   scrollToPage,
   getCurrentPage,
+  getCurrentSectionId,
   selectLine,
   navigatePage,
   navigateSectionPage,

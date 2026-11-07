@@ -1,5 +1,6 @@
 use crate::document::{apply_doc_ops, compute_doc_ops, DocOp, Document};
 use crate::history::{self, HistoryRecord, RiteFile};
+use crate::notes::Notes;
 use crate::retrieval::StoredChunk;
 use crate::summary::SectionSummary;
 use std::collections::HashMap;
@@ -66,6 +67,10 @@ pub struct AppState {
     /// of `section_hashes` above (re-embed debounces on every edit; re-summarize
     /// is user-triggered, so the two baselines drift).
     pub summaries: Mutex<HashMap<String, SectionSummary>>,
+    /// The notes record for the open document (5.17). `open_document` loads it.
+    /// `retrieve_notes` reads it. `update_notes` replaces it. The save and
+    /// autosave paths copy it into the file through `build_rite_file`.
+    pub notes: Mutex<Notes>,
 }
 
 impl AppState {
@@ -86,6 +91,7 @@ impl AppState {
             reembedding: AtomicBool::new(false),
             repending: AtomicBool::new(false),
             summaries: Mutex::new(HashMap::new()),
+            notes: Mutex::new(Notes::default()),
         }
     }
 
@@ -265,10 +271,12 @@ impl AppState {
             .lock()
             .map_err(|e| e.to_string())?
             .clone();
+        let notes = self.notes.lock().map_err(|e| e.to_string())?.clone();
         Ok(RiteFile {
             document,
             history,
             schema_version: 0,
+            notes,
         })
     }
 

@@ -105,6 +105,17 @@
           @back="onSetMode('editor')"
           @toggle-versions="onToggleVersions"
         />
+        <!-- Notes is a working view: its surface paints from the same
+             currentTheme the editor sheet binds, not the glass chrome
+             (S-022). -->
+        <NotesView
+          v-else-if="viewMode === 'notes'"
+          :store="store"
+          :theme="theme.currentTheme"
+          :initial-entry-id="notesEntryId"
+          :origin-view="notesOriginView"
+          @jump="onNotesJump"
+        />
         <DocumentRenderer
           ref="editorRef"
           :modelValue="store.doc"
@@ -189,7 +200,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, reactive, nextTick, toRef } from 'vue'
+import { ref, computed, onMounted, onUnmounted, reactive, nextTick, toRef, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useDocumentStore } from './stores/document.js'
 import { useTheme } from './composables/useTheme.js'
@@ -202,6 +213,7 @@ import { useSectionFormat } from './composables/useSectionFormat.js'
 import { useFocusMode } from './composables/useFocusMode.js'
 import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts.js'
 import { createMenuActions, useMenuActions } from './composables/useMenu.js'
+import { noteDraftUndo } from './composables/useNotes.js'
 import { useThesaurus } from './composables/useThesaurus.js'
 import { useNewDocument } from './composables/useNewDocument.js'
 import { useVersionHistory } from './composables/useVersionHistory.js'
@@ -225,6 +237,7 @@ import TextOptionsDrawer from './components/TextOptionsDrawer.vue'
 import StatsDrawer from './components/StatsDrawer.vue'
 import HistoryListDrawer from './components/HistoryListDrawer.vue'
 import HistoryView from './components/HistoryView.vue'
+import NotesView from './components/NotesView.vue'
 import ActivityBar from './components/ActivityBar.vue'
 import LlmPanel from './components/LlmPanel.vue'
 import Toaster from './components/Toaster.vue'
@@ -240,6 +253,10 @@ const editorRef = ref(null)
 // manuscript back to its title page.
 const scrollLayerRef = ref(null)
 const viewMode = ref('editor')
+const notesEntryId = ref('overview')
+// Remembered when Notes is entered: the view the section jump returns to
+// (SPEC.md 5.17 — from History the default is the editor).
+const notesOriginView = ref('editor')
 const leftDrawerOpen = ref(false)
 const leftDrawerMode = ref('chapters')
 const rightDrawerOpen = ref(false)
@@ -316,6 +333,8 @@ const menuActions = createMenuActions({
   exports: exportComposable,
   newDocument,
   thesaurus,
+  // Undo/redo consult the note draft before the store (useNotes.js, S-026).
+  notesDraft: noteDraftUndo,
 })
 useMenuActions(menuActions)
 const format = reactive(useFormat(editorRef, store.markModified.bind(store)))
@@ -468,6 +487,28 @@ function onSetMode(mode) {
     history.loadHistory()
     return
   }
+  if (mode === 'notes') {
+    // Notes opens on the caret section (S-015), or on the section starting the
+    // manuscript page at the top (S-016); any other source opens the overview.
+    // DocumentRenderer routes getCurrentSectionId to the active view, so the
+    // editor and the manuscript both seed here. The branch runs before the
+    // viewMode assignment below, so viewMode.value is still the source view.
+    // The origin is remembered for the return jump (onNotesJump); from History
+    // it falls back to the editor.
+    const source = viewMode.value
+    notesOriginView.value = source === 'manuscript' ? 'manuscript' : 'editor'
+    notesEntryId.value =
+      source === 'editor' || source === 'manuscript'
+        ? (editorRef.value?.getCurrentSectionId?.() || 'overview')
+        : 'overview'
+  }
+  // Entering the manuscript needs the breaks before its first render; the sync
+  // API skips the 300ms debounce. Without it a just-loaded document renders as
+  // one giant clipped page, and every scroll target below page 2 clamps short
+  // of its section. A warm re-entry reuses the per-section cache, so is cheap.
+  if (mode === 'manuscript' && viewMode.value !== 'manuscript') {
+    paginationRaw.calculateBreaks()
+  }
   // Close an open drawer whose button vanishes in the target view (Scheme A:
   // ActivityBar buttons are view-aware via isDrawerModeAllowedIn). Without
   // this, switching Editor→Manuscript with Text Options open would leave the
@@ -530,6 +571,17 @@ function onToggleVersions() {
 function onScrollTo(id) {
   const forceEditor = viewMode.value === 'history'
   nav.scrollToSection(id, forceEditor ? () => { viewMode.value = 'editor' } : undefined)
+}
+
+// Section jump from a Notes entry (SPEC.md 5.17): the jump returns to the
+// view the writer came from. nav.scrollToSection switches the view (the
+// callback runs before its scroll) then nextTick-scrolls the active inner
+// view. The callback must not go through onSetMode; that would run the notes
+// branch again and re-seed the entry id.
+function onNotesJump(sectionId) {
+  if (!sectionId) return
+  const targetView = notesOriginView.value === 'manuscript' ? 'manuscript' : 'editor'
+  nav.scrollToSection(sectionId, () => { viewMode.value = targetView })
 }
 
 // Manuscript "Go to top" button (5.1b). The manuscript's first page is the
@@ -630,6 +682,7 @@ onMounted(async () => {
   llmSettings.loadPrefs()
   document.execCommand('styleWithCSS', false, true)
   await store.loadInitialDocument()
+  await store.retrieveNotes()
 
   autosaveTimer = setInterval(() => { store.autosaveDocument() }, AUTOSAVE_INTERVAL_MS)
   // Coarse tick so the "Saved Xm ago" label refreshes. 15s is well below the
@@ -643,6 +696,10 @@ onUnmounted(() => {
   if (autosaveTimer) clearInterval(autosaveTimer)
   if (clockTimer) clearInterval(clockTimer)
 })
+
+// Opening a document installs that file's notes in Rust (loadDocument sets
+// lastPath), so lastPath is the trigger to re-read them (SPEC.md 5.17).
+watch(() => store.lastPath, () => { store.retrieveNotes() })
 </script>
 
 <style scoped>
