@@ -60,7 +60,7 @@
       <!-- The recap is generated context beside the writer's words, so it
            follows the note body and stays read-only prose. -->
       <div v-if="selectedRecap" class="note-recap">
-        <p class="note-recap-label">Summary</p>
+        <p class="note-recap-label">Assistant recap · read-only</p>
         <p class="note-recap-text">{{ selectedRecap }}</p>
         <button
           type="button"
@@ -119,7 +119,19 @@ const entries = computed(() => noteEntries(props.store.doc))
 const selectedEntry = computed(() =>
   entries.value.find((entry) => entry.id === selectedEntryId.value)
 )
-const selectedTitle = computed(() => selectedEntry.value?.title ?? '')
+// The header names the section the way the writer wrote it (S-012): the
+// stored raw title. For a chapter that raw title is the subtitle alone,
+// without the "Chapter 1: " prefix the noteEntries row derives. A blank
+// stored title falls back to the row title, so the header never renders empty.
+const selectedTitle = computed(() => {
+  const entry = selectedEntry.value
+  if (!entry) return ''
+  if (!entry.sectionId) return entry.title
+  const sections = Array.isArray(props.store.doc?.sections)
+    ? props.store.doc.sections
+    : []
+  return sections.find((section) => section.id === entry.sectionId)?.title || entry.title
+})
 const selectedSectionId = computed(() => selectedEntry.value?.sectionId ?? '')
 const noteText = computed(() => readNote(props.store.notes, selectedEntryId.value))
 
