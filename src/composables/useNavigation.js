@@ -1,7 +1,7 @@
 import { ref, computed, nextTick } from 'vue'
 import { useDocumentStore } from '../stores/document.js'
 import { flattenSections } from './useSectionBlocks.js'
-import { useSectionFormat } from './useSectionFormat.js'
+import { sectionDisplayTitle } from './useSectionFormat.js'
 
 // Builds the flat navigation outline. With headings retired, the outline is
 // one row per Section — no Part/Chapter grouping, no levels. Each row carries
@@ -19,7 +19,6 @@ export function useNavigation(docRef, editorRef, pagination = { getPageForBlock:
   const store = useDocumentStore()
   const selectedNavId = ref(null)
   const { getPageForBlock } = pagination
-  const sectionFormat = useSectionFormat()
 
   const tocItems = computed(() => {
     const sections = docRef.value?.sections || []
@@ -34,23 +33,12 @@ export function useNavigation(docRef, editorRef, pagination = { getPageForBlock:
         sectionType: blocks[i].sectionType,
         hidden: blocks[i].hidden,
         chapterIndex: blocks[i].chapterIndex,
-        displayTitle: displayTitleFor(blocks[i]),
+        displayTitle: sectionDisplayTitle(blocks[i], blocks[i].chapterIndex),
         page: getPageForBlock(i),
       })
     }
     return items
   })
-
-  // Rendered title for the nav row. A Chapter shows its derived prefix
-  // ("Chapter 3: ") plus the subtitle, or just "Chapter 3" when the subtitle is
-  // empty. A Section shows its literal title, or "Untitled Section" when blank.
-  function displayTitleFor(block) {
-    if (block.sectionType === 'chapter') {
-      const prefix = sectionFormat.formatChapter(block.chapterIndex) // "Chapter 3: "
-      return block.title ? prefix + block.title : prefix.replace(/: $/, '')
-    }
-    return block.title || 'Untitled Section'
-  }
 
   function scrollToSection(id, switchToEditor) {
     if (switchToEditor) switchToEditor()

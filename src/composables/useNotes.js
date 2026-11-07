@@ -9,8 +9,23 @@
 // draft. It also hosts the draft undo session the macOS menu routes through
 // (S-026).
 
+import { sectionDisplayTitle } from './useSectionFormat.js'
+
 export function emptyNotes() {
   return { overview: '', sections: {}, orphaned: '' }
+}
+
+// Pairs each section with its render-derived chapter index, the same walk
+// `flattenSections` does: only Chapter-type sections advance the counter, so a
+// Section between two chapters does not shift the numbering. The index is what
+// `sectionDisplayTitle` turns into "Chapter 3". Never read `section.title` raw
+// for a Chapter — it is the subtitle, and a subtitle-less chapter is blank.
+function sectionsWithChapterIndex(sections) {
+  let chapterIndex = 0
+  return sections.map((section) => ({
+    section,
+    chapterIndex: section.sectionType === 'chapter' ? ++chapterIndex : null,
+  }))
 }
 
 // Rows for the Notes pane, in this order: the story overview, every section
@@ -21,14 +36,20 @@ export function emptyNotes() {
 // row, the way NavigationDrawer.vue lists them, so the note stored on a
 // hidden section stays reachable. The overview and orphaned rows carry
 // fixed, display-only titles.
+//
+// Section rows carry the DISPLAY title from `sectionDisplayTitle`, the same one
+// the navigation outline shows: "Chapter 3: Ash", "Chapter 3" for a
+// subtitle-less chapter, or "Untitled Section" for a blank section. A raw
+// `section.title` is blank for an unnamed chapter, which rendered the row —
+// and the note header it opens — with no title at all.
 export function noteEntries(doc) {
   const sections = Array.isArray(doc?.sections) ? doc.sections : []
   return [
     { id: 'overview', kind: 'overview', title: 'Story Overview' },
-    ...sections.map((section) => ({
+    ...sectionsWithChapterIndex(sections).map(({ section, chapterIndex }) => ({
       id: section.id,
       kind: section.sectionType === 'chapter' ? 'chapter' : 'section',
-      title: section.title,
+      title: sectionDisplayTitle(section, chapterIndex),
       sectionId: section.id,
     })),
     { id: 'orphaned', kind: 'orphaned', title: 'Orphaned notes' },
@@ -81,12 +102,14 @@ export function notesToText(notes, sections) {
     lines.push('## Story overview', overview)
   }
 
-  for (const section of list) {
+  for (const { section, chapterIndex } of sectionsWithChapterIndex(list)) {
     const text = storedNotes.sections?.[section.id] ?? ''
     if (!text.trim()) {
       continue
     }
-    lines.push(`## ${section.title}`, text)
+    // The same display title the Notes list shows, so the model is never handed
+    // a bare "## " heading for an unnamed chapter.
+    lines.push(`## ${sectionDisplayTitle(section, chapterIndex)}`, text)
   }
 
   return lines.join('\n\n')
@@ -97,7 +120,13 @@ export function notesToText(notes, sections) {
 // draft accumulates deletions in the order they happen. A blank note still
 // deletes the key, because an empty section note is "no note" (the rule
 // `writeNote` states).
-export function orphanSectionNote(notes, section) {
+//
+// `displayTitle` is the heading to write, and a caller that can still derive the
+// section's chapter index should pass `sectionDisplayTitle(section, index)`:
+// `section.title` alone is blank for an unnamed chapter, which would land the
+// note under a bare "## " heading. It defaults to `section.title` so a caller
+// with nothing better still works.
+export function orphanSectionNote(notes, section, displayTitle = section?.title) {
   const record = {
     overview: notes?.overview ?? '',
     sections: { ...notes?.sections },
@@ -107,7 +136,7 @@ export function orphanSectionNote(notes, section) {
   delete record.sections[section.id]
   if (!text.trim()) return record
 
-  const heading = `## ${section.title}`
+  const heading = `## ${displayTitle || 'Untitled Section'}`
   record.orphaned = record.orphaned.trim()
     ? `${record.orphaned.trim()}\n\n${heading}\n\n${text}`
     : `${heading}\n\n${text}`

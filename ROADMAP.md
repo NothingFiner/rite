@@ -1,10 +1,12 @@
 # Rite — Roadmap
 
-Status as of **2026-11-07**, `development` at `57982fb` (accessibility pass complete: 5.7a #29 and 5.7b #30 merged).
+Status as of **2026-11-07**, `development` at `7468024` (Notes view shipped as 5.17, #32).
 
 Tauri v1 → v2 migration landed as PR #15 — a prerequisite for 5.11's context menu, not a roadmap item of its own.
 
 **Numbering rule:** IDs are stable. A moved item keeps a pointer at its old ID instead of being renumbered, so commit messages, branch names and old notes stay resolvable. New work takes the next free number in its phase.
+
+**Bugs** live in `BUGS.md` under `B-###` IDs, not in this table. A bug needing product decisions is promoted to a roadmap item and keeps its `B-ID` as the pointer — this file says where the work sits, `BUGS.md` says what broke and why. A fix commit names its `B-ID`.
 
 ---
 
@@ -32,8 +34,45 @@ The last feature phase. When this is done, Rite is feature-complete for a first 
 | 5.14 | `NSSpellChecker` spelling actions | absorbed into 5.15 |
 | 5.15 | Restored word menu: Cut / Copy / Paste / Select All + Learn / Ignore Spelling | done (#17) |
 | **5.16** | **Word cloud of frequently used words, excluding articles and pronouns** | **open — idea, not scoped** |
-| **5.17** | **Summary / outline view: per-section synopses in a navigable overview** | **open — data layer already built, needs presentation** |
+| 5.17 | Notes view: story overview and per-section notes | done (#32) |
 | 5.18 | Tab characters + fixed 0.5-inch tab stops, with a Tab-set first-line indent | done (#22) |
+| **5.19** | **`[[…]]` links, characters in chapters, and custom words with where they are used** | **open — own data model; deferred by 5.17's spec** |
+| **5.20** | **Summary / outline view: per-section synopses in a navigable overview (was 5.17)** | **open — data layer already built, needs presentation** |
+
+**Renumbered 2026-11-07.** The Notes view shipped under the ID **5.17** — its spec,
+its commit (`7468024`) and `src-tauri/src/notes.rs` all say 5.17 — which collided
+with the summary/outline item that had held that number, still listed as open here.
+The shipped item keeps 5.17, because three artifacts already name it; summary/outline
+moves to 5.20 and keeps its pointer; and the `[[…]]` links / characters / custom-words
+work that 5.17's spec deferred takes the 5.19 its spec already named. No commit message
+or branch name was wrong — only this table was behind.
+
+### 5.17 — Notes view (done, #32)
+
+A fourth top-level view — **Editor, Manuscript, Notes, History** — holding one
+document-level story overview, one note per section, and a single orphaned-notes
+draft for deleted sections. Notes are a document-level record stored beside the
+document in the `.rite` file and deliberately **not** part of `Document`, so they
+stay out of the text exports, the word count and the version-history snapshots.
+Rendered markdown is the default reading mode; the pencil edits, and the macOS
+menu's Undo unwinds the draft without moving the manuscript's undo stack.
+
+The assistant gains a **Notes** scope that *reads* notes as context. It does not
+create them: `llm.rs` has no tool calling, and 5.17's spec rules AI generation out
+of scope. Anything that lets the assistant write a note is new work, not a
+follow-on.
+
+Section names in the list and in note headings come from `sectionDisplayTitle`
+(`useSectionFormat.js`), the rule the navigation outline already used:
+"Chapter 3: Ash", "Chapter 3" for a subtitle-less chapter, "Untitled Section" for
+a blank section. Never render `section.title` raw — for a Chapter it is only the
+subtitle and is legitimately blank (5.9).
+
+### 5.19 — `[[…]]` links, characters in chapters, custom words (open)
+
+Deferred by 5.17's spec because it needs its own data model rather than an
+extension of the notes record: inline `[[…]]` links, a cast of characters attached
+to chapters, and a custom-word list that records where each word is used.
 
 ### 5.15 — Restored word menu (done, #17)
 
@@ -58,7 +97,7 @@ blocking the main thread), and does the stopword list need to follow the documen
 language. Needs a tokenizer and a curated list — a real feature, not a garnish on
 5.4's graph.
 
-### 5.17 — Summary / outline view
+### 5.20 — Summary / outline view (was 5.17)
 
 The hard half of this is already built and is not in the UI where a writer would
 reach for it:
@@ -177,6 +216,49 @@ in this phase turns out to be a feature, it belongs in Phase 5 instead.
 | 6.5 | Release / build packaging (icons, signing, notarization, updater) | partly — `identifier: com.rite.app` set |
 | 6.6 | Manuscript view unification (use the 5.6 composables) | open |
 | 6.7 | Final accessibility + manual QA | open — 5.7 is done, so the final pass can start |
+| **6.8** | **Never record a history checkpoint that has no delta** | **open** |
+| 6.9 | Bug log (`BUGS.md`): stable `B-###` IDs, cross-referenced from commits and specs | done |
+
+### 6.8 — No checkpoint without a delta
+
+A version in the history must mean the manuscript *changed*. Today it does not:
+`state.rs::append_history_snapshot` pushes a full `Snapshot` and compacts without
+comparing anything, and it is the path behind both explicit save
+(`commands.rs::save_document`) and the manual checkpoint
+(`commands.rs::save_snapshot`). Only autosave (`append_history_delta`) is guarded —
+`doc_ops_between` returning empty makes it `Ok(false)` and it writes nothing.
+
+So Cmd+S on an untouched manuscript, or a checkpoint taken twice, files a whole
+duplicate `Document` into the embedded history. Consequences: the `.rite` grows by
+a full document per no-op save; the history list shows rows a writer cannot tell
+apart; 5.12's next/previous-change navigation has nothing to land on; and
+`compact_history` pays for it by evicting real history to stay under `max_snapshots`.
+
+**Rule:** a checkpoint or save records a version only if the document differs from
+the newest recorded state. If it does not, record nothing — no snapshot, no delta,
+no duplicate row — and do not rewrite the `.rite` for it. This applies to save and
+manual checkpoint alike; "I asked for a checkpoint" is not a reason to store a
+version that is byte-identical to the one before it.
+
+The comparison source is the newest recorded state, which is the newest snapshot
+plus the deltas after it — or equivalently `last_history_state`, the baseline
+autosave already maintains, when it is valid. Do not compare against "the last
+snapshot": a delta run since then may already hold this state, and the correct
+answer in that case is *no new record*, not a fresh snapshot.
+
+Two cases must keep a record, and they are not exceptions to the rule — they are
+deltas from nothing:
+
+- **Empty history** (first save of a document): there is no prior state, so the
+  first snapshot is the only restore point there will ever be. Record it.
+- **A different target path** (Save As): the new file needs its own complete
+  document, so it is written even when the content is unchanged. Only the history
+  record is skipped.
+
+Interacts with 5.12 (change navigation) and 6.2 (history flow redesign: change
+counts, compare-then-restore) — both assume a row in the list is a real change.
+Lands as a Rust unit-level change in `AppState`, with the frontend only learning
+that a checkpoint may report "no change" instead of a new timestamp.
 
 ---
 
