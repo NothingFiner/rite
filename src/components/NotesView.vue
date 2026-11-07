@@ -22,9 +22,26 @@
     <div class="note-pane">
       <div class="note-head">
         <div class="note-title">{{ selectedTitle }}</div>
+        <!-- The pencil stays last in .note-head. The spot after .note-title is
+             reserved for the section jump (SPEC.md 5.17), and .note-title +
+             .note-jump stays adjacent. -->
+        <button
+          v-if="!isEditing"
+          type="button"
+          class="note-edit"
+          title="Edit note"
+          aria-label="Edit note"
+          @click="startEditing"
+        >✎</button>
       </div>
+      <textarea
+        v-if="isEditing"
+        v-model="draftText"
+        class="note-source"
+        aria-label="Note draft"
+      ></textarea>
       <div
-        v-if="noteText.trim()"
+        v-else-if="noteText.trim()"
         class="note-rendered"
         v-html="renderMarkdown(noteText)"
       ></div>
@@ -34,7 +51,7 @@
 </template>
 
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { noteEntries, readNote } from '../composables/useNotes.js'
 import { renderMarkdown } from '../composables/useMarkdown.js'
 
@@ -68,10 +85,37 @@ const selectedTitle = computed(
 )
 const noteText = computed(() => readNote(props.store.notes, selectedEntryId.value))
 
+// One draft at a time, owned by the entry selected when it opened. Reading
+// mode is the default; the pencil starts the session at the committed text.
+const isEditing = ref(false)
+const draftText = ref('')
+
+function startEditing() {
+  draftText.value = readNote(props.store.notes, selectedEntryId.value)
+  isEditing.value = true
+}
+
+// Writes the draft for the entry it was opened on, through the store. A draft
+// equal to the committed text skips the write, so closing an untouched session
+// marks nothing modified and sends nothing to Rust.
+function commitDirtyDraft() {
+  if (!isEditing.value) return
+  if (draftText.value === noteText.value) return
+  props.store.commitNote(selectedEntryId.value, draftText.value)
+}
+
 function selectEntry(entryId) {
+  // A closing session belongs to the previous entry, so its draft lands on
+  // that entry before the selection moves (SPEC.md 5.17).
+  commitDirtyDraft()
+  isEditing.value = false
   selectedEntryId.value = entryId
   emit('select', entryId)
 }
+
+// The view closing is not a discard: a dirty draft lands on the same entry,
+// per SPEC.md 5.17.
+onBeforeUnmount(commitDirtyDraft)
 </script>
 
 <style scoped>
@@ -127,12 +171,51 @@ function selectEntry(entryId) {
 
 .note-head {
   margin-bottom: 12px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
 }
 
 .note-title {
   font-size: 15px;
   font-weight: 700;
   color: var(--text-primary);
+}
+
+.note-edit {
+  /* Glyph size stands off the row font so the pencil is a quiet affordance. */
+  flex: none;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.note-edit:hover {
+  color: var(--text-primary);
+  background: var(--hover-bg);
+}
+
+.note-source {
+  /* Draft room without resizing: a paragraph of note plus margin. */
+  width: 100%;
+  min-height: 160px;
+  resize: vertical;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-primary);
+  background: var(--glass-bg);
+  border: 1px solid var(--bg-glass-border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  box-sizing: border-box;
 }
 
 .note-rendered {

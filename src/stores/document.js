@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { createSection } from '../constants/DocumentModel.js'
+import { writeNote } from '../composables/useNotes.js'
 import { useToastsStore } from './toasts.js'
 
 export const useDocumentStore = defineStore('document', {
@@ -281,8 +282,17 @@ export const useDocumentStore = defineStore('document', {
       return null
     },
 
-    /// Commit one note entry: `overview`, a section id, or `orphaned`.
-    commitNote(entryId, text) {
+    /// Commit one note entry: `overview`, a section id, or `orphaned`. The
+    /// record comes from `writeNote`, so the store swaps in a new record
+    /// instead of writing one field in place.
+    async commitNote(entryId, text) {
+      try {
+        this.notes = writeNote(this.notes, entryId, text)
+        this.markModified()
+        await invoke('update_notes', { notes: this.notes })
+      } catch (e) {
+        this.notifyError(e, 'Failed to save notes')
+      }
     },
 
     markModified() {

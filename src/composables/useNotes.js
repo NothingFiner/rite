@@ -43,8 +43,27 @@ export function readNote(notes, id) {
   return notes?.sections?.[id] ?? ''
 }
 
+// Returns a new record with one entry's text set; the caller swaps the record
+// in, so the input record and its sections stay untouched. A blank text for a
+// section deletes the key instead of storing one: an empty note is "no note",
+// which keeps `readNote` misses and `notesToText` skips consistent.
 export function writeNote(notes, id, text) {
-  return notes
+  const record = {
+    overview: notes?.overview ?? '',
+    sections: { ...notes?.sections },
+    orphaned: notes?.orphaned ?? '',
+  }
+  const value = text ?? ''
+  if (id === 'overview') {
+    record.overview = value
+  } else if (id === 'orphaned') {
+    record.orphaned = value
+  } else if (!value.trim()) {
+    delete record.sections[id]
+  } else {
+    record.sections[id] = value
+  }
+  return record
 }
 
 // Builds the context string for the Notes scope (S-009). The preamble is
