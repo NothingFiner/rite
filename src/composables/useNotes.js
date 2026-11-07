@@ -56,6 +56,21 @@ export function noteEntries(doc) {
   ]
 }
 
+// The chapter heading a section-backed row sits under, per the drawer heading
+// rule in ReferencesNavDrawer.vue. A chapter row names itself. Null means no
+// chapter precedes the section.
+export function chapterHeadingFor(doc, sectionId) {
+  const list = sectionsWithChapterIndex(Array.isArray(doc?.sections) ? doc.sections : [])
+  let heading = null
+  for (const { section, chapterIndex } of list) {
+    if (section.sectionType === 'chapter') {
+      heading = section.title || sectionDisplayTitle(section, chapterIndex)
+    }
+    if (section.id === sectionId) return heading
+  }
+  return null
+}
+
 // Returns the stored note text for an entry id. The overview and orphaned
 // rows have their own record fields, so only those two ids read them. A
 // section with no note has no key in sections, and every miss returns ''.

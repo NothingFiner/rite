@@ -14,8 +14,8 @@
           aria-label="Go to section"
           @click="jumpToSection"
         >Go to section</button>
-        <!-- The pencil stays last in .note-head. While editing the pencil
-             gives way to check and reset, which reading mode never shows. -->
+        <!-- While editing the pencil gives way to check and reset, which
+             reading mode never shows. -->
         <template v-if="isEditing">
           <button
             type="button"
@@ -41,6 +41,10 @@
           aria-label="Edit note"
           @click="startEditing"
         >✎</button>
+        <!-- The subtitle sits last in .note-head, so the .note-title +
+             .note-jump adjacency and the save, divider, reset run keep their
+             shape (SPEC.md 5.20a). Only section-backed rows show one. -->
+        <div v-if="selectedSubtitle" class="note-sub">{{ selectedSubtitle }}</div>
       </div>
       <!-- :value plus @input, because the handler records the draft on the
            noteDraftUndo stack, whose order v-model does not own (S-026). -->
@@ -76,7 +80,13 @@
 
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { noteDraftUndo, noteEntries, readNote, writeNote } from '../composables/useNotes.js'
+import {
+  chapterHeadingFor,
+  noteDraftUndo,
+  noteEntries,
+  readNote,
+  writeNote,
+} from '../composables/useNotes.js'
 import { renderMarkdown } from '../composables/useMarkdown.js'
 
 const props = defineProps({
@@ -118,9 +128,15 @@ const entries = computed(() => noteEntries(props.store.doc))
 
 // The pane shows the note of the selected entry in reading mode: rendered
 // markdown when there is text, the empty state otherwise (SPEC.md 5.17).
+// An id matching no row falls back to the first row, the story overview,
+// which noteEntries always carries. selectedEntryId still tracks the raw
+// prop so the change watcher fires.
 const selectedEntry = computed(() =>
-  entries.value.find((entry) => entry.id === selectedEntryId.value)
+  entries.value.find((entry) => entry.id === selectedEntryId.value) ?? entries.value[0]
 )
+// Reads, draft seeds, resets and commits go through this resolved id, so a
+// draft always lands on the page it was edited on.
+const resolvedEntryId = computed(() => selectedEntry.value?.id ?? '')
 // The header names the section the way the writer wrote it (S-012): the
 // stored raw title. For a chapter that raw title is the subtitle alone,
 // without the "Chapter 1: " prefix the noteEntries row derives. A blank
@@ -134,8 +150,18 @@ const selectedTitle = computed(() => {
     : []
   return sections.find((section) => section.id === entry.sectionId)?.title || entry.title
 })
+// The subtitle names the subsection's chapter per the drawer heading rule in
+// ReferencesNavDrawer.vue, plus the capitalized row kind. Section rows with no
+// preceding chapter show the kind alone.
+const selectedSubtitle = computed(() => {
+  const entry = selectedEntry.value
+  if (!entry || (entry.kind !== 'chapter' && entry.kind !== 'section')) return ''
+  const kindLabel = entry.kind === 'chapter' ? 'Chapter' : 'Section'
+  const chapterHeading = chapterHeadingFor(props.store.doc, entry.sectionId)
+  return chapterHeading ? `${chapterHeading} · ${kindLabel}` : kindLabel
+})
 const selectedSectionId = computed(() => selectedEntry.value?.sectionId ?? '')
-const noteText = computed(() => readNote(props.store.notes, selectedEntryId.value))
+const noteText = computed(() => readNote(props.store.notes, resolvedEntryId.value))
 
 // Whitespace-only text counts as no recap, so a blank stored recap never
 // renders this block.
@@ -165,7 +191,7 @@ const isEditing = ref(false)
 const draftText = ref('')
 
 function startEditing() {
-  draftText.value = readNote(props.store.notes, selectedEntryId.value)
+  draftText.value = readNote(props.store.notes, resolvedEntryId.value)
   // Seeding runs before begin, so the session opens on the text the writer
   // starts with.
   noteDraftUndo.begin(
@@ -189,7 +215,7 @@ function onDraftInput(event) {
 function commitDirtyDraft() {
   if (!isEditing.value) return
   if (draftText.value === noteText.value) return
-  commitNote(selectedEntryId.value, draftText.value)
+  commitNote(resolvedEntryId.value, draftText.value)
 }
 
 // Commits one note on the store, per the `store` prop contract above. The
@@ -218,7 +244,7 @@ function saveDraft() {
 // note did not change. The assignment skips record (see onDraftInput), so the
 // session keeps its history.
 function resetDraft() {
-  draftText.value = readNote(props.store.notes, selectedEntryId.value)
+  draftText.value = readNote(props.store.notes, resolvedEntryId.value)
 }
 
 // Inserting appends the recap to the draft without committing. The writes
@@ -273,12 +299,22 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: baseline;
   gap: 8px;
+  /* Wrap lets the subtitle's full basis drop it to its own line. */
+  flex-wrap: wrap;
 }
 
 .note-title {
   font-size: 15px;
   font-weight: 700;
   color: var(--text-primary);
+}
+
+.note-sub {
+  /* Full basis on the wrapped head carries the subtitle to its own line,
+     below the title row. */
+  flex-basis: 100%;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 .note-edit,

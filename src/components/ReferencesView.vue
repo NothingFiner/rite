@@ -14,6 +14,7 @@
       :theme="theme"
       :entry-id="entryId"
       :origin-view="originView"
+      :recaps="recapBySection"
       @jump="forwardJump"
     />
   </div>
@@ -30,8 +31,9 @@ import NotesView from './NotesView.vue'
 const props = defineProps({
   store: { type: Object, required: true },
   theme: { type: Object, default: null },
-  // App.vue binds summaries and settings to this view already. The recap
-  // wiring from them is deferred work (SPEC.md 5.20a), so nothing reads them.
+  // App.vue binds summaries and settings to this view already. summaryEntries
+  // feeds the recap block; the generation slot stays deferred work (SPEC.md
+  // 5.20a).
   summaries: { type: Object, default: null },
   settings: { type: Object, default: null },
   entryId: { type: String, default: 'overview' },
@@ -49,6 +51,23 @@ const surfaceStyles = computed(() => {
     backgroundColor: props.theme.bg,
     color: props.theme.text,
   }
+})
+
+// retrieve_summaries rows key by sectionId for NotesView's recaps prop. A row
+// without a sectionId, or with a summary that is whitespace only, shows no
+// recap.
+const recapBySection = computed(() => {
+  const summaryRows = Array.isArray(props.summaries?.summaryEntries)
+    ? props.summaries.summaryEntries
+    : []
+  const recaps = {}
+  for (const summaryRow of summaryRows) {
+    const sectionId = summaryRow?.sectionId
+    const summary = summaryRow?.summary
+    if (!sectionId || typeof summary !== 'string' || !summary.trim()) continue
+    recaps[sectionId] = summary
+  }
+  return recaps
 })
 
 // Both relays forward their payload unchanged. The shell owns the selection
