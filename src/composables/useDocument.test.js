@@ -142,7 +142,7 @@ describe('useDocumentStore', () => {
     await store.deleteSection('s1')
 
     // The key is gone, so the note cannot linger or reach the model under a
-    // section that no longer exists.
+    // section that has been deleted.
     expect(store.notes.sections.s1).toBeUndefined()
     // The heading comes from the pre-deletion document: after `delete_section`
     // returns there is no title left to read.

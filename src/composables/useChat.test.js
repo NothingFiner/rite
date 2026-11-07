@@ -1227,11 +1227,11 @@ describe('useChat — stop + clear', () => {
 })
 // --- Notes scope (SPEC.md 5.17a, B-001) ------------------------------------
 //
-// The Notes scope exists to answer questions about the author's notes, not the
-// prose. The record is threaded in as `useChat`'s fifth argument, a ref-like
+// The Notes scope answers questions about the author's notes, not the prose.
+// The record is threaded in as `useChat`'s fifth argument, a ref-like
 // `{ value: notes }` mirroring `docRef`. `useNotes.js` owns the string
-// translation (`notesToText`); these sentences pin that the chat path actually
-// uses it and that no other scope leaks into it.
+// translation (`notesToText`). These sentences pin that the chat path uses it,
+// and that no other scope leaks into it.
 
 // The notes record exactly as the store holds it (see `emptyNotes`).
 function makeNotes(overrides = {}) {
@@ -1377,8 +1377,8 @@ describe('useChat — Notes scope', () => {
     chat.scope.value = 'notes'
     const context = chat.buildContextMessages('thoughts?')[0].content
 
-    // The note is author commentary about a row the Notes list still shows, so
-    // it is included — unlike the hidden section's prose, which stays
+    // The note is author commentary about a row the Notes list still shows,
+    // so it is included. The hidden section's prose, by contrast, stays
     // header-less in the manuscript scopes (5.10).
     expect(context).toContain('Keep the epigraph for the epilogue.')
     expect(context).toContain('Epigram')
@@ -1401,8 +1401,8 @@ describe('useChat — Notes scope', () => {
   })
 
   it("S-014: sends no deleted section's note, because the orphaned draft is not sent", () => {
-    // The state after a deletion: the section key is gone and the text lives
-    // only in `orphaned`, which describes prose the manuscript no longer holds.
+    // The state after a deletion: the section key is gone, and the text lives
+    // only in `orphaned`, which describes prose the manuscript has dropped.
     const notes = makeNotes({
       sections: { s2: 'Still part of the manuscript.' },
       orphaned: '## The Door\n\nThe door is a lie.',
