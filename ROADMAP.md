@@ -1,6 +1,6 @@
 # Rite — Roadmap
 
-Status as of **2026-11-07**, `development` at `7468024` (Notes view shipped as 5.17, #32).
+Status as of **2026-11-07**. Phase 5's most recent shipped item is **5.17** (Notes view, #32); 5.16, 5.19 and 5.20 remain open, and Phase 6 is release polish. This line names no commit or `development` hash on purpose: it was stale three times in one day, because a hash in a file goes out of date on the next merge.
 
 Tauri v1 → v2 migration landed as PR #15 — a prerequisite for 5.11's context menu, not a roadmap item of its own.
 
@@ -69,6 +69,14 @@ Section names in the list and in note headings come from `sectionDisplayTitle`
 "Chapter 3: Ash", "Chapter 3" for a subtitle-less chapter, "Untitled Section" for
 a blank section. Never render `section.title` raw — for a Chapter it is only the
 subtitle and is legitimately blank (5.9).
+
+Where the proof lives: sentences **S-001–S-026** in `SPEC-5.17-notes.md`; unit
+tests beside the code (`useNotes.test.js`, `NotesView.spec.js`), the notes record's
+Rust integration tests in `src-tauri/tests/notes.rs`, and `e2e/notes-view.spec.js`
+end to end. Two of those sentences were not wired when 5.17 shipped: S-007 and
+S-009 pass their unit tests because the tests call the helpers directly, and
+nothing in the app did. They are **B-001** and **B-002** in `BUGS.md`; the wiring
+is specced in #38.
 
 ### 5.19 — `[[…]]` links, characters in chapters, custom words (open)
 
