@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { reactive, nextTick } from 'vue'
 import OutlineView from './OutlineView.vue'
+import { doc, entry, section } from '../composables/outlineFixtures.js'
 
 // The Outline tab (SPEC.md 5.20, S-010 … S-015, S-017 … S-021).
 //
@@ -9,40 +10,6 @@ import OutlineView from './OutlineView.vue'
 // id. Each case mounts the view with a reactive doc and a fake `useSummaries`.
 // So these pin what the writer sees and which trigger each control calls.
 // Generation itself is 4.8's, tested in useSummaries' own suite.
-
-const paragraph = (id, text) => ({
-  id,
-  elements: [{ textRun: { content: text, textStyle: {} } }],
-  leftIndent: null,
-  rightIndent: null,
-  firstLineIndent: null,
-})
-
-const section = (id, title, sectionType, extra = {}) => ({
-  id,
-  title,
-  sectionType,
-  hidden: false,
-  paragraphs: [paragraph(`p-${id}`, `Prose for ${id}.`)],
-  ...extra,
-})
-
-const entry = (sectionId, chapterIndex, title, sectionType, summary, stale = false) => ({
-  sectionId,
-  chapterIndex,
-  title,
-  sectionType,
-  summary,
-  stale,
-})
-
-const doc = (sections) => ({
-  title: 'Outline Novel',
-  author: 'A',
-  authorContact: '',
-  hasTOC: false,
-  sections,
-})
 
 function makeStore(sections) {
   return reactive({ doc: reactive(doc(sections)), docVersion: 1 })

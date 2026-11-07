@@ -4,6 +4,7 @@ import { reactive } from 'vue'
 import ReferencesView from './ReferencesView.vue'
 import OutlineView from './OutlineView.vue'
 import NotesView from './NotesView.vue'
+import { doc, section } from '../composables/outlineFixtures.js'
 
 // SPEC.md 5.20's shell sentences: S-002 through S-006.
 //
@@ -13,16 +14,13 @@ import NotesView from './NotesView.vue'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => null) }))
 
-const doc = {
-  title: 'References',
-  author: 'A',
-  authorContact: '',
-  hasTOC: false,
-  sections: [{ id: 'c1', title: 'One', sectionType: 'chapter', hidden: false, paragraphs: [] }],
-}
+const outlineDoc = doc([section('c1', 'One', 'chapter')])
 
 function makeStore() {
-  return reactive({ doc: reactive(doc), notes: { overview: '', sections: {}, orphaned: '' } })
+  return reactive({
+    doc: reactive(outlineDoc),
+    notes: { overview: '', sections: {}, orphaned: '' },
+  })
 }
 
 function mountView(props = {}) {
@@ -83,7 +81,7 @@ describe('ReferencesView', () => {
 
   it('S-005: forwards a section jump from a note, and stays on the Notes tab', async () => {
     const store = reactive({
-      doc: reactive(doc),
+      doc: reactive(outlineDoc),
       notes: { overview: 'A letter starts it all.', sections: { c1: 'Mara is late.' }, orphaned: '' },
     })
     const wrapper = mountView({ store, tab: 'notes' })

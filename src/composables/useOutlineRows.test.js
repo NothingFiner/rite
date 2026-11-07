@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { outlineRows } from './useOutlineRows.js'
+import { doc, entry, section } from './outlineFixtures.js'
 
 // The Outline tab's row model (SPEC.md 5.20, S-007 … S-009, S-011, S-013).
 //
@@ -7,42 +8,6 @@ import { outlineRows } from './useOutlineRows.js'
 // summary for, so its array alone cannot tell the outline what to show. These
 // cases pin the document as the source of rows and the summaries as an
 // attachment.
-
-const paragraph = (id, text) => ({
-  id,
-  elements: [{ textRun: { content: text, textStyle: {} } }],
-  leftIndent: null,
-  rightIndent: null,
-  firstLineIndent: null,
-})
-
-const section = (id, title, sectionType, extra = {}) => ({
-  id,
-  title,
-  sectionType,
-  hidden: false,
-  paragraphs: [paragraph(`p-${id}`, `Prose for ${id}.`)],
-  ...extra,
-})
-
-const doc = (sections) => ({
-  title: 'Outline Novel',
-  author: 'A',
-  authorContact: '',
-  hasTOC: false,
-  sections,
-})
-
-/// The shape `retrieve_summaries` returns: manuscript order, only summarized
-/// sections, with the render context Rust derives.
-const entry = (sectionId, chapterIndex, title, sectionType, summary, stale = false) => ({
-  sectionId,
-  chapterIndex,
-  title,
-  sectionType,
-  summary,
-  stale,
-})
 
 const mixedDoc = doc([
   section('s1', 'Epigraph', 'section'),
