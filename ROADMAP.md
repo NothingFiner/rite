@@ -8,6 +8,8 @@ Tauri v1 → v2 migration landed as PR #15 — a prerequisite for 5.11's context
 
 **Bugs** live in `BUGS.md` under `B-###` IDs, not in this table. A bug needing product decisions is promoted to a roadmap item and keeps its `B-ID` as the pointer — this file says where the work sits, `BUGS.md` says what broke and why. A fix commit names its `B-ID`.
 
+**Words** have one meaning each. `VOCABULARY.md` is the authority: the source/cache split, the reference concepts, and the synonyms that are banned. Read it before naming anything in a spec, a PR title or a UI string.
+
 ---
 
 ## Phase 5 — pre-release features
@@ -37,7 +39,7 @@ The last feature phase. When this is done, Rite is feature-complete for a first 
 | 5.17 | Notes view: story overview and per-section notes | done (#32) |
 | 5.18 | Tab characters + fixed 0.5-inch tab stops, with a Tab-set first-line indent | done (#22) |
 | **5.19** | **`[[…]]` links, characters in chapters, and custom words with where they are used** | **open — own data model; deferred by 5.17's spec** |
-| **5.20** | **Summary / outline view: per-section synopses in a navigable overview (was 5.17)** | **open — data layer already built, needs presentation** |
+| **5.20** | **Summary / outline view: each section's summary beside its title, in a navigable overview (was 5.17)** | **open — data layer already built, needs presentation** |
 
 **Renumbered 2026-11-07.** The Notes view shipped under the ID **5.17** — its spec,
 its commit (`7468024`) and `src-tauri/src/notes.rs` all say 5.17 — which collided
@@ -109,7 +111,7 @@ reach for it:
   `generateSummaries`, `refreshStaleSummaries`.
 - `LlmPanel.vue` renders them as a flat list inside the LLM panel's "Summaries" mode.
 
-What is missing is presentation: a view that puts each section's synopsis beside its
+What is missing is presentation: a view that puts each section's summary beside its
 title in document order, so the outline becomes a readable overview of the manuscript
 rather than a list of headings. That pairs naturally with the drag-reorderable outline
 from 5.5. Scope it around the existing data: no new generation, no new storage.
