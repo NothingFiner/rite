@@ -112,6 +112,9 @@ export function sectionTitleToHTML(section, chapterIndex, chapterPrefix, options
   // keep-vs-replace by a single string compare).
   const hiddenClass = section.hidden ? ' section-hidden' : ''
   const hiddenAttr = section.hidden ? ' data-section-hidden="true"' : ''
+  // S-001 (SPEC.md 5.7b): a chapter is the top unit so its title is a level 1
+  // heading. A freeform section sits inside one, so its title is level 2.
+  const headingAttr = ` role="heading" aria-level="${section.sectionType === 'chapter' ? 1 : 2}"`
 
   if (manuscript) {
     // The manuscript renders NO heading text for a hidden section — but never
@@ -132,9 +135,9 @@ export function sectionTitleToHTML(section, chapterIndex, chapterPrefix, options
       // displayTitleFor.
       const prefixText = section.title ? chapterPrefix : (chapterPrefix || '').replace(/: $/, '')
       const text = escapeHtml(prefixText || '') + escapeHtml(section.title || '')
-      return `<p class="ms-para chapter"${idAttr}>${text || '<br>'}</p>`
+      return `<p class="ms-para chapter"${idAttr}${headingAttr}>${text || '<br>'}</p>`
     }
-    return `<p class="ms-para section"${idAttr}>${escapeHtml(section.title || '') || '<br>'}</p>`
+    return `<p class="ms-para section"${idAttr}${headingAttr}>${escapeHtml(section.title || '') || '<br>'}</p>`
   }
 
   const editable = fresh ? 'true' : 'false'
@@ -147,16 +150,16 @@ export function sectionTitleToHTML(section, chapterIndex, chapterPrefix, options
     const showSubtitle = Boolean(subtitle) || fresh
     if (!showSubtitle) {
       const prefixText = (chapterPrefix || '').replace(/: $/, '')
-      return `<div class="section-title chapter${hiddenClass}"${idAttr}${typeAttr}${hiddenAttr} contenteditable="${editable}"><span class="chapter-prefix" contenteditable="false">${escapeHtml(prefixText)}</span></div>`
+      return `<div class="section-title chapter${hiddenClass}"${idAttr}${typeAttr}${headingAttr}${hiddenAttr} contenteditable="${editable}"><span class="chapter-prefix" contenteditable="false">${escapeHtml(prefixText)}</span></div>`
     }
     const subtitleHtml = subtitle ? escapeHtml(subtitle) : '<br>'
     // The prefix span is always contenteditable=false — the derived number is
     // never user-editable. The subtitle span inherits editability from the
     // (fresh) parent div.
-    return `<div class="section-title chapter${hiddenClass}"${idAttr}${typeAttr}${hiddenAttr} contenteditable="${editable}"><span class="chapter-prefix" contenteditable="false">${escapeHtml(chapterPrefix || '')}</span><span class="section-subtitle">${subtitleHtml}</span></div>`
+    return `<div class="section-title chapter${hiddenClass}"${idAttr}${typeAttr}${headingAttr}${hiddenAttr} contenteditable="${editable}"><span class="chapter-prefix" contenteditable="false">${escapeHtml(chapterPrefix || '')}</span><span class="section-subtitle">${subtitleHtml}</span></div>`
   }
 
   const title = section.title || ''
   const titleHtml = title ? escapeHtml(title) : '<br>'
-  return `<div class="section-title${hiddenClass}"${idAttr}${typeAttr}${hiddenAttr} contenteditable="${editable}"><span class="section-title-text">${titleHtml}</span></div>`
+  return `<div class="section-title${hiddenClass}"${idAttr}${typeAttr}${headingAttr}${hiddenAttr} contenteditable="${editable}"><span class="section-title-text">${titleHtml}</span></div>`
 }
