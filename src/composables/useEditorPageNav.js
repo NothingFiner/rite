@@ -111,7 +111,11 @@ export function currentPageAtCursor(root) {
 /// switch can jump many pages, and a smooth glide there would briefly flash the
 /// wrong page (the scroll-layer keeps its old pixel scrollTop until the glide
 /// finishes) before settling — instant jumps straight to the target page.
-export function focusPageStart(startEl, behavior = 'smooth') {
+///
+/// `block` is how the target line is aligned in the scroll layer: 'start' for a
+/// page navigation (the page begins at the top), 'center' for a section jump,
+/// where the heading should stay readable above the paragraph the caret enters.
+export function focusPageStart(startEl, behavior = 'smooth', block = 'start') {
   let target = startEl
   if (startEl.classList.contains('section-title')) {
     let next = startEl.nextElementSibling
@@ -121,7 +125,7 @@ export function focusPageStart(startEl, behavior = 'smooth') {
     if (next && next.classList.contains('paragraph')) target = next
   }
   placeCursorAtStart(target)
-  target.scrollIntoView({ behavior, block: 'start' })
+  target.scrollIntoView({ behavior, block })
 }
 
 /// Step the cursor to the start of the page `direction` pages away from the
@@ -186,12 +190,33 @@ export function currentPageAtTop(root) {
   return current
 }
 
-/// The page number at the caret — used when switching FROM the editor to another
-/// view so the incoming view can land on the same page. Screen-based (see
-/// currentPageAtTop); page numbers agree across views because pagination is
-/// shared.
+/// The page to report when the editor is the outgoing view of a view switch.
+///
+/// Two rules, because neither alone is right. The caret wins while it is on
+/// screen: that is the page the writer is working on, even when the previous
+/// page's last lines still fill the top of the sheet. The screen-based rule
+/// alone sent the manuscript to the page above — caret at the top of page 5,
+/// manuscript opened on page 4. The visible top page wins when the caret is off
+/// screen, because scrolling with the scrollbar never moves the caret, and
+/// reporting the caret then names a page the writer is not looking at.
 export function getCurrentPage(root) {
-  return currentPageAtTop(root)
+  if (!root) return 1
+  const caretPage = caretPageIfVisible(root)
+  return caretPage ?? currentPageAtTop(root)
+}
+
+/// The caret's page, or null when the caret is outside this sheet or scrolled
+/// out of sight. `root.contains` matters: after a switch the selection can still
+/// point into the view that was unmounted.
+function caretPageIfVisible(root) {
+  const block = getParagraphAtCursor() || getSectionTitleAtCursor()
+  if (!block || !root.contains(block)) return null
+  const layer = root.closest('.scroll-layer')
+  if (!layer) return null
+  const visible = layer.getBoundingClientRect()
+  const box = block.getBoundingClientRect()
+  if (box.bottom <= visible.top || box.top >= visible.bottom) return null
+  return currentPageAtCursor(root)
 }
 
 /// Jump the cursor to the first paragraph of the next/previous page that begins
