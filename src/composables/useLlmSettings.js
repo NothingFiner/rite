@@ -114,6 +114,10 @@ export function useLlmSettings() {
 // same field (`LlmPanel.vue`), and this is that rule with a name (5.20).
 //
 // Takes the plain settings object (`llmSettings.settings.value`), not the ref.
+// A whitespace-only model counts as unset, and a missing settings object
+// closes the gate.
 export function llmConfigured(settingsValue) {
-  throw new Error('not implemented')
+  if (!settingsValue) return false
+  const model = settingsValue.model
+  return typeof model === 'string' && model.trim() !== ''
 }

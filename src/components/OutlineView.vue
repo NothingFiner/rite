@@ -1,5 +1,16 @@
 <template>
   <div class="outline-view">
+    <div v-if="awaitingSummaries" class="outline-awaiting">
+      <button
+        v-if="gateOpen"
+        type="button"
+        class="outline-generate"
+        @click="summaries.generateSummaries()"
+      >
+        Generate summaries
+      </button>
+      <p v-else>No summaries yet. Configure a model in General Options.</p>
+    </div>
     <button
       v-for="row in rows"
       :key="row.sectionId"
@@ -12,6 +23,15 @@
       <div class="outline-summary">{{ row.summary }}</div>
       <div v-if="!row.hasSummary" class="outline-no-summary">No summary yet</div>
     </button>
+    <!-- Refreshing a stale summary is a generation call too, so the same gate applies. -->
+    <button
+      v-if="gateOpen && summaries?.summaryProgress?.stale > 0"
+      type="button"
+      class="outline-refresh-stale"
+      @click="summaries.refreshStaleSummaries()"
+    >
+      Refresh stale
+    </button>
   </div>
 </template>
 
@@ -22,6 +42,7 @@
 // triggers on the `summaries` prop. This component never invokes Tauri itself.
 import { computed } from 'vue'
 import { outlineRows } from '../composables/useOutlineRows.js'
+import { llmConfigured } from '../composables/useLlmSettings.js'
 
 const props = defineProps({
   store: { type: Object, required: true },
@@ -34,4 +55,13 @@ defineEmits(['jump'])
 // `outlineRows` owns the join: the document is the source of rows, the
 // summaries attach to them by section id (SPEC.md 5.20 wiring decision 4).
 const rows = computed(() => outlineRows(props.store.doc, props.summaries?.summaryEntries ?? []))
+
+// The generation gate (5.20): a configured model, never the API key. The rule
+// lives in `llmConfigured` (useLlmSettings.js); the settings prop is the
+// composable object, so the predicate reads its `settings` member.
+const gateOpen = computed(() => llmConfigured(props.settings?.settings))
+
+// An empty summary store is "nothing generated yet" (5.20 trap 2) — the normal
+// first-run state, not an error.
+const awaitingSummaries = computed(() => (props.summaries?.summaryEntries ?? []).length === 0)
 </script>
