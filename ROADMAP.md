@@ -6,6 +6,8 @@ Tauri v1 → v2 migration landed as PR #15 — a prerequisite for 5.11's context
 
 **Numbering rule:** IDs are stable. A moved item keeps a pointer at its old ID instead of being renumbered, so commit messages, branch names and old notes stay resolvable. New work takes the next free number in its phase.
 
+**Bugs** live in `BUGS.md` under `B-###` IDs, not in this table. A bug needing product decisions is promoted to a roadmap item and keeps its `B-ID` as the pointer — this file says where the work sits, `BUGS.md` says what broke and why. A fix commit names its `B-ID`.
+
 ---
 
 ## Phase 5 — pre-release features
@@ -215,6 +217,7 @@ in this phase turns out to be a feature, it belongs in Phase 5 instead.
 | 6.6 | Manuscript view unification (use the 5.6 composables) | open |
 | 6.7 | Final accessibility + manual QA | open — 5.7 is done, so the final pass can start |
 | **6.8** | **Never record a history checkpoint that has no delta** | **open** |
+| 6.9 | Bug log (`BUGS.md`): stable `B-###` IDs, cross-referenced from commits and specs | done |
 
 ### 6.8 — No checkpoint without a delta
 
