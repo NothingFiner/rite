@@ -283,6 +283,7 @@ describe('LlmPanel', () => {
         'document',
         'structure',
         'summaries',
+        'notes',
         'passages',
       ])
 

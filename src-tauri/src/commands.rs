@@ -4,6 +4,7 @@ use crate::document::{
     Section, SectionType, TextRun, TextStyleDelta,
 };
 use crate::history::{self, HistoryEntry};
+use crate::notes::Notes;
 use crate::state::AppState;
 use regex::Regex;
 use std::fs;
@@ -429,6 +430,13 @@ pub fn open_document<R: Runtime>(
     *state_doc = doc.clone();
     drop(state_doc);
 
+    // Load the file's notes record (SPEC 5.17). An older file without a notes
+    // key deserializes to Notes::default through RiteFile's serde default. The
+    // plain assignment therefore covers legacy files with no fallback branch.
+    let mut state_notes = state.notes.lock().map_err(|e| e.to_string())?;
+    (*state_notes) = rite_file.notes;
+    drop(state_notes);
+
     // Load the embedded history into the live state. set_version_history also
     // compacts, so a freshly migrated (uncapped, old sidecar) history is
     // bounded immediately.
@@ -453,6 +461,28 @@ pub fn open_document<R: Runtime>(
     *modified = false;
 
     Ok(doc)
+}
+
+/// Read the open document's notes. A pure in-memory read: no disk, no network.
+#[tauri::command]
+pub fn retrieve_notes(state: State<AppState>) -> Result<Notes, String> {
+    let notes = state.notes.lock().map_err(|e| e.to_string())?.clone();
+    Ok(notes)
+}
+
+/// Replace the document's notes. The save and autosave paths pick the value up
+/// through `build_rite_file`, so this marks the document modified rather than
+/// writing the file itself.
+#[tauri::command]
+pub fn update_notes(notes: Notes, state: State<AppState>) -> Result<(), String> {
+    let mut stored_notes = state.notes.lock().map_err(|e| e.to_string())?;
+    (*stored_notes) = notes;
+    drop(stored_notes);
+
+    let mut modified = state.is_modified.lock().map_err(|e| e.to_string())?;
+    (*modified) = true;
+
+    Ok(())
 }
 
 #[tauri::command]

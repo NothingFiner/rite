@@ -98,6 +98,10 @@ pub struct RiteFile {
     pub history: Vec<HistoryRecord>,
     #[serde(default)]
     pub schema_version: u32,
+    /// Document-level notes (5.17). Additive: an older file has no `notes` key
+    /// and reads back as the empty record. Notes never live in `Document`.
+    #[serde(default)]
+    pub notes: crate::notes::Notes,
 }
 
 /// The `.rite` schema version this build writes and understands. A file whose
@@ -173,6 +177,7 @@ pub fn read_rite_file(json: &str) -> Result<RiteFile, String> {
         document,
         history: Vec::new(),
         schema_version: 0,
+        notes: crate::notes::Notes::default(),
     })
 }
 
@@ -507,6 +512,7 @@ mod tests {
             document: doc_text("hello"),
             history: vec![snapshot(0, "hello"), delta(5, "hello", "hello world")],
             schema_version: CURRENT_RITE_SCHEMA_VERSION,
+            notes: crate::notes::Notes::default(),
         };
         let json = serde_json::to_string_pretty(&file).unwrap();
         let back: RiteFile = serde_json::from_str(&json).unwrap();
@@ -522,6 +528,7 @@ mod tests {
             document: doc_text("hello"),
             history: vec![snapshot(0, "hello")],
             schema_version: 0,
+            notes: crate::notes::Notes::default(),
         };
         write_rite_file(&tmp.base(), file.clone()).unwrap();
         let json = fs::read_to_string(&tmp.base()).unwrap();
@@ -745,6 +752,7 @@ mod tests {
             document: doc_text("hello"),
             history: vec![snapshot(0, "hello")],
             schema_version: version,
+            notes: crate::notes::Notes::default(),
         }
     }
 

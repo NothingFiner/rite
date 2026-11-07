@@ -94,6 +94,7 @@ test('S-007: Tab reaches the tablist once and the arrows switch the view', async
   await tabs(page).nth(1).focus()
   await page.keyboard.press('End')
 
+  // 5.17 added Notes as the third tab, so History is the fourth and last stop.
   await expect(selectedTab(page)).toHaveText('History')
-  await expect(tabs(page).nth(2)).toBeFocused()
+  await expect(tabs(page).nth(3)).toBeFocused()
 })

@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { createSection } from '../constants/DocumentModel.js'
+import { writeNote } from '../composables/useNotes.js'
 import { useToastsStore } from './toasts.js'
 
 export const useDocumentStore = defineStore('document', {
@@ -31,6 +32,11 @@ export const useDocumentStore = defineStore('document', {
     // failed sync: Rust wouldn't have the new doc, so re-embedding would index
     // stale state.
     docVersion: 0,
+    // Document-level notes (SPEC.md 5.17), mirrored from Rust's `AppState`.
+    // `overview` is the story overview, `sections` is keyed by section id and
+    // holds markdown source, and `orphaned` is the single draft that collects
+    // notes from deleted sections.
+    notes: { overview: '', sections: {}, orphaned: '' },
   }),
 
   actions: {
@@ -268,6 +274,35 @@ export const useDocumentStore = defineStore('document', {
         clearTimeout(this.syncTimeout)
         this.syncTimeout = null
         await this.syncToRust()
+      }
+    },
+
+    /// Load the open document's notes from Rust and shape them into the
+    /// record the Notes view reads. A null or partial payload keeps the
+    /// empty shape, because unmodelled e2e commands resolve null.
+    async retrieveNotes() {
+      try {
+        const notes = await invoke('retrieve_notes')
+        this.notes = {
+          overview: notes?.overview ?? '',
+          sections: { ...(notes?.sections ?? {}) },
+          orphaned: notes?.orphaned ?? '',
+        }
+      } catch (e) {
+        this.notifyError(e, 'Failed to load notes')
+      }
+    },
+
+    /// Commit one note entry: `overview`, a section id, or `orphaned`. The
+    /// record comes from `writeNote`, so the store swaps in a new record
+    /// instead of writing one field in place.
+    async commitNote(entryId, text) {
+      try {
+        this.notes = writeNote(this.notes, entryId, text)
+        this.markModified()
+        await invoke('update_notes', { notes: this.notes })
+      } catch (e) {
+        this.notifyError(e, 'Failed to save notes')
       }
     },
 

@@ -74,6 +74,14 @@ function getCurrentPage() {
   return activeRef()?.getCurrentPage?.() ?? 1
 }
 
+// Route to whichever view is active, like getCurrentPage above (SPEC.md 5.17).
+// The manuscript answers with the section on its current page; the editor
+// answers with the section under the caret. App.vue's notes branch seeds the
+// Notes entry from the answer.
+function getCurrentSectionId() {
+  return activeRef()?.getCurrentSectionId?.() ?? null
+}
+
 function scrollToPage(n) {
   activeRef()?.scrollToPage?.(n)
 }
@@ -122,6 +130,7 @@ defineExpose({
   scrollToSection,
   scrollToPage,
   getCurrentPage,
+  getCurrentSectionId,
   selectLine,
   navigatePage,
   navigateSectionPage,

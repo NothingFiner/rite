@@ -237,6 +237,19 @@ function msScrollToSection(id) {
 function getCurrentPage() {
   return getCurrentContentPage()
 }
+
+// The id the Notes entry is seeded from when Notes opens in the manuscript
+// (SPEC.md 5.17). It is the first block's section on the content page sitting
+// at the top of the scroll layer, where a nav click lands.
+// pageBreaks holds block indices that start a page; page N starts at
+// pageBreaks[N - 2], page 1 at block 0. The ?? 0 fallback covers a short array.
+function getCurrentSectionId() {
+  const blocks = flattenSections(props.modelValue?.sections || [])
+  const pageNumber = getCurrentContentPage()
+  const startIndex = pageNumber === 1 ? 0 : pageBreaks.value[pageNumber - 2] ?? 0
+  return blocks[startIndex]?.sectionId ?? null
+}
+
 function scrollToPage(n) {
   scrollToContentPage(n)
 }
@@ -247,6 +260,7 @@ defineExpose({
   scrollToSection: msScrollToSection,
   scrollToPage,
   getCurrentPage,
+  getCurrentSectionId,
 })
 </script>
 
