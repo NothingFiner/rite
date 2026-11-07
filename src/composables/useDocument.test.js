@@ -129,6 +129,50 @@ describe('useDocumentStore', () => {
     expect(store.isModified).toBe(true)
   })
 
+  it("S-012: moves a deleted section's note into the orphaned draft under its display title", async () => {
+    const updatedDoc = { title: 'Test', sections: [makeSection('s2', 'Kept')] }
+    invoke.mockResolvedValue(updatedDoc)
+    const store = useDocumentStore()
+    store.doc = {
+      title: 'Test',
+      sections: [makeSection('s1', 'The Door'), makeSection('s2', 'Kept')],
+    }
+    store.notes = { overview: '', sections: { s1: 'The door is a lie.' }, orphaned: '' }
+
+    await store.deleteSection('s1')
+
+    // The key is gone, so the note cannot linger or reach the model under a
+    // section that no longer exists.
+    expect(store.notes.sections.s1).toBeUndefined()
+    // The heading comes from the pre-deletion document: after `delete_section`
+    // returns there is no title left to read.
+    expect(store.notes.orphaned).toContain('The Door')
+    expect(store.notes.orphaned).toContain('The door is a lie.')
+
+    // Committed through the existing command, which is what marks the document
+    // modified and lets autosave persist it.
+    const committed = invoke.mock.calls.filter(([cmd]) => cmd === 'update_notes').at(-1)
+    expect(committed).toBeTruthy()
+    expect(committed[1].notes.orphaned).toContain('The door is a lie.')
+  })
+
+  it('S-013: writes the notes record back after deleting a section that had no note', async () => {
+    const updatedDoc = { title: 'Test', sections: [] }
+    invoke.mockResolvedValue(updatedDoc)
+    const store = useDocumentStore()
+    store.doc = { title: 'Test', sections: [makeSection('s1', 'The Door')] }
+    store.notes = { overview: 'Outline.', sections: {}, orphaned: '' }
+
+    await store.deleteSection('s1')
+
+    expect(store.notes).toEqual({ overview: 'Outline.', sections: {}, orphaned: '' })
+    // Written back even when nothing moved, so the document and the notes
+    // record cannot drift apart.
+    expect(invoke).toHaveBeenCalledWith('update_notes', {
+      notes: { overview: 'Outline.', sections: {}, orphaned: '' },
+    })
+  })
+
   it('renames section via Rust', async () => {
     const updatedDoc = { title: 'Test', sections: [makeSection('s1', 'New Title')] }
     invoke.mockResolvedValue(updatedDoc)

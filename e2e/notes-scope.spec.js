@@ -1,0 +1,188 @@
+import { test, expect } from '@playwright/test'
+import { installTauriIpc, ipcCalls } from './helpers/tauri-ipc.js'
+
+// The Notes scope end to end (SPEC.md 5.17a, B-001 and B-002).
+//
+// jsdom cannot answer these: S-010/S-011 need the drawer, the scope select and
+// the real request the app ships to Rust, and S-015 needs the Sections drawer,
+// a deletion and a page reload. The unit layer pins the context string; this
+// layer pins that the drawer and the deletion path are actually wired to it.
+
+const textStyle = { bold: false, italic: false, underline: false, fontSize: null }
+
+const paragraph = (id, text) => ({
+  id,
+  elements: [{ textRun: { content: text, textStyle } }],
+  leftIndent: null,
+  rightIndent: null,
+  firstLineIndent: null,
+})
+
+const section = (id, title, sectionType, paragraphs) => ({
+  id,
+  title,
+  sectionType,
+  hidden: false,
+  paragraphs,
+})
+
+const seededDoc = {
+  title: 'Notes Novel',
+  author: 'Author Name',
+  authorContact: '',
+  hasTOC: false,
+  sections: [
+    section('c1', 'Chapter One', 'chapter', [
+      paragraph('p-c1a', 'The first chapter opens on the door.'),
+      paragraph('p-c1b', 'Rain runs down the glass.'),
+    ]),
+    section('s1', 'The Door', 'section', [
+      paragraph('p-s1a', 'A section about the door and what it hides.'),
+    ]),
+    section('s2', 'Ashes', 'section', [paragraph('p-s2a', 'Everything ends in ashes.')]),
+  ],
+}
+
+/// Install the IPC mock, seed the notes record, and persist `update_notes`
+/// where `retrieve_notes` reads it back. Without the localStorage round trip a
+/// reload would come up with empty notes and S-015's "keep it" half would be
+/// vacuous.
+async function installNotes(page, notes, doc = seededDoc) {
+  await installTauriIpc(page, { doc })
+  await page.addInitScript((seed) => {
+    const empty = { overview: '', sections: {}, orphaned: '' }
+    localStorage.setItem('e2e-notes', JSON.stringify(seed))
+    window.__tauriMock
+      .route('update_notes', (args) => {
+        localStorage.setItem('e2e-notes', JSON.stringify(args.notes))
+        return null
+      })
+      .route('retrieve_notes', () => {
+        const raw = localStorage.getItem('e2e-notes')
+        return raw ? JSON.parse(raw) : empty
+      })
+  }, notes)
+}
+
+async function openApp(page) {
+  await page.goto('/')
+  await page.waitForSelector('.editor-sheet .paragraph', { timeout: 5000 })
+}
+
+async function openAssistant(page) {
+  await page.locator('button[title="Open Assistant"]').click()
+  await expect(page.locator('.llm-scope-select')).toBeVisible({ timeout: 5000 })
+}
+
+/// Every `llm_chat_stream` request the page has sent, oldest first.
+async function sentRequests(page) {
+  return (await ipcCalls(page))
+    .filter((call) => call.cmd === 'llm_chat_stream')
+    .map((call) => call.args.request.messages)
+}
+
+/// Send one message under `scope` and return the messages the app shipped for
+/// it. `sentCount` is the number of requests that must exist first, so a second
+/// send waits for its own call rather than reading the previous one.
+async function sendWithScope(page, scope, text, sentCount = 1) {
+  await openAssistant(page)
+  await page.locator('.llm-scope-select').selectOption(scope)
+  await page.locator('.llm-input').fill(text)
+  await page.locator('.llm-send-btn').click()
+  await expect
+    .poll(async () => (await sentRequests(page)).length, { timeout: 5000 })
+    .toBeGreaterThanOrEqual(sentCount)
+  const requests = await sentRequests(page)
+  return requests[sentCount - 1]
+}
+
+/// The single context message in a request: the user message the app pushes
+/// before the writer's own question.
+function contextMessage(messages) {
+  return messages.find((message) => message.role === 'user')
+}
+
+test("S-010: ships the notes to the assistant when Notes is chosen, and no manuscript prose", async ({
+  page,
+}) => {
+  await installNotes(page, {
+    overview: 'The letter drives the plot.',
+    sections: { s1: 'The door is a lie.' },
+    orphaned: '',
+  })
+  await openApp(page)
+
+  const messages = await sendWithScope(page, 'notes', 'is the outline coherent?')
+  const context = contextMessage(messages).content
+
+  expect(context).toContain("author's notes")
+  expect(context).toContain('The letter drives the plot.')
+  expect(context).toContain('The door is a lie.')
+  // Prose is exactly what this scope must not send.
+  expect(context).not.toContain('The first chapter opens on the door.')
+  expect(context).not.toContain('Everything ends in ashes.')
+})
+
+test('S-011: sends the manuscript again after the scope changes back to Whole document', async ({
+  page,
+}) => {
+  await installNotes(page, { overview: 'The letter drives the plot.', sections: {}, orphaned: '' })
+  await openApp(page)
+
+  const notesMessages = await sendWithScope(page, 'notes', 'is the outline coherent?')
+  expect(contextMessage(notesMessages).content).toContain('The letter drives the plot.')
+
+  const documentMessages = await sendWithScope(page, 'document', 'how long is it?', 2)
+  const context = contextMessage(documentMessages).content
+
+  expect(context).toContain('full manuscript')
+  expect(context).toContain('The first chapter opens on the door.')
+  // No note text is left over from the previous send.
+  expect(context).not.toContain('The letter drives the plot.')
+})
+
+test("S-015: shows a deleted section's note under Orphaned notes and keeps it after reopening", async ({
+  page,
+}) => {
+  await installNotes(page, { overview: '', sections: { s1: 'The door is a lie.' }, orphaned: '' })
+  // `delete_section` answers with the document minus the section, the way Rust
+  // does; the notes are the store's business, not Rust's.
+  await page.addInitScript((doc) => {
+    window.__tauriMock.route('delete_section', () => ({
+      ...doc,
+      sections: doc.sections.filter((entry) => entry.id !== 's1'),
+    }))
+  }, seededDoc)
+  await openApp(page)
+
+  await page.locator('.activity-icon[title="Sections"]').click()
+  const row = page.locator('li.nav-section[data-nav-id="s1"]')
+  await expect(row).toBeVisible({ timeout: 5000 })
+  // Rename/delete only render on the active row.
+  await row.locator('.nav-row-control').click()
+  await row.locator('.nav-delete').click()
+  await expect
+    .poll(
+      async () => (await ipcCalls(page)).filter((call) => call.cmd === 'delete_section').length,
+      { timeout: 5000 },
+    )
+    .toBeGreaterThan(0)
+
+  await page.locator('.view-tab').filter({ hasText: 'Notes' }).click()
+  const orphaned = page.locator('.notes-entry[data-entry-id="orphaned"]')
+  await expect(orphaned).toBeVisible({ timeout: 5000 })
+  await orphaned.click()
+
+  // Headed by the deleted section's title, and the text moved rather than
+  // copied: the section row is gone from the list.
+  await expect(page.locator('.note-rendered')).toContainText('The Door')
+  await expect(page.locator('.note-rendered')).toContainText('The door is a lie.')
+  await expect(page.locator('.notes-entry[data-entry-id="s1"]')).toHaveCount(0)
+
+  // Persisted through the save path: a reload reads the file's notes back.
+  await page.reload()
+  await page.waitForSelector('.editor-sheet .paragraph', { timeout: 5000 })
+  await page.locator('.view-tab').filter({ hasText: 'Notes' }).click()
+  await page.locator('.notes-entry[data-entry-id="orphaned"]').click()
+  await expect(page.locator('.note-rendered')).toContainText('The door is a lie.')
+})
