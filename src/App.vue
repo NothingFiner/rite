@@ -247,6 +247,10 @@ import ThesaurusPopover from './components/ThesaurusPopover.vue'
 const store = useDocumentStore()
 const { doc } = storeToRefs(store)
 
+// Computed over the store getter, so the context build sees the live record
+// when a tab sends. A snapshot would go stale after a swap.
+const notesRef = computed(() => store.notes)
+
 const editorRef = ref(null)
 // The scroll container that wraps the editor/manuscript (it scrolls, not the
 // views themselves — see the .scroll-layer CSS). Used by onGoToTop to jump the
@@ -345,7 +349,7 @@ const llmSettings = reactive(llmSettingsRaw)
 // Multi-chat: the manager owns the tab list + roles + the one-at-a-time
 // `anyBusy`. Each tab is its own `useChat` session; `activeSession` is the
 // selected one, passed to LlmPanel exactly as the single `chat` used to be.
-const chatManager = reactive(useChatManager(doc, llmSettingsRaw, navRaw, editorRef))
+const chatManager = reactive(useChatManager(doc, llmSettingsRaw, navRaw, editorRef, notesRef))
 // Manuscript index for RAG (Phase 4.3): keeps Rust's in-memory vector store
 // current by watching `store.docVersion` (debounced 1500ms) when the index is
 // enabled. Takes the RAW llm-settings composable (reads `settings.value.*`,

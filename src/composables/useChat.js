@@ -669,8 +669,9 @@ export function useChat(docRef, llmSettings, nav, editorRef, notesRef) {
 // presents them as tabs in the right drawer, so a writer can hold a Writing
 // Assistant tab and a Critic tab at the same time, each with its own history.
 //
-// The manager calls `useChat` once per tab without `notesRef`, so no tab
-// sends notes. `useChat.test.js` exercises `useChat` directly. Each
+// Every session shares the `notesRef` the caller passes, so each tab builds
+// its `notes` scope from the live record at send time. `useChat.test.js`
+// exercises `useChat` directly. Each
 // session is wrapped in `reactive()` so its nested refs (`busy`, `messages`,
 // `selectedRoleName` …) auto-unwrap — exactly the way `reactive(useChat(...))`
 // worked when there was a single chat. The manager itself is wrapped in
@@ -703,7 +704,7 @@ function nextSessionId() {
 /// single-chat panel used to auto-select on mount.
 const DEFAULT_ROLE_NAME = 'Writing Assistant'
 
-export function useChatManager(docRef, llmSettings, nav, editorRef) {
+export function useChatManager(docRef, llmSettings, nav, editorRef, notesRef) {
   const roles = ref([])
   const sessions = ref([])
   const activeId = ref('')
@@ -715,7 +716,7 @@ export function useChatManager(docRef, llmSettings, nav, editorRef) {
   /// untouched, so `useChat`'s own `send`/`stop`/`setRole` still mutate them
   /// and the proxy reflects the changes.
   function makeSession() {
-    const session = useChat(docRef, llmSettings, nav, editorRef)
+    const session = useChat(docRef, llmSettings, nav, editorRef, notesRef)
     session.id = nextSessionId()
     return reactive(session)
   }
