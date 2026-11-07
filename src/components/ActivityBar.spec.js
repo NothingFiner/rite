@@ -104,6 +104,67 @@ describe('ActivityBar', () => {
     expect(drawerItems(wrapper)).toHaveLength(4)
   })
 })
+// --- names and states (SPEC.md 5.7a, S-008 … S-011) --------------------------
+//
+// A glyph is not a name, and a `title` tooltip is not one either. Both button
+// groups therefore carry an `aria-label` beside the tooltip. The format buttons
+// stay at `tabindex="-1"`, because a keyboard writer reaches them with Cmd+B,
+// Cmd+I and Cmd+U with the caret in the editor.
+
+const formatNames = (wrapper) =>
+  formatButtons(wrapper).map((button) => button.attributes('aria-label'))
+
+function pressed(wrapper, name) {
+  return formatButtons(wrapper).find((b) => b.attributes('aria-label') === name)?.attributes(
+    'aria-pressed',
+  )
+}
+
+function expanded(wrapper, name) {
+  return drawerItems(wrapper).find((b) => b.attributes('aria-label') === name)?.attributes(
+    'aria-expanded',
+  )
+}
+
+describe('ActivityBar semantics', () => {
+  it('S-008: names each format button Bold, Italic or Underline', () => {
+    const wrapper = mount(ActivityBar, { props: { viewMode: 'editor' } })
+    expect(formatNames(wrapper)).toEqual(['Bold', 'Italic', 'Underline'])
+  })
+
+  it('S-009: reports each format button pressed state from the live format', () => {
+    const wrapper = mount(ActivityBar, {
+      props: { viewMode: 'editor', formats: { bold: true, italic: false, underline: true } },
+    })
+
+    expect(pressed(wrapper, 'Bold')).toBe('true')
+    expect(pressed(wrapper, 'Italic')).toBe('false')
+    expect(pressed(wrapper, 'Underline')).toBe('true')
+  })
+
+  it('S-010: names each activity icon with its drawer label', () => {
+    const wrapper = mount(ActivityBar, { props: { viewMode: 'editor' } })
+    const names = drawerItems(wrapper).map((button) => button.attributes('aria-label'))
+
+    expect(names).toEqual(['Sections', 'General Options', 'Text Options', 'Stats'])
+  })
+
+  it('S-011: reports which activity icon drawer is open', () => {
+    const open = mount(ActivityBar, {
+      props: { viewMode: 'editor', activeId: 'stats', drawerOpen: true },
+    })
+    expect(expanded(open, 'Stats')).toBe('true')
+    expect(expanded(open, 'Sections')).toBe('false')
+
+    const closed = mount(ActivityBar, {
+      props: { viewMode: 'editor', activeId: 'stats', drawerOpen: false },
+    })
+    for (const name of ['Sections', 'General Options', 'Text Options', 'Stats']) {
+      expect(expanded(closed, name)).toBe('false')
+    }
+  })
+})
+
 // SPEC.md 5.7b S-005. The rail is the app's own navigation region. It needs a
 // name as well as the role, or a screen reader announces a navigation landmark
 // with nothing to tell it apart.

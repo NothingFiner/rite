@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import Toolbar from './Toolbar.vue'
 
@@ -57,6 +57,71 @@ describe('Toolbar', () => {
   it('defaults rightOpen to false', () => {
     const wrapper = mount(Toolbar)
     expect(wrapper.find('.drawer-toggle').classes()).not.toContain('active')
+  })
+})
+
+// --- view tablist (SPEC.md 5.7a, S-004 … S-006) ------------------------------
+//
+// The toolbar is stateless: it takes `mode` as a prop and emits `setMode`. So a
+// tab key handler has to move focus itself, and these cases attach the component
+// to the document to read where focus landed.
+
+const VIEW_MODES = ['editor', 'manuscript', 'history']
+const VIEW_LABELS = ['Editor', 'Manuscript', 'History']
+
+const viewTabs = (wrapper) => wrapper.findAll('.view-tabs .view-tab')
+
+function mountTablist(mode) {
+  return mount(Toolbar, { attachTo: document.body, props: { mode } })
+}
+
+function lastMode(wrapper) {
+  return wrapper.emitted('setMode')?.at(-1)?.[0]
+}
+
+afterEach(() => {
+  document.body.innerHTML = ''
+})
+
+describe('Toolbar view tablist', () => {
+  it('S-004: keeps one tab stop in the view tablist, on the selected tab', () => {
+    for (const [index, mode] of VIEW_MODES.entries()) {
+      const wrapper = mountTablist(mode)
+      const stopped = viewTabs(wrapper).filter((tab) => tab.attributes('tabindex') === '0')
+
+      expect(stopped).toHaveLength(1)
+      expect(stopped[0].text()).toBe(VIEW_LABELS[index])
+      expect(
+        viewTabs(wrapper).filter((tab) => tab.attributes('tabindex') === '-1'),
+      ).toHaveLength(2)
+
+      wrapper.unmount()
+    }
+  })
+
+  it('S-005: moves selection and focus with ArrowRight and ArrowLeft, wrapping at the ends', async () => {
+    const wrapper = mountTablist('editor')
+
+    await viewTabs(wrapper)[0].trigger('keydown', { key: 'ArrowRight' })
+    expect(lastMode(wrapper)).toBe('manuscript')
+    expect(document.activeElement).toBe(viewTabs(wrapper)[1].element)
+
+    // ArrowLeft on the first tab wraps to the last one.
+    await viewTabs(wrapper)[0].trigger('keydown', { key: 'ArrowLeft' })
+    expect(lastMode(wrapper)).toBe('history')
+    expect(document.activeElement).toBe(viewTabs(wrapper)[2].element)
+  })
+
+  it('S-006: moves to the first and last view tab with Home and End', async () => {
+    const wrapper = mountTablist('manuscript')
+
+    await viewTabs(wrapper)[1].trigger('keydown', { key: 'End' })
+    expect(lastMode(wrapper)).toBe('history')
+    expect(document.activeElement).toBe(viewTabs(wrapper)[2].element)
+
+    await viewTabs(wrapper)[2].trigger('keydown', { key: 'Home' })
+    expect(lastMode(wrapper)).toBe('editor')
+    expect(document.activeElement).toBe(viewTabs(wrapper)[0].element)
   })
 })
 
