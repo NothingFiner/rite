@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { createSection } from '../constants/DocumentModel.js'
-import { writeNote } from '../composables/useNotes.js'
+import { orphanDeletedSection, writeNote } from '../composables/useNotes.js'
 import { useToastsStore } from './toasts.js'
 
 export const useDocumentStore = defineStore('document', {
@@ -101,9 +101,16 @@ export const useDocumentStore = defineStore('document', {
         // command returns Rust's doc, and assigning that back would discard
         // ≤1s of un-synced edits. Harmless when nothing is pending.
         await this.syncToRust()
+        // Orphan from the pre-deletion doc, because the returned doc has no
+        // section left to read a title from. update_notes commits the record
+        // after the delete succeeds, even when no note moved. See
+        // `orphanDeletedSection` in useNotes.js.
+        const orphanedNotes = orphanDeletedSection(this.doc, this.notes, id)
         const updated = await invoke('delete_section', { id })
         this.doc = updated
+        this.notes = orphanedNotes
         this.isModified = true
+        await invoke('update_notes', { notes: this.notes })
       } catch (e) {
         this.notifyError(e, 'Failed to delete section')
       }
