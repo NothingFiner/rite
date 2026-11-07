@@ -1,6 +1,6 @@
 # Rite — Roadmap
 
-Status as of **2026-11-07**, `development` at `57982fb` (accessibility pass complete: 5.7a #29 and 5.7b #30 merged).
+Status as of **2026-11-07**, `development` at `379b03a` (accessibility pass complete: 5.7a #29 and 5.7b #30 merged; the Notes view completes 5.17, #32).
 
 Tauri v1 → v2 migration landed as PR #15 — a prerequisite for 5.11's context menu, not a roadmap item of its own.
 
@@ -32,7 +32,7 @@ The last feature phase. When this is done, Rite is feature-complete for a first 
 | 5.14 | `NSSpellChecker` spelling actions | absorbed into 5.15 |
 | 5.15 | Restored word menu: Cut / Copy / Paste / Select All + Learn / Ignore Spelling | done (#17) |
 | **5.16** | **Word cloud of frequently used words, excluding articles and pronouns** | **open — idea, not scoped** |
-| **5.17** | **Summary / outline view: per-section synopses in a navigable overview** | **open — data layer already built, needs presentation** |
+| 5.17 | Summary / outline view: per-section synopses in a navigable overview | done (#32) |
 | 5.18 | Tab characters + fixed 0.5-inch tab stops, with a Tab-set first-line indent | done (#22) |
 
 ### 5.15 — Restored word menu (done, #17)
@@ -58,9 +58,23 @@ blocking the main thread), and does the stopword list need to follow the documen
 language. Needs a tokenizer and a curated list — a real feature, not a garnish on
 5.4's graph.
 
-### 5.17 — Summary / outline view
+### 5.17 — Summary / outline view (done, #32)
 
-The hard half of this is already built and is not in the UI where a writer would
+Shipped as a fourth view, and with more than presentation. The view lists the
+story overview first and every section after it in document order, shows the
+stored recap for a section read-only, and adds the writer's own note for that
+section. A note renders as sanitized markdown and edits behind a pencil control,
+committing through the same autosave as the manuscript. The section jump returns
+to the section in the view the writer came from, and the assistant gained a Notes
+scope built from every non-empty note in document order.
+
+No new generation: the recaps are the 4.7 summaries `summary.rs` already makes,
+and "Insert into note" copies one into the draft. Notes live in the `.rite` file
+and stay out of the manuscript, the word count, the exports and the version
+history. Sentences S-001–S-026 in `SPEC.md`; unit tests beside the code, rust
+tests in `src-tauri/tests/notes.rs`, end-to-end tests in `e2e/notes-view.spec.js`.
+
+The hard half of this was already built and was not in the UI where a writer would
 reach for it:
 
 - `src-tauri/src/summary.rs` — `build_summary_request`, `plan_resummarize`,
