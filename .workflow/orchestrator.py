@@ -107,18 +107,72 @@ def finish(status, reason, code, **extra):
         )
         status, code = "wrong_platform", 6
     (OUT / "result.json").write_text(
-        json.dumps({"status": status, "reason": reason, "platform": here, **extra}, indent=2)
+        json.dumps({"status": status, "reason": reason, "platform": here,
+                    "evidence": evidence_files(), **extra}, indent=2)
     )
+    if status not in ("green", "ok"):
+        postmortem(status)
     log(f"{status}: {reason}")
     sys.exit(code)
 
 
+def evidence_files():
+    """The files that answer "what happened", newest first, that actually exist."""
+    names = []
+    for pattern in ("test-objection.md", "last_failures.md", "plan-iter-*.md",
+                    "goose-iter*.log", "progress.jsonl"):
+        matches = sorted(OUT.glob(pattern), key=lambda p: p.stat().st_mtime)
+        if matches:
+            names.append(matches[-1].name)
+    return [f".workflow-out/{n}" for n in names]
+
+
+def postmortem(status):
+    """Print where to look, so a stopped run explains itself without a human.
+
+    The verdict line names a reason in one sentence. This adds the last measured
+    iteration and the files behind the reason, because otherwise the operator has
+    to ask someone which log to open — or re-run the thing to find out.
+    """
+    last = None
+    try:
+        rows = [json.loads(ln) for ln in (OUT / "progress.jsonl").read_text().splitlines() if ln.strip()]
+        last = rows[-1]
+    except (OSError, ValueError, IndexError):
+        pass
+    log("--- where to look ---")
+    if last:
+        log(f"last iteration {last.get('iteration')}: {last.get('passing')}/{last.get('total')} passing, "
+            f"{last.get('failing')} failing | {last.get('seconds')}s | "
+            f"{fmt_tokens(last.get('tokens_iteration'))} tokens")
+    try:
+        plan = sorted(OUT.glob("plan-iter-*.md"), key=lambda p: p.stat().st_mtime)[-1]
+        heads = [ln.strip()[3:] for ln in plan.read_text().splitlines() if ln.startswith("## ")]
+        if heads:
+            log(f"last plan: {' | '.join(heads[:4])}")
+    except (OSError, IndexError):
+        pass
+    log("evidence: " + ", ".join(evidence_files()))
+    log("full detail: .workflow/why.py (status, plan, and where the run stopped)")
+
+
 # ---------- progress / token accounting ----------
 
-# goose records per-request usage in its session database. In the container HOME
-# is /cache/home and /cache is bind-mounted from the host, so the ledger
-# survives the run and can be read after it too.
-GOOSE_DB = Path(os.environ.get("HOME", "~")) / ".local/share/goose/sessions/sessions.db"
+# goose keeps its sessions and its per-request usage ledger in ONE SQLite file.
+# In the container HOME is /cache/home and /cache is bind-mounted from the host, so
+# the ledger survives the run and can be read after it too.
+#
+# Resolved exactly as goose resolves it ($XDG_DATA_HOME/goose, else
+# ~/.local/share/goose) so the watchdog reads the ledger this run is writing. Get
+# that wrong and the run either reports "tokens: n/a" or, worse, sums the host's
+# store while the run writes its own.
+def goose_session_db():
+    base = os.environ.get("XDG_DATA_HOME")
+    root = Path(base) if base else Path(os.environ.get("HOME", "~")) / ".local/share"
+    return root / "goose" / "sessions" / "sessions.db"
+
+
+GOOSE_DB = goose_session_db()
 
 
 def goose_tokens_used():
@@ -150,7 +204,8 @@ def fmt_tokens(n):
     return str(n)
 
 
-def progress(i, res, prev_failing, started, tokens_before, tokens_total, scope=None, cleared=None):
+def progress(i, res, prev_failing, started, tokens_before, tokens_total, scope=None,
+             cleared=None, total_cleared=None):
     """One line per iteration: pass/fail counts, delta, wall clock, tokens.
 
     The scope fields are the measurement that makes runs comparable to each other:
@@ -184,10 +239,15 @@ def progress(i, res, prev_failing, started, tokens_before, tokens_total, scope=N
                 "scope_in": len(scope.in_scope) if scope is not None else None,
                 "scope_deferred": len(scope.deferred) if scope is not None else None,
                 "scope_cleared": cleared,
+                # The rate the spin guard judges, written down so a finished run can
+                # show where the tokens went.
+                "cleared_total": total_cleared,
+                "tokens_per_cleared": (round(spent / total_cleared)
+                                       if spent and total_cleared and total_cleared > 0 else None),
             }) + "\n")
     except OSError:
         pass
-    return total_now
+    return total_now, spent
 
 
 # ---------- git helpers ----------
@@ -409,22 +469,211 @@ def parse_cargo(text):
     return [(name, status[s]) for name, s in CARGO_LINE.findall(text)]
 
 
-def run_layers(cfg, timeout_s):
+# How many failing test names one layer prints. The rest stay in the layer log and
+# in `last_failures.md`; a terminal that repeats the whole suite every iteration
+# stops being something a human reads.
+REPORT_FAILING_SHOWN = 10
+
+
+def junit_first_lines(report):
+    """`{test id: first line of its failure message}` for one layer's junit report.
+
+    The id shape matches `parse_junit` exactly, because the caller looks these up
+    with the ids it already has from the parsed run.
+    """
+    if not report or not report.exists():
+        return {}
+    try:
+        root = ET.parse(report).getroot()
+    except ET.ParseError:
+        return {}
+    out = {}
+    for tc in root.iter("testcase"):
+        node = tc.find("failure") if tc.find("failure") is not None else tc.find("error")
+        if node is None:
+            continue
+        name, cls = tc.get("name", "?"), tc.get("classname", "")
+        tid = f"{cls}::{name}" if cls else name
+        body = (node.get("message") or node.text or "").strip()
+        out[tid] = next((ln.strip() for ln in body.splitlines() if ln.strip()), "")[:200]
+    return out
+
+
+def report_layers(res):
+    """Print each layer's tally and the first line of every failure.
+
+    Costs no tokens: this is the console view of what `last_failures.md` carries
+    to the coder, so the operator can follow an iteration without tailing a log.
+    """
+    for name, info in res["per_layer"].items():
+        total = sum(1 for tid, _ in res["tests"] if tid.startswith(f"{name}::"))
+        bad = len(info["failing"])
+        seconds = info.get("seconds")
+        took = f" ({seconds:.0f}s)" if isinstance(seconds, (int, float)) else ""
+        if info.get("skipped"):
+            log(f"  layer {name}: reused ({info['skipped']})")
+            continue
+        log(f"  layer {name}: {total - bad} passed, {bad} failed{took}")
+        detail = junit_first_lines(Path(info["report"])) if info.get("report") else {}
+        for f in info["failing"][:REPORT_FAILING_SHOWN]:
+            tid = f.split("::", 1)[-1]
+            log(f"    FAIL {tid}")
+            if detail.get(tid):
+                log(f"         {detail[tid]}")
+        hidden = bad - REPORT_FAILING_SHOWN
+        if hidden > 0:
+            log(f"    … {hidden} more in .workflow-out/{name}.log")
+
+
+def report_plan(i):
+    """Print the headings of the plan the agent wrote, so its intent is visible.
+
+    The planner and the coder are one goose call, so this arrives slightly late to
+    watch live — but it answers "what did it decide to do" without opening a file.
+    """
+    plan = OUT / f"plan-iter-{i}.md"
+    try:
+        heads = [ln.strip()[3:] for ln in plan.read_text().splitlines()
+                 if ln.startswith("## ")]
+    except OSError:
+        return
+    if heads:
+        log("  plan: " + " | ".join(heads[:6]))
+
+
+def report_digest(start_sha, res, prev_failing_ids):
+    """Print the diffstat and which tests this iteration cleared."""
+    stat = [ln.strip() for ln in git("diff", "--stat", start_sha).splitlines() if ln.strip()]
+    log(f"  changed: {stat[-1] if stat else 'nothing'}")
+    cleared = sorted(set(prev_failing_ids) - set(res["failing"]))
+    if cleared:
+        names = ", ".join(c.split("::")[-1][:70] for c in cleared[:5])
+        more = f" (+{len(cleared) - 5} more)" if len(cleared) > 5 else ""
+        log(f"  cleared {len(cleared)}: {names}{more}")
+
+
+def run_streaming(cmd, cwd, timeout_s, logfile):
+    """Run a layer command, echoing it line by line, and keep the same log.
+
+    Same contract as the captured path — returns the combined text and the return
+    code — so `run_layers` parses it identically either way.
+    """
+    started, lines = time.time(), []
+    with logfile.open("w") as fh:
+        p = subprocess.Popen(cmd, shell=True, cwd=cwd, text=True, bufsize=1,
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        try:
+            for line in p.stdout:
+                lines.append(line)
+                fh.write(line)
+                fh.flush()
+                print(f"  | {line.rstrip()}", flush=True)
+                if time.time() - started > timeout_s:
+                    p.kill()
+                    lines.append(f"TIMEOUT after {timeout_s}s")
+                    return "".join(lines), 124
+            return "".join(lines), p.wait()
+        finally:
+            if p.poll() is None:
+                p.kill()
+
+
+def spin_after(previous, spent, cleared_n, lim):
+    """The spin counter after one iteration: over budget and poor yield is a spin.
+
+    Extracted so the rule can be exercised without a model: the whole point is that
+    `no_gain` cannot see this failure — a run that clears one failure per expensive
+    iteration keeps `no_gain` at zero forever.
+    """
+    budget = lim.get("tokens_per_iteration") or 0
+    if not budget or spent is None or spent <= budget:
+        return 0
+    rate = lim.get("tokens_per_cleared_failure") or 0
+    cleared_n = max(cleared_n, 0)
+    poor_yield = cleared_n == 0 or (rate and spent / cleared_n > rate)
+    return previous + 1 if poor_yield else 0
+
+
+def changed_paths(start_sha):
+    """Every path touched since the start commit, tracked or not.
+
+    The coder's new files are untracked until the orchestrator commits at the end
+    of an iteration, so `git diff` alone would miss exactly the files that make a
+    layer worth running.
+    """
+    out = git("diff", "--name-only", start_sha) + "\n" + git("status", "--porcelain", "-uall")
+    paths = set()
+    for ln in out.splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        paths.add(ln.split(" -> ")[-1].split()[-1])
+    return paths
+
+
+def skip_reason(layer, reuse, prev_status, red_layers, cfg):
+    """Why this layer can be reused from the previous iteration, or None to run it."""
+    if not reuse.get("enabled") or not prev_status:
+        return None
+    name = layer["name"]
+    if reuse.get("skip_dependents_when_red"):
+        deps = (cfg.get("scope_depends_on") or {}).get(name) or []
+        red = [d for d in deps if d in red_layers]
+        if red:
+            return " and ".join(red) + " is red"
+    root = (reuse.get("unchanged_paths") or {}).get(name)
+    if root:
+        changed = changed_paths(reuse.get("start_sha", "HEAD"))
+        if not any(p.startswith(root) for p in changed):
+            return f"nothing under {root} changed"
+    return None
+
+
+def run_layers(cfg, timeout_s, live=False, prev_status=None, reuse=None):
+    """Run each layer, optionally reusing one whose result cannot have changed.
+
+    `reuse` narrows work, never the verdict: a layer is skipped only while another
+    layer is already red, or while nothing under its source root changed. A green
+    verdict therefore always means every layer ran, because green requires no red
+    anywhere.
+    """
+    reuse = reuse or {}
     tests, failing, per_layer = [], [], {}
+    red_layers = set()
     for layer in cfg["test_layers"]:
         name = layer["name"]
         report = Path(layer["report"]) if layer.get("report") else None
         if report:
             report.unlink(missing_ok=True)  # never trust a stale report
+        reason = skip_reason(layer, reuse, prev_status, red_layers, cfg)
+        if reason:
+            carried = {tid.split("::", 1)[1]: st for tid, st in prev_status.items()
+                       if tid.startswith(f"{name}::")}
+            if carried:
+                tests += [(f"{name}::{tid}", st) for tid, st in carried.items()]
+                bad = [f"{name}::{tid}" for tid, st in carried.items() if st != "passed"]
+                failing += bad
+                per_layer[name] = {"rc": 0, "failing": bad, "log": str(OUT / f"{name}.log"),
+                                   "report": None, "seconds": 0.0, "skipped": reason}
+                log(f"running layer {name}: reused, {reason}")
+                if bad:
+                    red_layers.add(name)
+                continue
         log(f"running layer {name}")
-        try:
-            p = subprocess.run(layer["cmd"], shell=True, cwd=layer.get("cwd", "."),
-                               capture_output=True, text=True, timeout=timeout_s)
-            text, rc = p.stdout + "\n" + p.stderr, p.returncode
-        except subprocess.TimeoutExpired:
-            text, rc = f"TIMEOUT after {timeout_s}s", 124
         logfile = OUT / f"{name}.log"
-        logfile.write_text(text)
+        started = time.time()
+        if live:
+            text, rc = run_streaming(layer["cmd"], layer.get("cwd", "."), timeout_s, logfile)
+        else:
+            try:
+                p = subprocess.run(layer["cmd"], shell=True, cwd=layer.get("cwd", "."),
+                                   capture_output=True, text=True, timeout=timeout_s)
+                text, rc = p.stdout + "\n" + p.stderr, p.returncode
+            except subprocess.TimeoutExpired:
+                text, rc = f"TIMEOUT after {timeout_s}s", 124
+        elapsed = time.time() - started
+        if not live:
+            logfile.write_text(text)
 
         parsed = parse_junit(report) if layer.get("parser", "junit") == "junit" else parse_cargo(text)
         tests += [(f"{name}::{tid}", st) for tid, st in parsed]
@@ -434,7 +683,10 @@ def run_layers(cfg, timeout_s):
         if rc == 0 and not parsed:
             bad.append(f"{name}::{SYNTHETIC[1]}")
         failing += bad
-        per_layer[name] = {"rc": rc, "failing": bad, "log": str(logfile)}
+        per_layer[name] = {"rc": rc, "failing": bad, "log": str(logfile),
+                           "report": str(report) if report else None, "seconds": elapsed}
+        if bad:
+            red_layers.add(name)
     return {"tests": tests, "failing": failing, "per_layer": per_layer}
 
 
@@ -485,7 +737,9 @@ def write_failures(path, res, notes, scope=None, tail_lines=60, cap=8000):
             continue
         parts.append(f"## Layer {name} (exit code {info['rc']})\nFailing:\n"
                      + "\n".join(f"- {f}" for f in shown[:50]))
-        tail = "\n".join(Path(info["log"]).read_text().splitlines()[-tail_lines:])
+        log_path = Path(info["log"])
+        tail = ("\n".join(log_path.read_text().splitlines()[-tail_lines:])
+                if log_path.exists() else "reused from the previous iteration; see the layer log")
         parts.append(f"```\n{tail}\n```")
     if scope is not None:
         deferred = scoping.deferred_note(scope)
@@ -504,7 +758,26 @@ def covered_ids(tests):
 
 # ---------- goose ----------
 
-def run_goose(recipe, i, escalated, failures_file, models, timeout_s, attempt=""):
+# Return code for "the watchdog stopped this iteration", kept distinct from 124
+# (our timeout) so the caller can say why and keep its three-strike budget intact.
+WATCHDOG_RC = 125
+
+# How long to wait before the single retry of an iteration that lost the session
+# store's write lock. Long enough for a closing goose session to let go of it,
+# short enough that a store which stays busy is reported instead of hidden.
+LOCK_RETRY_WAIT_S = 20
+
+
+def run_goose(recipe, i, escalated, failures_file, models, timeout_s, attempt="",
+              base_commit="", watch=None):
+    """Run goose to completion, watching the token ledger while it works.
+
+    The spin guard can only judge an iteration after it ends, which is how 5.17's
+    iteration 5 spent ten minutes and millions of tokens on one work unit. This
+    polls goose's own usage ledger every 20 s and stops the iteration at the
+    ceiling, so the next one starts with a different model and a shorter brief.
+    """
+    watch = watch or {}
     env = dict(os.environ)
     model = models.get("strong") if escalated else models.get("default")
     if model:
@@ -512,12 +785,42 @@ def run_goose(recipe, i, escalated, failures_file, models, timeout_s, attempt=""
     cmd = ["goose", "run", "--recipe", recipe, "--no-session",
            "--params", f"iteration={i}",
            "--params", f"escalated={'true' if escalated else 'false'}",
-           "--params", f"failures_file={failures_file}"]
-    try:
-        with open(OUT / f"goose-iter{i}{attempt}.log", "w") as fh:
-            return subprocess.run(cmd, stdout=fh, stderr=subprocess.STDOUT, env=env, timeout=timeout_s).returncode
-    except subprocess.TimeoutExpired:
-        return 124
+           "--params", f"failures_file={failures_file}",
+           # The start commit, so the agent never derives or guesses it for
+           # comment_check.py. Guessing it cost five tool calls in one 5.17 iteration.
+           "--params", f"base_commit={base_commit}"]
+    started = time.time()
+    warned = False
+    with open(OUT / f"goose-iter{i}{attempt}.log", "w") as fh:
+        proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT, env=env)
+        try:
+            while True:
+                try:
+                    return proc.wait(timeout=20)
+                except subprocess.TimeoutExpired:
+                    pass
+                if time.time() - started > timeout_s:
+                    proc.kill()
+                    proc.wait()
+                    return 124
+                now = goose_tokens_used()
+                if now is None or not watch.get("enabled"):
+                    continue
+                spent = now - (watch.get("start_tokens") or now)
+                if watch.get("warn_tokens") and spent > watch["warn_tokens"] and not warned:
+                    warned = True
+                    log(f"watchdog: iteration {i} has spent {fmt_tokens(spent)} "
+                        f"(budget {fmt_tokens(watch['warn_tokens'])}) and is still working")
+                if watch.get("kill_tokens") and spent > watch["kill_tokens"]:
+                    proc.kill()
+                    proc.wait()
+                    log(f"watchdog: stopped iteration {i} at {fmt_tokens(spent)} "
+                        f"(ceiling {fmt_tokens(watch['kill_tokens'])}); "
+                        f"the next iteration escalates and is told to work directly")
+                    return WATCHDOG_RC
+        finally:
+            if proc.poll() is None:
+                proc.kill()
 
 
 def goose_log_path(i, attempt=""):
@@ -914,18 +1217,31 @@ GOOSE_FATAL = [
      "the recipe could not be loaded"),
     ("env", r"(?i)command not found|: goose: not found",
      "the goose binary is not on PATH inside the image"),
+    # SQLite permits one writer per database, and goose writes every message and
+    # every usage row to the same store. A second goose process on the host — an
+    # interactive session left open, which is the normal state of a developer's
+    # machine — makes an iteration die mid-run with this, having saved nothing.
+    # No test and no model is involved, so it is not the agent's failure; it is
+    # worth one retry, because the other writer is often a session being closed.
+    ("locking", r"(?i)database is locked|database table is locked|SQLITE_BUSY",
+     "another goose process is writing goose's session database and SQLite allows one "
+     "writer (this run prints the store it writes at the start). Close the other goose "
+     "session, or give the run its own store — run-headless.sh already exports "
+     "XDG_DATA_HOME — then start it again"),
     ("model", r"(?i)model .{0,60}(not found|not available|does not exist)|unknown model",
      "the model id in .workflow/config.yaml is not available to the provider"),
 ]
 
 
 def goose_failure_reason(log_path, rc):
-    """Classify a failed goose run as ("env"|"model", reason), or (None, None).
+    """Classify a failed goose run as ("env"|"model"|"locking", reason), or (None, None).
 
     "env": the toolchain cannot run at all (no provider, bad key, missing recipe
     or binary). "model": a model id the account cannot serve — which is worth
     distinguishing, because the DEFAULT model being missing is fatal while the
-    STRONG one being missing only means escalation is unavailable.
+    STRONG one being missing only means escalation is unavailable. "locking": the
+    session store had another writer — fatal, but only after one retry, because
+    the other writer is usually a goose session that is closing.
 
     Returns (None, None) for rc == 0 and for failures worth retrying (a timeout,
     a crash mid-run), so the caller keeps its retry budget for those.
@@ -993,6 +1309,8 @@ def main():
     # an agent failure.
     ap.add_argument("--baseline-only", action="store_true",
                     help="run setup + baseline checks, then stop before any goose call")
+    ap.add_argument("--live-tests", action="store_true",
+                    help="echo each test layer's output to the console as it runs")
     ap.add_argument("--resume", action="store_true",
                     help="continue in a work tree that already holds implementation work: "
                          "previously-passing tests may not regress, but the suite is no longer "
@@ -1075,9 +1393,13 @@ def main():
                 finish("error", "setup command failed (see .workflow-out/setup.log)", 1)
 
     # Baseline: tests must be red for the right reason, and every SPEC.md sentence must have a test.
-    base = run_layers(cfg, test_to)
+    base = run_layers(cfg, test_to, live=args.live_tests)
     base_status = dict(base["tests"])
+    # The previous iteration's per-test statuses, so a layer whose inputs did not
+    # change can be carried forward instead of re-run.
+    prev_tests = dict(base["tests"])
     base["failing"] = failing_excluding_baseline_skips(base, base_status)
+    report_layers(base)
     broken = [f for f in base["failing"] if f.endswith(SYNTHETIC)]
     if broken:
         finish("error", f"baseline tests are broken (errors, not assertion failures): {broken}", 1)
@@ -1121,6 +1443,25 @@ def main():
     if tokens_total is not None:
         log(f"tokens so far this session: {fmt_tokens(tokens_total)}")
 
+    # Which store this run writes, and whether a second goose process already holds
+    # it. Losing that lock mid-iteration is the one failure with no useful retry
+    # story, so the store path is on the console before the first goose call.
+    log(f"goose store: {GOOSE_DB}")
+    if GOOSE_DB.exists():
+        import sqlite3
+
+        try:
+            probe = sqlite3.connect(str(GOOSE_DB), timeout=2)
+            try:
+                probe.execute("BEGIN IMMEDIATE")   # the lock goose needs, taken and dropped
+                probe.execute("ROLLBACK")
+            finally:
+                probe.close()
+        except sqlite3.OperationalError as e:
+            log(f"WARNING: the store is locked right now ({e}). Another goose session is "
+                f"writing it; close that before this run needs to save, or give this run "
+                f"its own XDG_DATA_HOME")
+
     if args.baseline_only:
         finish("ok", f"baseline is usable: {len(base_ids)} tests, "
                      f"{len(base['failing'])} failing for the right reason", 0,
@@ -1151,6 +1492,10 @@ def main():
     # would go quiet exactly when it is needed. This counter is what keeps the
     # strong-model escalation reachable once the set starts churning.
     no_gain = 0
+    # Consecutive iterations that spent more than the token budget without clearing
+    # enough failures to justify it. Same purpose as `no_gain`, for the case
+    # `no_gain` cannot see: a run that keeps making *some* progress.
+    spin = 0
     # Whether the previous iteration's goose run actually completed. A run that
     # never started must not count towards escalation: an unchanged failing set
     # after a no-op is not evidence that the model needs a stronger one.
@@ -1172,14 +1517,23 @@ def main():
 
     for i in range(1, lim["max_iterations"] + 1):
         escalated = goose_ok and strong_ok and (
-            same >= lim["escalate_after"] or no_gain >= lim["escalate_after"])
+            same >= lim["escalate_after"] or no_gain >= lim["escalate_after"] or spin >= 1)
         log(f"iteration {i}/{lim['max_iterations']}" + (" [ESCALATED to strong model]" if escalated else ""))
         notes = []
         iteration_started = time.time()
         tokens_before = goose_tokens_used()
 
         log_path = goose_log_path(i)
-        rc = run_goose(args.recipe, i, escalated, failures_file, models, goose_to)
+        watch = {
+            "enabled": bool(lim.get("tokens_per_iteration")),
+            "warn_tokens": int((lim.get("tokens_per_iteration") or 0)
+                               * lim.get("watchdog_warn_multiple", 1.5)),
+            "kill_tokens": int((lim.get("tokens_per_iteration") or 0)
+                               * lim.get("watchdog_kill_multiple", 3)),
+            "start_tokens": tokens_before,
+        }
+        rc = run_goose(args.recipe, i, escalated, failures_file, models, goose_to,
+                       base_commit=start_sha, watch=watch)
         kind, fatal = goose_failure_reason(log_path, rc)
         if kind == "model" and escalated:
             # The strong model can be missing from the account (a plan change, a
@@ -1192,8 +1546,32 @@ def main():
             escalated = False
             log_path = goose_log_path(i, "-fallback")
             rc = run_goose(args.recipe, i, escalated, failures_file, models, goose_to,
-                           attempt="-fallback")
+                           attempt="-fallback", base_commit=start_sha, watch=watch)
+        if kind == "locking":
+            # The store had a second writer while this iteration saved its work, so
+            # the iteration ended without a verdict — not a failed fix, a lost one.
+            # Wait for the other writer and repeat the same iteration once, with a
+            # fresh watchdog budget because the tokens the dead attempt spent were
+            # not spent on code. A second lock means the other writer is not going
+            # away; then stop and name it rather than spend the retry budget on it.
+            log(f"goose could not write its session store: {fatal}")
+            log(f"retrying iteration {i} once in {LOCK_RETRY_WAIT_S} s")
+            time.sleep(LOCK_RETRY_WAIT_S)
+            watch["start_tokens"] = goose_tokens_used()
+            log_path = goose_log_path(i, "-locked")
+            rc = run_goose(args.recipe, i, escalated, failures_file, models, goose_to,
+                           attempt="-locked", base_commit=start_sha, watch=watch)
+            kind, fatal = goose_failure_reason(log_path, rc)
+            if kind == "locking":
+                log("the session store is still locked; stopping instead of "
+                    "spending three iterations to learn the same thing")
         goose_ok = rc == 0
+        if rc == WATCHDOG_RC:
+            notes.append(
+                "The previous iteration was stopped at the token ceiling, part-way through "
+                "its work. Check what it left behind before planning: some of it may be "
+                "half-finished.")
+            rc = 0
         if rc != 0:
             goose_fails += 1
             kind, fatal = goose_failure_reason(log_path, rc)
@@ -1210,6 +1588,8 @@ def main():
                        1, iterations=i, goose_exit=rc)
         else:
             goose_fails = 0
+
+        report_plan(i)
 
         objection = OUT / "test-objection.md"
         if fresh_write(objection, iteration_started):
@@ -1239,12 +1619,18 @@ def main():
                 commit(f"wip: iteration {i} (aborted, test tampering)")
                 finish("tampering", f"test regions modified twice: {touched}", 3, iterations=i)
 
-        res = run_layers(cfg, test_to)
+        reuse = {**(cfg.get("layer_reuse") or {}), "start_sha": start_sha}
+        res = run_layers(cfg, test_to, live=args.live_tests,
+                         prev_status=prev_tests, reuse=reuse)
+        prev_tests = dict(res["tests"])
         res["failing"] = failing_excluding_baseline_skips(res, base_status)
         gone = sorted(base_ids - {t for t, _ in res["tests"]})
         if gone:
             res["failing"] += [f"MISSING::{t}" for t in gone]
             notes.append(f"{len(gone)} baseline tests no longer run (deleted or filtered). Example: {gone[0]}")
+
+        report_layers(res)
+        report_digest(start_sha, res, prev_failing_ids)
 
         commit(f"wip: iteration {i}, {len(res['failing'])} failing")
 
@@ -1262,9 +1648,27 @@ def main():
         cleared = scoping.update_state(scope_state, scope, prev_failing_ids, res["failing"])
         prev_failing_ids = list(res["failing"])
 
-        tokens_total = progress(i, res, prev_failing, iteration_started, tokens_before,
-                                tokens_total, scope, cleared)
+        # Measured before `prev_failing` moves: what this iteration bought.
+        cleared_n = prev_failing - len(res["failing"])
+        tokens_total, spent = progress(i, res, prev_failing, iteration_started, tokens_before,
+                                       tokens_total, scope, cleared, total_cleared=cleared_n)
         prev_failing = len(res["failing"])
+
+        # A run can clear failures for ten times the tokens and never trip `no_gain`,
+        # because the count *did* fall. That is the spin the measured 5.17 run hit:
+        # 9.81 M tokens to clear three e2e tests on the flash model — 3.3 M per
+        # failure against a usual ~0.7 M — and escalation never fired. An iteration
+        # over the token budget whose rate per cleared failure is above the threshold
+        # counts as a spin, and one spin escalates the next iteration.
+        spin = spin_after(spin, spent, cleared_n, lim)
+        if spin:
+            per = f"{spent / cleared_n / 1000:.0f}k" if cleared_n else "n/a"
+            log(f"spin guard: {fmt_tokens(spent)} bought {cleared_n} cleared failure(s) "
+                f"({per}/failure)" + ("; the next iteration escalates" if strong_ok else ""))
+            notes.append(
+                f"The previous iteration spent {fmt_tokens(spent)} and cleared {cleared_n} "
+                f"failure(s). Work directly: read only the files the failures name, run only "
+                f"the one test file you are fixing, and do not dump the working diff.")
 
         # A green suite is not a finished change when the prose this run added
         # breaks the rules. The verdict is a claim about the whole diff, and the
@@ -1304,6 +1708,13 @@ def main():
                    f"tests pass, but {len(comment_bad)} comment violation(s) remain "
                    f"after {max(same, no_gain)} iterations", 7, iterations=i,
                    comment_violations=comment_bad[:10])
+        if spin >= 2:
+            # The first spin escalated; this one is the strong model doing the same
+            # thing. Another iteration would cost the same and prove the same point.
+            finish("needs_human",
+                   f"spinning: {spin} iterations over budget at more than "
+                   f"{fmt_tokens(lim.get('tokens_per_cleared_failure'))} per cleared failure "
+                   f"(last: {fmt_tokens(spent)} for {cleared_n})", 2, iterations=i)
         if same >= lim["escalate_after"] + lim["strong_attempts"]:
             finish("needs_human", f"stuck on the same {len(res['failing'])} failures", 2,
                    iterations=i, failing=res["failing"][:50])
