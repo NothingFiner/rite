@@ -8,6 +8,7 @@
         class="activity-icon"
         :class="{ active: activeId === item.id && drawerOpen }"
         :title="item.label"
+        :aria-label="item.label"
         @click="onClick(item.id)"
       >
         <component :is="item.icon" />
@@ -22,6 +23,8 @@
         class="activity-icon format-btn"
         :class="{ active: formats?.bold }"
         title="Bold (Cmd+B)"
+        aria-label="Bold"
+        :aria-pressed="formats?.bold ? 'true' : 'false'"
         tabindex="-1"
         @mousedown.prevent
         @click="$emit('toggleFormat', 'bold')"
@@ -33,6 +36,8 @@
         class="activity-icon format-btn"
         :class="{ active: formats?.italic }"
         title="Italic (Cmd+I)"
+        aria-label="Italic"
+        :aria-pressed="formats?.italic ? 'true' : 'false'"
         tabindex="-1"
         @mousedown.prevent
         @click="$emit('toggleFormat', 'italic')"
@@ -44,6 +49,8 @@
         class="activity-icon format-btn"
         :class="{ active: formats?.underline }"
         title="Underline (Cmd+U)"
+        aria-label="Underline"
+        :aria-pressed="formats?.underline ? 'true' : 'false'"
         tabindex="-1"
         @mousedown.prevent
         @click="$emit('toggleFormat', 'underline')"
