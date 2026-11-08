@@ -79,26 +79,23 @@ async function openApp(page, doc = seededDoc) {
   await page.waitForSelector('.editor-sheet .paragraph', { timeout: 5000 })
 }
 
-// The notes live in the References view, reached by the References tab and then
-// its Notes tab. Everything below is otherwise the 5.17 suite unchanged.
+// The notes are the page of a drawer selection in the References view
+// (5.20a). Everything below is otherwise the 5.17 suite unchanged.
 const referencesTab = (page) => page.locator('.view-tab').filter({ hasText: 'References' })
-const referencesNotesTab = (page) => page.locator('.references-tab[data-tab="notes"]')
 const editorTab = (page) => page.locator('.view-tab').filter({ hasText: 'Editor' })
 const manuscriptTab = (page) => page.locator('.view-tab').filter({ hasText: 'Manuscript' })
 
 const entry = (page, id) => page.locator(`.notes-entry[data-entry-id="${id}"]`)
 
-/// Assert the tab, then the view: a missing Notes view must read as a failed
-/// assertion rather than an opaque click timeout.
+/// The drawer and the page must both be up before a note can be read. Each step
+/// asserts, so a missing surface fails the sentence it belongs to.
 async function openNotes(page) {
   const tab = referencesTab(page)
   await expect(tab).toBeVisible({ timeout: 5000 })
   await tab.click()
   await expect(page.locator('.references-view')).toBeVisible({ timeout: 5000 })
 
-  const notes = referencesNotesTab(page)
-  await expect(notes).toBeVisible({ timeout: 5000 })
-  await notes.click()
+  await expect(page.locator('.references-drawer')).toBeVisible({ timeout: 5000 })
   await expect(page.locator('.notes-view')).toBeVisible({ timeout: 5000 })
 }
 

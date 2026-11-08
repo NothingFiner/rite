@@ -77,6 +77,28 @@ Do not put real behaviour in stubs.
 - No `.skip`, `.todo`, `test.fixme` or `#[ignore]`: the orchestrator counts these as failures.
 - Deterministic only: no real network, no sleeps. Use fake timers and mocked IPC.
 
+### Satisfiability: a test the implementation cannot pass is a broken test
+
+A red test looks honest before the implementation exists — it fails at the first
+guard, so an assertion below that guard is never reached. Three defects hid in
+that blind spot in one feature, each costing an implementer iteration and a human
+in the loop. Check these before handing tests over:
+
+- **Fixtures mirror the real contract.** Every method a test spies on
+  (`expect(store.commitNote).toHaveBeenCalled()`) must exist on the real object,
+  not only on the test double. Vitest throws `undefined is not a spy` — which is
+  a *setup* error, not a red test, and no application change can fix it. Grep the
+  store/composable for the method before asserting on it.
+- **A page-level assertion needs a page.** Playwright init scripts run on every
+  navigation, so seed localStorage only when it is empty, or `page.reload()`
+  rewinds the record the test is proving survives. Any scroll-alignment
+  assertion needs a seeded document taller than the viewport: a short document
+  has `maxScroll === 0`, and then no landing can satisfy it.
+- **Nothing else in the suite is allowed to be flaky on the way in.** A width or
+  position read once, right after an action, races the reflow that follows it.
+  Poll (`expect.poll`) rather than sample, and check the test is green three runs
+  in a row before calling an unrelated failure "pre-existing".
+
 ## Comments in test and stub code
 
 Test files are code, so the comment rules apply to them without exception. Read

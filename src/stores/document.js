@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { invoke } from '@tauri-apps/api/core'
 import { createSection } from '../constants/DocumentModel.js'
-import { orphanDeletedSection, writeNote } from '../composables/useNotes.js'
+import { orphanDeletedSection } from '../composables/useNotes.js'
 import { useToastsStore } from './toasts.js'
 
 export const useDocumentStore = defineStore('document', {
@@ -300,13 +300,11 @@ export const useDocumentStore = defineStore('document', {
       }
     },
 
-    /// Commit one note entry: `overview`, a section id, or `orphaned`. The
-    /// record comes from `writeNote`, so the store swaps in a new record
-    /// instead of writing one field in place.
-    async commitNote(entryId, text) {
+    /// Push the notes record to Rust with `update_notes`. Save and autosave
+    /// copy the record Rust holds through `build_rite_file`, so a skipped push
+    /// leaves the .rite file with the previous notes.
+    async pushNotes() {
       try {
-        this.notes = writeNote(this.notes, entryId, text)
-        this.markModified()
         await invoke('update_notes', { notes: this.notes })
       } catch (e) {
         this.notifyError(e, 'Failed to save notes')

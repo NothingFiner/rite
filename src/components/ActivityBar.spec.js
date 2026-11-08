@@ -68,6 +68,27 @@ describe('ActivityBar', () => {
     expect(titles).toEqual(['General Options'])
   })
 
+  // SPEC.md 5.20a S-001 / S-002. The rail must not vanish in References. It is
+  // the only way to reach a drawer there, and 5.20 shipped with an empty map
+  // entry for the view.
+  it('S-001: offers Reference, Stats and Options in the References view', () => {
+    const wrapper = mount(ActivityBar, { props: { viewMode: 'references' } })
+    const titles = drawerItems(wrapper).map((b) => b.attributes('title'))
+
+    expect(titles).toContain('References')
+    expect(titles).toContain('Stats')
+    expect(titles).toContain('General Options')
+    expect(titles.length).toBeGreaterThan(0)
+  })
+
+  it('S-002: does not offer Sections or Text Options in the References view', () => {
+    const wrapper = mount(ActivityBar, { props: { viewMode: 'references' } })
+    const titles = drawerItems(wrapper).map((b) => b.attributes('title'))
+
+    // The exact set, so the absence is not satisfied by an empty rail.
+    expect([...titles].sort()).toEqual(['General Options', 'References', 'Stats'])
+  })
+
   it('marks the active drawer button only when its drawer is open', () => {
     const open = mount(ActivityBar, {
       props: { viewMode: 'editor', activeId: 'chapters', drawerOpen: true },

@@ -140,6 +140,22 @@ const StatsIcon = () => h('svg', {
   })
 ])
 
+const BookmarkIcon = () => h('svg', {
+  width: 24,
+  height: 24,
+  viewBox: '0 0 256 256',
+  fill: 'none',
+  stroke: 'currentColor',
+  'stroke-width': 1.5,
+  'stroke-linecap': 'round',
+  'stroke-linejoin': 'round',
+}, [
+  h('path', {
+    fill: 'currentColor',
+    d: 'M192 32H64A16 16 0 0 0 48 48V216a8 8 0 0 0 12.24 6.78L128 190.39l67.77 32.39A8 8 0 0 0 208 216V48A16 16 0 0 0 192 32Z'
+  })
+])
+
 // Every drawer button, in rail order. Visibility per view is governed by
 // `isDrawerModeAllowedIn` (constants/drawerVisibility.js) — the single source
 // of truth shared with App.vue's close-on-switch — so a button that doesn't
@@ -150,6 +166,7 @@ const StatsIcon = () => h('svg', {
 // conditions compare against it); only the user-facing label reflects the
 // flat-sections model.
 const ALL_ITEMS = [
+  { id: 'references', label: 'References', icon: BookmarkIcon },
   { id: 'chapters', label: 'Sections', icon: BookIcon },
   { id: 'general-options', label: 'General Options', icon: ListIcon },
   { id: 'text-options', label: 'Text Options', icon: CogIcon },

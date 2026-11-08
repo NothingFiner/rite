@@ -86,17 +86,25 @@ export function useSummaries(store, llmSettings) {
     }
   }
 
-  /// Generate a summary for one section and update progress. Returns true on
-  /// success, false on failure (with `summaryError` + `summaryStatus` set).
+  /// Generate a summary for one section and update progress. `section` is a
+  /// section object (the generation loops pass one), or a bare section id
+  /// string (the notes view's per-section regenerate). The string form invokes
+  /// with the id and resolves the error title from `store.doc.sections`,
+  /// falling back to "Untitled". Returns true on success, false on failure
+  /// (with `summaryError` + `summaryStatus` set).
   /// Uses the CHAT triple (text generation). An empty key is sent as `null` so
   /// Rust deserializes `Option<String>` = `None` (local Ollama needs no
   /// Authorization header). The command stores the summary + checkpoints the
   /// sidecar, so progress survives a mid-loop crash.
   async function summarizeOne(section) {
+    const sectionId = typeof section === 'string' ? section : section.id
+    const sectionRecord = typeof section === 'string'
+      ? (store.doc?.sections?.find((docSection) => docSection.id === section) ?? null)
+      : section
     const settings = llmSettings.settings.value
     try {
       await invoke('summarize_and_store_section', {
-        sectionId: section.id,
+        sectionId,
         endpoint: settings.endpoint,
         apiKey: settings.apiKey || null,
         model: settings.model,
@@ -104,7 +112,7 @@ export function useSummaries(store, llmSettings) {
       return true
     } catch (e) {
       summaryError.value =
-        `Failed to summarize "${section.title || 'Untitled'}": ` +
+        `Failed to summarize "${sectionRecord?.title || 'Untitled'}": ` +
         (typeof e === 'string' ? e : (e?.message || String(e)))
       summaryStatus.value = 'error'
       return false

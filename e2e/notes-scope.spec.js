@@ -75,11 +75,10 @@ async function openApp(page) {
   await page.waitForSelector('.editor-sheet .paragraph', { timeout: 5000 })
 }
 
-// Since 5.20 the notes live in the References view, not behind a top-level
-// Notes tab. Assert every step, so a missing view reads as a failed assertion
-// rather than a click timeout.
+// Since 5.20a the notes are the page of a drawer selection, not a tab. Assert
+// every step, so a missing drawer reads as a failed assertion rather than a
+// click timeout.
 const referencesTab = (page) => page.locator('.view-tab').filter({ hasText: 'References' })
-const referencesNotesTab = (page) => page.locator('.references-tab[data-tab="notes"]')
 
 async function openNotes(page) {
   const tab = referencesTab(page)
@@ -87,9 +86,9 @@ async function openNotes(page) {
   await tab.click()
   await expect(page.locator('.references-view')).toBeVisible({ timeout: 5000 })
 
-  const notes = referencesNotesTab(page)
-  await expect(notes).toBeVisible({ timeout: 5000 })
-  await notes.click()
+  // Entering References opens the Reference drawer. The page shows the entry
+  // the shell seeded from the caret.
+  await expect(page.locator('.references-drawer')).toBeVisible({ timeout: 5000 })
   await expect(page.locator('.notes-view')).toBeVisible({ timeout: 5000 })
 }
 

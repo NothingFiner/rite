@@ -1,65 +1,51 @@
 <template>
   <div class="notes-view" :style="notesStyles">
-    <div class="notes-list">
-      <!-- Rows come from `noteEntries(store.doc)` in `useNotes.js`, which owns
-           the order. A click only selects a row and emits `select`. Navigation
-           is the pane's section jump (SPEC.md 5.17). -->
-      <button
-        v-for="entry in entries"
-        :key="entry.id"
-        type="button"
-        class="notes-entry"
-        :class="{
-          'is-chapter': entry.kind === 'chapter',
-          'is-section': entry.kind === 'section',
-          'notes-orphans': entry.kind === 'orphaned',
-          selected: entry.id === selectedEntryId,
-        }"
-        :data-entry-id="entry.id"
-        @click="selectEntry(entry.id)"
-      >{{ entry.title }}</button>
-    </div>
     <div class="note-pane">
       <div class="note-head">
-        <div class="note-title">{{ selectedTitle }}</div>
-        <!-- The jump keeps the slot after .note-title, unbroken by elements
-             so the sibling selector holds (SPEC.md 5.17). Only section-backed
-             rows carry a sectionId, so overview and orphaned show none. -->
-        <button
-          v-if="selectedSectionId"
-          type="button"
-          class="note-jump"
-          title="Go to section"
-          aria-label="Go to section"
-          @click="jumpToSection"
-        >Go to section</button>
-        <!-- The pencil stays last in .note-head. While editing the pencil
-             gives way to check and reset, which reading mode never shows. -->
-        <template v-if="isEditing">
+        <!-- The subtitle sits below the row, so .note-title and .note-jump
+             stay adjacent siblings (SPEC.md 5.17). -->
+        <div class="note-title-row">
+          <div class="note-title">{{ selectedTitle }}</div>
+          <!-- The jump keeps the slot after .note-title, unbroken by elements
+               so the sibling selector holds (SPEC.md 5.17). Rows without a
+               document sectionId (overview and orphaned) show none. -->
           <button
+            v-if="selectedSectionId"
             type="button"
-            class="note-save"
-            title="Save note"
-            aria-label="Save note"
-            @click="saveDraft"
-          >✓</button>
-          <span class="note-edit-divider"></span>
+            class="note-jump"
+            title="Go to section"
+            aria-label="Go to section"
+            @click="jumpToSection"
+          >Go to section</button>
+          <!-- The pencil stays last in the row. While editing the pencil
+               gives way to check and reset, which reading mode never shows. -->
+          <template v-if="isEditing">
+            <button
+              type="button"
+              class="note-save"
+              title="Save note"
+              aria-label="Save note"
+              @click="saveDraft"
+            >✓</button>
+            <span class="note-edit-divider"></span>
+            <button
+              type="button"
+              class="note-reset"
+              title="Reset edit"
+              aria-label="Reset edit"
+              @click="resetDraft"
+            >↺</button>
+          </template>
           <button
+            v-else
             type="button"
-            class="note-reset"
-            title="Reset edit"
-            aria-label="Reset edit"
-            @click="resetDraft"
-          >↺</button>
-        </template>
-        <button
-          v-else
-          type="button"
-          class="note-edit"
-          title="Edit note"
-          aria-label="Edit note"
-          @click="startEditing"
-        >✎</button>
+            class="note-edit"
+            title="Edit note"
+            aria-label="Edit note"
+            @click="startEditing"
+          >✎</button>
+        </div>
+        <div v-if="selectedSubtitle" class="note-sub">{{ selectedSubtitle }}</div>
       </div>
       <!-- :value plus @input, because the handler records the draft on the
            noteDraftUndo stack, whose order v-model does not own (S-026). -->
@@ -70,6 +56,8 @@
         aria-label="Note draft"
         @input="onDraftInput"
       ></textarea>
+      <!-- Reading mode renders the note when there is text and shows the
+           empty state otherwise (SPEC.md 5.17). -->
       <div
         v-else-if="noteText.trim()"
         class="note-rendered"
@@ -79,7 +67,8 @@
       <!-- The recap is generated context beside the writer's words, so it
            follows the note body and stays read-only prose. -->
       <div v-if="selectedRecap" class="note-recap">
-        <p class="note-recap-label">Summary</p>
+        <div v-if="selectedStale" class="note-recap-stale">Stale</div>
+        <p class="note-recap-label">Assistant recap · read-only</p>
         <p class="note-recap-text">{{ selectedRecap }}</p>
         <button
           type="button"
@@ -88,53 +77,150 @@
           aria-label="Insert into note"
           @click="insertRecap"
         >Insert into note</button>
+        <!-- Regenerate belongs to this section alone: it calls summarizeOne
+             with the section id, never the whole-document loop (S-020). -->
+        <button
+          v-if="selectedStale"
+          type="button"
+          class="note-regenerate"
+          title="Regenerate recap"
+          aria-label="Regenerate recap"
+          @click="regenerateRecap"
+        >Regenerate</button>
+      </div>
+      <!-- The recap slot for a section with no stored recap (S-018). It is a
+           sibling after .note-recap, never inside it, so the empty state never
+           contains .note-recap-text (S-016). -->
+      <div v-else-if="showRecapGate" class="note-recap-empty">
+        <p>Nothing has been summarized for this section yet.</p>
+        <!-- The gate reads `llmConfigured` (useLlmSettings.js): a model
+             configured, never the API key. The closed gate is pointer prose
+             with no navigation, as in OutlineView (S-019). -->
+        <button
+          v-if="gateOpen"
+          type="button"
+          class="note-generate"
+          title="Generate summaries"
+          aria-label="Generate summaries"
+          @click="generateRecaps"
+        >Generate summaries</button>
+        <p v-else>Configure a model in <span class="note-options-link">General Options</span>.</p>
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, ref } from 'vue'
-import { noteDraftUndo, noteEntries, readNote } from '../composables/useNotes.js'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { noteDraftUndo, noteEntries, readNote, writeNote } from '../composables/useNotes.js'
 import { renderMarkdown } from '../composables/useMarkdown.js'
+import { llmConfigured } from '../composables/useLlmSettings.js'
 
 const props = defineProps({
-  // The document store. NotesView reads `store.doc` and `store.notes` and
-  // commits through `store.commitNote(entryId, text)`.
+  // The document store. NotesView reads `store.doc` and `store.notes`. A
+  // commit swaps the record `writeNote` returns into `store.notes` and flags
+  // the document through `store.markModified`.
   store: { type: Object, required: true },
   // The active theme (`{ bg, text, accent }`), the same object the editor
   // surface is painted with.
   theme: { type: Object, default: null },
   // Generated per-section recaps, keyed by section id: `{ [sectionId]: text }`.
   recaps: { type: Object, default: () => ({}) },
-  // The entry selected when the view opens.
-  initialEntryId: { type: String, default: 'overview' },
+  // The entry the pane shows. The parent owns the selection and sends it here.
+  entryId: { type: String, default: 'overview' },
   // The text view the writer came from. The section jump returns to it.
   originView: { type: String, default: 'editor' },
+  // The summaries composable object (the reactive wrap App.vue owns), or null
+  // on a direct mount. It carries the generate and regenerate triggers and the
+  // summaries entries with their stale flags.
+  summaries: { type: Object, default: null },
+  // The raw llm-settings composable object, or null on a direct mount. The
+  // generation gate reads it through `llmConfigured` (useLlmSettings.js).
+  settings: { type: Object, default: null },
 })
 
 const emit = defineEmits(['select', 'jump'])
 
-// The selected row starts from the id the view was opened with and changes
-// only by clicking a row.
-const selectedEntryId = ref(props.initialEntryId)
+// The pane starts on the prop's entry and follows it when the parent moves it.
+const selectedEntryId = ref(props.entryId)
+
+// Row clicks move the ref directly. A prop change runs the commit-before-move
+// rule that selectEntry applies (SPEC.md 5.20a).
+watch(
+  () => props.entryId,
+  (entryId) => {
+    if (entryId === selectedEntryId.value) return
+    commitDirtyDraft()
+    noteDraftUndo.end()
+    isEditing.value = false
+    selectedEntryId.value = entryId
+  },
+)
 
 const entries = computed(() => noteEntries(props.store.doc))
 
-// The pane shows the note of the selected entry in reading mode: rendered
-// markdown when there is text, the empty state otherwise (SPEC.md 5.17).
-const selectedEntry = computed(() =>
-  entries.value.find((entry) => entry.id === selectedEntryId.value)
+// The pane resolves the selected id to the overview row when the document
+// has no such entry, as happens for a deleted section (SPEC.md 5.20a). Every
+// read below goes through this resolved entry, so the header, the note text
+// and the editor stay on the same page.
+const selectedEntry = computed(() => {
+  const matchingEntry = entries.value.find((entry) => entry.id === selectedEntryId.value)
+  if (matchingEntry) return matchingEntry
+  return entries.value.find((entry) => entry.id === 'overview')
+})
+const selectedTitle = computed(() =>
+  // The header names the entry as the writer typed it (`entry.name`).
+  // `sectionName` in useSectionFormat.js owns that rule.
+  selectedEntry.value?.name || selectedEntry.value?.title || ''
 )
-const selectedTitle = computed(() => selectedEntry.value?.title ?? '')
 const selectedSectionId = computed(() => selectedEntry.value?.sectionId ?? '')
-const noteText = computed(() => readNote(props.store.notes, selectedEntryId.value))
+const noteText = computed(() => readNote(props.store.notes, selectedEntry.value.id))
+
+// The subtitle names the section's chapter, the nearest chapter row before
+// it in `noteEntries` order. Sections before any chapter show the bare
+// type. Overview, orphaned and chapter rows carry no subtitle.
+const selectedSubtitle = computed(() => {
+  if (selectedEntry.value?.kind !== 'section') return ''
+  let chapterName = ''
+  for (const entry of entries.value) {
+    if (entry.id === selectedEntry.value.id) break
+    if (entry.kind === 'chapter') chapterName = entry.name
+  }
+  return chapterName ? `${chapterName} · section` : 'section'
+})
 
 // Whitespace-only text counts as no recap, so a blank stored recap never
 // renders this block.
 const selectedRecap = computed(() => {
   const recapText = props.recaps?.[selectedSectionId.value] ?? ''
   return recapText.trim() ? recapText : ''
+})
+
+// The generation gate (S-018, S-019): a configured model, never the API key.
+// The rule lives in `llmConfigured` (useLlmSettings.js). The settings prop is
+// the composable object, so the predicate reads its `settings` member.
+const gateOpen = computed(() => llmConfigured(props.settings?.settings))
+
+// The summaries entry for the selected section, or null. Chapter rows carry a
+// sectionId too, so `kind` keeps the recap surface on document sections
+// (SPEC.md trap 3).
+const selectedSummaryEntry = computed(() => {
+  if (selectedEntry.value?.kind !== 'section') return null
+  const sectionId = selectedSectionId.value
+  const summaryEntries = props.summaries?.summaryEntries ?? []
+  return summaryEntries.find((entry) => entry.sectionId === sectionId) ?? null
+})
+
+// Staleness is the summaries entry's own flag (S-020), not a client-side diff.
+const selectedStale = computed(() => Boolean(selectedSummaryEntry.value?.stale))
+
+// The empty slot stands in for the recap block once the section has none
+// stored (S-018). It wires only through the summaries prop, so direct mounts
+// without it render nothing extra.
+const showRecapGate = computed(() => {
+  if (!props.summaries) return false
+  if (selectedEntry.value?.kind !== 'section') return false
+  return !selectedRecap.value
 })
 
 // Paints the surface from the same palette the editor sheet binds (S-022).
@@ -158,7 +244,7 @@ const isEditing = ref(false)
 const draftText = ref('')
 
 function startEditing() {
-  draftText.value = readNote(props.store.notes, selectedEntryId.value)
+  draftText.value = readNote(props.store.notes, selectedEntry.value.id)
   // Seeding runs before begin, so the session opens on the text the writer
   // starts with.
   noteDraftUndo.begin(
@@ -176,13 +262,15 @@ function onDraftInput(event) {
   noteDraftUndo.record(draftText.value)
 }
 
-// Writes the draft for the entry it was opened on, through the store. A draft
-// equal to the committed text skips the write, so closing an untouched session
-// marks nothing modified and sends nothing to Rust.
+// Writes the draft for the entry the session opened on: the record
+// `writeNote` returns swaps into `store.notes`, then `markModified` flags the
+// change. A draft equal to the committed text does neither, so an untouched
+// session marks nothing.
 function commitDirtyDraft() {
   if (!isEditing.value) return
   if (draftText.value === noteText.value) return
-  props.store.commitNote(selectedEntryId.value, draftText.value)
+  props.store.notes = writeNote(props.store.notes, selectedEntry.value.id, draftText.value)
+  props.store.markModified?.()
 }
 
 function selectEntry(entryId) {
@@ -209,7 +297,7 @@ function saveDraft() {
 // note did not change. The assignment skips record (see onDraftInput), so the
 // session keeps its history.
 function resetDraft() {
-  draftText.value = readNote(props.store.notes, selectedEntryId.value)
+  draftText.value = readNote(props.store.notes, selectedEntry.value.id)
 }
 
 // Inserting appends the recap to the draft without committing. The writes
@@ -224,9 +312,18 @@ function insertRecap() {
   draftText.value = existing
     ? `${existing}\n\n${selectedRecap.value}`
     : selectedRecap.value
-  // The textarea fires nothing for this assignment, so the recap records
-  // here to stay undoable.
   noteDraftUndo.record(draftText.value)
+}
+
+// The only work of the click (S-018): the summaries composable owns the loop.
+function generateRecaps() {
+  props.summaries?.generateSummaries()
+}
+
+// Regenerates one section: the bare section id string, which summarizeOne
+// resolves (S-020).
+function regenerateRecap() {
+  props.summaries?.summarizeOne(selectedSectionId.value)
 }
 
 // Emits the selected row's sectionId, deferring the view switch and the
@@ -253,48 +350,6 @@ onBeforeUnmount(() => {
   align-items: stretch;
 }
 
-.notes-list {
-  flex: 0 0 220px;
-  overflow-y: auto;
-  padding: 16px 8px;
-  background: var(--glass-bg);
-  border-right: 1px solid var(--bg-glass-border);
-}
-
-/* Row chrome mirrors the drawer's .nav-section rows (same flat grammar), with
-   a native button so each row is keyboard-reachable without extra wiring. */
-.notes-entry {
-  display: block;
-  width: 100%;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  text-align: left;
-  color: var(--note-text, var(--text-primary));
-  background: none;
-  border: none;
-  border-radius: var(--radius-sm);
-  padding: 6px 8px;
-  margin-bottom: 2px;
-  cursor: pointer;
-  user-select: none;
-  transition: background 0.15s;
-}
-
-.notes-entry:hover,
-.notes-entry.selected {
-  background: var(--hover-bg);
-}
-
-/* The selected row paints with the theme accent (S-022). The fallback keeps
-   a themeless mount on the chrome accent. */
-.notes-entry.selected {
-  color: var(--note-accent, var(--accent));
-}
-
 .note-pane {
   flex: 1;
   overflow-y: auto;
@@ -303,9 +358,18 @@ onBeforeUnmount(() => {
 
 .note-head {
   margin-bottom: 12px;
+}
+
+.note-title-row {
   display: flex;
   align-items: baseline;
   gap: 8px;
+}
+
+.note-sub {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 
 .note-title {
@@ -318,7 +382,9 @@ onBeforeUnmount(() => {
 .note-save,
 .note-reset,
 .note-jump,
-.note-insert-recap {
+.note-insert-recap,
+.note-generate,
+.note-regenerate {
   /* Quiet small controls, shared by the head glyphs and the jump and recap
      labels. Font size stands off the row font so they stay affordances. */
   flex: none;
@@ -338,7 +404,9 @@ onBeforeUnmount(() => {
 .note-save:hover,
 .note-reset:hover,
 .note-jump:hover,
-.note-insert-recap:hover {
+.note-insert-recap:hover,
+.note-generate:hover,
+.note-regenerate:hover {
   color: var(--text-primary);
   background: var(--hover-bg);
 }
@@ -405,7 +473,33 @@ onBeforeUnmount(() => {
   margin: 0;
 }
 
-.note-recap .note-insert-recap {
+.note-recap .note-insert-recap,
+.note-recap .note-regenerate {
   margin-top: 8px;
+}
+
+/* The empty slot states what is missing and offers the one control its gate
+   allows (S-018, S-019). The prose tone matches .note-empty. */
+.note-recap-empty {
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.note-recap-empty p {
+  margin: 0;
+}
+
+/* Only the span is the pointer. The sentence around it stays plain prose. */
+.note-options-link {
+  color: var(--note-accent, var(--accent));
+}
+
+/* The badge states the recap drift in the label's own quiet uppercase. */
+.note-recap-stale {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 </style>

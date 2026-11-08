@@ -75,6 +75,21 @@
         />
       </div>
     </div>
+    <!-- References drawer (5.20a): App.vue owns the chrome like the stats
+         drawer. ReferencesNavDrawer is the bare view. ReferencesNavDrawer.spec.js
+         pins its props and emit. Shares the .drawer / .drawer-content base
+         styles already in this file. -->
+    <div class="drawer references" :class="{ open: leftDrawerOpen && leftDrawerMode === 'references' }">
+      <div class="drawer-content">
+        <ReferencesNavDrawer
+          :store="store"
+          :theme="theme.currentTheme"
+          :selected-id="notesEntryId"
+          :anchor-id="anchorEntryId"
+          @select="onReferenceSelect"
+        />
+      </div>
+    </div>
     <HistoryListDrawer
       :open="leftDrawerOpen && leftDrawerMode === 'history'"
       :history="history"
@@ -96,7 +111,7 @@
       </div>
     </div>
 
-    <div class="scroll-layer" role="main" ref="scrollLayerRef" :class="['mode-' + viewMode, { 'right-pad': rightDrawerOpen }]" @click="nav.selectedNavId = null">
+    <div class="scroll-layer" role="main" ref="scrollLayerRef" :class="['mode-' + viewMode, { 'right-pad': rightDrawerOpen, 'left-pad': leftDrawerOpen && leftDrawerMode === 'references' }]" @click="nav.selectedNavId = null">
       <div class="editor-wrapper" :class="'mode-' + viewMode">
         <HistoryView
           v-if="viewMode === 'history'"
@@ -115,8 +130,8 @@
           :tab="referencesTab"
           :summaries="summaries"
           :settings="llmSettings"
-          :notes-entry-id="notesEntryId"
-          :notes-origin-view="notesOriginView"
+          :entry-id="notesEntryId"
+          :origin-view="notesOriginView"
           @update:tab="referencesTab = $event"
           @jump="onReferencesJump"
         />
@@ -167,6 +182,7 @@
       :save-status="saveStatus"
       :word-count="wordCount"
       :selected-word-count="format.selectedWordCount"
+      :anchor-name="anchorChipName"
     />
 
     <!-- Thesaurus popover (5.11). Anchored at the right-click point; mounted
@@ -217,7 +233,7 @@ import { useSectionFormat } from './composables/useSectionFormat.js'
 import { useFocusMode } from './composables/useFocusMode.js'
 import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts.js'
 import { createMenuActions, useMenuActions } from './composables/useMenu.js'
-import { noteDraftUndo } from './composables/useNotes.js'
+import { noteDraftUndo, noteEntries } from './composables/useNotes.js'
 import { useThesaurus } from './composables/useThesaurus.js'
 import { useNewDocument } from './composables/useNewDocument.js'
 import { useVersionHistory } from './composables/useVersionHistory.js'
@@ -239,6 +255,7 @@ import NavigationDrawer from './components/NavigationDrawer.vue'
 import GeneralOptionsDrawer from './components/GeneralOptionsDrawer.vue'
 import TextOptionsDrawer from './components/TextOptionsDrawer.vue'
 import StatsDrawer from './components/StatsDrawer.vue'
+import ReferencesNavDrawer from './components/ReferencesNavDrawer.vue'
 import HistoryListDrawer from './components/HistoryListDrawer.vue'
 import HistoryView from './components/HistoryView.vue'
 import ReferencesView from './components/ReferencesView.vue'
@@ -268,6 +285,10 @@ const referencesTab = ref('outline')
 // Remembered when References is entered: the view the section jump returns to
 // (SPEC.md 5.20). From History the default is the editor.
 const notesOriginView = ref('editor')
+// The row the writer came from (SPEC.md 5.20a). It seeds with the same value
+// as notesEntryId and never follows the selection afterwards. The drawer
+// marks it .is-anchor.
+const anchorEntryId = ref('overview')
 const leftDrawerOpen = ref(false)
 const leftDrawerMode = ref('chapters')
 const rightDrawerOpen = ref(false)
@@ -438,6 +459,13 @@ const saveStatus = computed(() => {
 // document has never been saved.
 const fileName = computed(() => store.lastPath ? store.lastPath.split(/[\\/]/).pop() : '')
 
+// The chip names the row the writer came from, using the same title the
+// drawer shows. It stays blank outside References (SPEC.md 5.20a S-027).
+const anchorChipName = computed(() => {
+  if (viewMode.value !== 'references') return ''
+  return noteEntries(doc.value).find((entry) => entry.id === anchorEntryId.value)?.title ?? ''
+})
+
 
 // Chrome gate (S-009 / SPEC drawer rule): while focus / typewriter mode is
 // active no drawer may open — a drawer coming up would defeat the whole mode.
@@ -513,6 +541,15 @@ function onSetMode(mode) {
       source === 'editor' || source === 'manuscript'
         ? (editorRef.value?.getCurrentSectionId?.() || 'overview')
         : 'overview'
+    // The drawer marks the came-from row with the same seed the page shows.
+    anchorEntryId.value = notesEntryId.value
+    // Open the drawer with the seed in place (5.20a). The close-on-switch
+    // below permits it here, because isDrawerModeAllowedIn allows 'references'
+    // in this view.
+    openLeftDrawer('references')
+    // The notes page maps summaryEntries into its recaps. Load the sidecar
+    // on entry so the first render is not empty.
+    summaries.refreshSummaryStatus()
   }
   // Entering the manuscript needs the breaks before its first render; the sync
   // API skips the 300ms debounce. Without it a just-loaded document renders as
@@ -596,16 +633,19 @@ function onNotesJump(sectionId) {
   nav.scrollToSection(sectionId, () => { viewMode.value = targetView })
 }
 
-// Jump from a References tab (SPEC.md 5.20 wiring decision 6). The notes tab
-// routes through onNotesJump, back to notesOriginView. The outline tab opens
-// the section in the editor, the same route a note's Go to section uses.
+// The drawer never navigates (onReferenceSelect only selects rows). The only
+// jump source is the note page's 'Go to section' button. onNotesJump returns
+// the writer to notesOriginView, the view they came from.
 function onReferencesJump(sectionId) {
   if (!sectionId) return
-  if (referencesTab.value === 'notes') {
-    onNotesJump(sectionId)
-    return
-  }
-  nav.scrollToSection(sectionId, () => { viewMode.value = 'editor' })
+  onNotesJump(sectionId)
+}
+
+// A row click only moves the selection (SPEC.md 5.20a): the drawer selects
+// rows, never navigates and never toggles closed. The page follows
+// notesEntryId through the entryId prop.
+function onReferenceSelect(id) {
+  notesEntryId.value = id
 }
 
 // Manuscript "Go to top" button (5.1b). The manuscript's first page is the
@@ -724,6 +764,11 @@ onUnmounted(() => {
 // Opening a document installs that file's notes in Rust (loadDocument sets
 // lastPath), so lastPath is the trigger to re-read them (SPEC.md 5.17).
 watch(() => store.lastPath, () => { store.retrieveNotes() })
+
+// Note edits swap the record (`useNotes.js` writeNote), so a record-level
+// watch reaches Rust with every commit. Immediate, not debounced: the record
+// is small, commits are discrete, and save copies Rust's state.
+watch(() => store.notes, () => store.pushNotes())
 </script>
 
 <style scoped>
@@ -793,6 +838,21 @@ watch(() => store.lastPath, () => { store.retrieveNotes() })
   transition: transform 0.25s ease, visibility 0s;
 }
 
+/* References drawer (5.20a): the same left-drawer geometry as stats. An
+   exclusive class keeps the chrome here App-scoped. */
+.drawer.references {
+  left: 48px;
+  transform: translateX(-100%);
+  width: 260px;
+}
+
+.drawer.references.open {
+  transform: translateX(0);
+  /* S-018: the visibility open state, same pattern as the four left drawers. */
+  visibility: visible;
+  transition: transform 0.25s ease, visibility 0s;
+}
+
 .drawer-content {
   height: 100%;
   overflow-y: auto;
@@ -830,17 +890,24 @@ watch(() => store.lastPath, () => { store.retrieveNotes() })
   padding-top: 38px;
   padding-bottom: 36px;
   padding-left: 48px;
-  /* Animate the right padding so the editor slides with the Assistant drawer
-     instead of snapping when it opens/closes (matches the drawer's 0.25s). */
-  transition: padding-right 0.25s ease;
+  /* Animate both horizontal paddings so the pages slide with the drawers
+     instead of snapping when they open/close (matches the drawers' 0.25s). */
+  transition: padding-right 0.25s ease, padding-left 0.25s ease;
 }
 
 /* When the Assistant (right) drawer is open, pull the editor content in so the
    right edge of the text stays visible and selectable for chat context — the
-   drawer would otherwise overlay it. The left drawer is intentionally left
-   unpadded (it overlays the editor). */
+   drawer would otherwise overlay it. The left drawers intentionally overlay
+   the editor pages; only the References page shifts, via .left-pad. */
 .scroll-layer.right-pad {
   padding-right: 400px;
+}
+
+/* The References page is the only view whose content starts at the rail's
+   edge, so the open drawer would cover its controls. Pad by the drawer's full
+   308px extent (48px rail + 260px drawer). */
+.scroll-layer.left-pad {
+  padding-left: 308px;
 }
 
 .scroll-layer.mode-editor {
@@ -876,7 +943,13 @@ watch(() => store.lastPath, () => { store.retrieveNotes() })
   display: none;
 }
 .app-container.focus-mode .scroll-layer {
+  /* Focus mode hides the bars with display: none, so its chrome changes are
+     instant and the scroll-layer padding is instant too. The drawer's
+     padding-slide transition applies only while focus mode is off. Without
+     transition: none, the padding slide would leave the sheet mid-animation
+     when the test reads the box. */
   padding-left: 0;
+  transition: none;
 }
 .app-container.focus-mode .scroll-layer.right-pad {
   padding-right: 0;

@@ -102,9 +102,14 @@ test.describe('focus mode', () => {
 
     await enterFocusMode(page)
 
-    const after = await page.locator('.editor-sheet').boundingBox()
     expect(before.x).toBeGreaterThan(40)
-    expect(after.x).toBeLessThan(16)
+    // The sheet widens when the sidebars unmount, which lands later than the
+    // toolbar hiding that `enterFocusMode` waits for. A one-shot boundingBox()
+    // can therefore measure the pre-reflow layout and fail a correct build, so
+    // poll the same assertion rather than sampling once.
+    await expect
+      .poll(async () => (await page.locator('.editor-sheet').boundingBox()).x)
+      .toBeLessThan(16)
   })
 
   test('S-013: keeps the text editable', async ({ page }) => {

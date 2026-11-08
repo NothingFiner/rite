@@ -8,6 +8,7 @@
         class="save-status"
         :class="{ 'is-saving': saveStatus === 'Saving…', 'is-error': saveStatus === 'Save failed' }"
       >{{ saveStatus }}</span>
+      <span v-if="anchorName" class="anchor-chip">{{ anchorName }}</span>
     </div>
     <div class="status-right">
       <span class="word-count">{{ wordCount }} words ({{ selectedWordCount }} Selected)</span>
@@ -25,6 +26,8 @@ defineProps({
   // '' when the document has never been saved. Rendered in the status-left
   // group after the title; blank (nothing shown) while the file is unsaved.
   fileName: { type: String, default: '' },
+  // Name of the anchor row, resolved by App. An empty value hides the chip.
+  anchorName: { type: String, default: '' },
 })
 </script>
 
@@ -90,6 +93,17 @@ defineProps({
 .save-status.is-error {
   color: #e5484d;
   font-weight: 500;
+}
+
+/* The chip names the section the writer came from while References is open
+   (5.20a S-027). Muted 12px text matches the status-file label; a hairline
+   border and the unbounded radius turn the label into a pill badge. */
+.anchor-chip {
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 2px 8px;
+  border: 1px solid var(--bg-glass-border);
+  border-radius: 9999px;
 }
 
 .word-count {
