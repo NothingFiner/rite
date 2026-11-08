@@ -56,6 +56,10 @@ function readStoredColourSet() {
   if (isColour(bg) && isColour(text) && isColour(accent) && bg !== text && bg !== accent && text !== accent) {
     return { bg, text, accent }
   }
+  // A partial record is a persisted record holding only the background. The
+  // missing text and accent stay null, so loadPrefs keeps their defaults.
+  const isPartial = isColour(bg) && !isColour(text) && !isColour(accent)
+  if (isPartial) return { bg, text: null, accent: null }
   return null
 }
 
@@ -144,8 +148,8 @@ export function useTheme(viewModeRef) {
       const storedColours = readStoredColourSet()
       if (storedColours) {
         editorBg.value = storedColours.bg
-        editorText.value = storedColours.text
-        editorAccent.value = storedColours.accent
+        if (storedColours.text) editorText.value = storedColours.text
+        if (storedColours.accent) editorAccent.value = storedColours.accent
       } else {
         // The colour keys are empty or invalid, so the legacy index drives all
         // three refs together.

@@ -106,3 +106,18 @@ export function useLlmSettings() {
     setModel,
   }
 }
+
+// Whether generation can work at all: a model is configured. The endpoint has a
+// working default (local Ollama), and the API key is optional. Local Ollama
+// needs no auth, and every generation call sends an empty key as null. So the
+// model is the one field a writer must set. The assistant panel gates on the
+// same field (`LlmPanel.vue`), and this is that rule with a name (5.20).
+//
+// Takes the plain settings object (`llmSettings.settings.value`), not the ref.
+// A whitespace-only model counts as unset, and a missing settings object
+// closes the gate.
+export function llmConfigured(settingsValue) {
+  if (!settingsValue) return false
+  const model = settingsValue.model
+  return typeof model === 'string' && model.trim() !== ''
+}

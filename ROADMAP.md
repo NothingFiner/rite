@@ -39,7 +39,7 @@ The last feature phase. When this is done, Rite is feature-complete for a first 
 | 5.17 | Notes view: story overview and per-section notes | done (#32) |
 | 5.18 | Tab characters + fixed 0.5-inch tab stops, with a Tab-set first-line indent | done (#22) |
 | **5.19** | **`[[…]]` links, characters in chapters, and custom words with where they are used** | **open — own data model; deferred by 5.17's spec** |
-| **5.20** | **Summary / outline view: each section's summary beside its title, in a navigable overview (was 5.17)** | **open — data layer already built, needs presentation** |
+| **5.20** | **References view: an Outline tab with each section's summary beside its title, and the notes as a second tab (was 5.17)** | **open — specced (#40), tests written and red** |
 
 **Renumbered 2026-11-07.** The Notes view shipped under the ID **5.17** — its spec,
 its commit (`7468024`) and `src-tauri/src/notes.rs` all say 5.17 — which collided
@@ -107,7 +107,18 @@ blocking the main thread), and does the stopword list need to follow the documen
 language. Needs a tokenizer and a curated list — a real feature, not a garnish on
 5.4's graph.
 
-### 5.20 — Summary / outline view (was 5.17)
+### 5.20 — References view (was 5.17)
+
+The top-level views are **Editor, Manuscript, References, History**. References
+holds the notes' material as tabs, and the notes are not a view of their own:
+**Outline** and **Notes** are the first two, and Characters joins them in 5.19.
+The glossary's home is still undecided.
+
+Outline puts each section's summary beside its title in document order, so the
+outline reads as an overview of the manuscript rather than a list of headings.
+Its rows come from the document rather than from `retrieve_summaries`, because
+that command leaves out every section with no summary, and an outline with holes
+is not an outline.
 
 The hard half of this is already built and is not in the UI where a writer would
 reach for it:
@@ -119,10 +130,13 @@ reach for it:
   `generateSummaries`, `refreshStaleSummaries`.
 - `LlmPanel.vue` renders them as a flat list inside the LLM panel's "Summaries" mode.
 
-What is missing is presentation: a view that puts each section's summary beside its
-title in document order, so the outline becomes a readable overview of the manuscript
-rather than a list of headings. That pairs naturally with the drag-reorderable outline
-from 5.5. Scope it around the existing data: no new generation, no new storage.
+What is missing is presentation. Scope it around the existing data: no new
+generation, no new storage, no Rust change. `retrieve_summaries`'s empty-store
+error stays, because the Summaries feedback target depends on it. A view reads
+that error as "nothing generated yet". The view may trigger generation, so the
+empty state offers "Generate summaries" and a stale summary offers "Refresh
+stale", but only when a model is configured. That is the gate the assistant panel
+already uses. The Sections drawer and 5.5's drag-reorder are untouched.
 
 ### 5.4 — Writing stats (done, #19)
 

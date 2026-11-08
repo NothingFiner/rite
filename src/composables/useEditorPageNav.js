@@ -69,7 +69,11 @@ export function layoutPageBreaks(root, sections, pageBreaks) {
     const sentinel = document.createElement('div')
     sentinel.className = 'editor-sentinel'
     sentinel.setAttribute('contenteditable', 'false')
-    sentinel.style.cssText = 'height:48px;user-select:none;'
+    // 48px absorbs stray clicks below the last section. The remaining 480px is
+    // scroll allowance. A title top-aligns in the viewport only when enough
+    // content follows it. Without that allowance a short final section clamps
+    // its landing a page above the top.
+    sentinel.style.cssText = 'height:528px;user-select:none;'
     const focusTarget = lastParagraphNode || lastContentNode
     sentinel.addEventListener('click', (e) => {
       e.preventDefault()
@@ -126,6 +130,26 @@ export function focusPageStart(startEl, behavior = 'smooth', block = 'start') {
   }
   placeCursorAtStart(target)
   target.scrollIntoView({ behavior, block })
+}
+
+/// Jump into a section: caret into its first paragraph, then scroll the
+/// section-title itself to the top of the scroll layer (block 'start').
+/// Pagination starts a page at every section title
+/// (usePagination.calculateBreaksFromHeights), so a title-at-top landing is
+/// page-aligned. On a near-end section 'center' clamps at max scroll and drops
+/// the title a page low. Behavior defaults to 'auto' (focusPageStart's
+/// view-switch reasoning): a section jump is a view switch.
+export function focusSectionStart(startEl, behavior = 'auto') {
+  let target = startEl
+  if (startEl.classList.contains('section-title')) {
+    let next = startEl.nextElementSibling
+    while (next && !next.classList.contains('paragraph') && !next.classList.contains('section-title')) {
+      next = next.nextElementSibling
+    }
+    if (next && next.classList.contains('paragraph')) target = next
+  }
+  placeCursorAtStart(target)
+  startEl.scrollIntoView({ behavior, block: 'start' })
 }
 
 /// Step the cursor to the start of the page `direction` pages away from the

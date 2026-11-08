@@ -36,6 +36,9 @@ sentence ID it contradicts.
 | B-002 | Deleting a section drops its note; the orphaned draft stays empty | open | notes / store |
 | B-003 | An unnamed chapter had a blank row in the Notes list | fixed (6b20319) | notes / titles |
 | B-004 | A generated summary is shown beside the note with no label saying which is which | open | notes / vocabulary |
+| B-005 | The References view hides the whole activity bar | open — bundled into 5.20a | references / drawer |
+| B-006 | The generated recap never reaches the note in References | open — bundled into 5.20a | references / notes |
+| B-007 | "Go to text" lands one page before the section | open — bundled into 5.20a | references / jump |
 
 ---
 
@@ -161,3 +164,77 @@ that "Insert into note" copies it (S-024). None asserts what it is *called*, and
 heading is the writer's note. Prefer a real heading element so the distinction is
 carried to a screen reader, not only to the eye (5.7's rule: naming matters once
 reachability is solved).
+
+## B-005 — The References view hides the whole activity bar
+
+**Status:** open — bundled into 5.20a (`S-001`, `S-002`).
+**Layer:** unit (`src/constants/drawerVisibility.js`, `src/components/ActivityBar.vue`).
+
+**Symptom.** Choose References and every icon on the left rail disappears. No
+drawer can be opened from the rail, and any drawer that was open closes on the
+way in. The view looks like a different application.
+
+**Root cause.** `DRAWER_MODES_ALLOWED_IN_VIEW` lists `editor`, `manuscript` and
+`history`. `references` is not a key, so `isDrawerModeAllowedIn()` returns false
+for every mode and `ActivityBar`'s filtered `items` is empty. `onSetMode()` also
+closes an open drawer when its button would vanish, so the drawer closes behind
+the writer as well.
+
+**Why the tests missed it.** 5.20 has no sentence about the rail. The 5.20 e2e
+suite opens References through the toolbar and never looks at the activity bar,
+and `drawerVisibility.test.js` asserted the exact key list — three views — so a
+missing fourth was invisible by construction.
+
+**Fix direction.** Add a `references` drawer mode with its own button, and allow
+that mode only in its own view. The rail keeps Stats and General Options there.
+
+## B-006 — The generated recap never reaches the note in References
+
+**Status:** open — bundled into 5.20a (`S-014`, `S-015`).
+**Layer:** unit (`src/components/ReferencesView.vue`).
+
+**Symptom.** On the References page the generated summary appears under the note
+with no way to use it. The "Insert into note" control that shipped in 5.17 is
+absent, so model prose sits beside the writer's note and cannot be carried into
+it.
+
+**Root cause.** `NotesView.vue` already accepts a `recaps` prop and renders the
+`.note-recap` block with `insertRecap`. `ReferencesView.vue` mounts `NotesView`
+with `store`, `theme`, `initial-entry-id` and `origin-view`, and never binds
+`recaps`. The prop falls back to `{}`, so `selectedRecap` is always empty and the
+block never renders.
+
+**Why the tests missed it.** Every `NotesView` test passes `recaps` directly, so
+the component is proven correct and nothing proves the shell supplies it. This is
+the same shape as 5.17's `notesToText` bug (see the header of this file): a unit
+test proves a helper works, not that anything calls it.
+
+**Fix direction.** Derive `{ [sectionId]: summary }` from `summaries.summaryEntries`
+in `ReferencesView.vue` and bind it. Do not reimplement insertion; `NotesView`
+owns it.
+
+## B-007 — "Go to text" lands one page before the section
+
+**Status:** open — bundled into 5.20a (`S-025`).
+**Layer:** e2e (`src/App.vue` jump route, `src/composables/useEditorPageNav.js`).
+
+**Symptom.** From a note, "Go to section" opens the editor with the section one
+page above the visible area. The writer sees the end of the previous section and
+has to scroll down to find the one they asked for.
+
+**Root cause.** `onReferencesJump` calls `nav.scrollToSection`, which runs
+`switchToEditor()` and then a single `nextTick` before asking
+`editorDisplay.scrollToSection` to scroll. That helper calls
+`focusPageStartInSheet(el, 'smooth', 'center')`: a smooth scroll to the section's
+first paragraph, centred. The editor is mounting fresh, so the scroll begins
+before the sheet has finished laying out its pages, and `center` leaves nothing
+page-aligned to settle against.
+
+**Why the tests missed it.** `references-outline` S-024 and `notes-view` S-017
+assert `toBeInViewport()`. A landing one page early still puts the heading inside
+the viewport, so both pass. No test compares the landing against the viewport's
+top edge.
+
+**Fix direction.** Land the section's title at the top of the scroll viewport,
+after the page layout is stamped. The sentence is `S-025`; its e2e assertion
+compares the title's y position with the scroll layer's.

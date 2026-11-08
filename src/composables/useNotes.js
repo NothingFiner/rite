@@ -9,7 +9,7 @@
 // draft. It also hosts the draft undo session the macOS menu routes through
 // (S-026).
 
-import { sectionDisplayTitle } from './useSectionFormat.js'
+import { sectionDisplayTitle, sectionName } from './useSectionFormat.js'
 
 export function emptyNotes() {
   return { overview: '', sections: {}, orphaned: '' }
@@ -42,6 +42,9 @@ function sectionsWithChapterIndex(sections) {
 // subtitle-less chapter, or "Untitled Section" for a blank section. A raw
 // `section.title` is blank for an unnamed chapter, which rendered the row —
 // and the note header it opens — with no title at all.
+//
+// `name` is the writer's typed name from `sectionName`, which the note header
+// shows. `title` keeps the display form the paragraph above states.
 export function noteEntries(doc) {
   const sections = Array.isArray(doc?.sections) ? doc.sections : []
   return [
@@ -50,6 +53,7 @@ export function noteEntries(doc) {
       id: section.id,
       kind: section.sectionType === 'chapter' ? 'chapter' : 'section',
       title: sectionDisplayTitle(section, chapterIndex),
+      name: sectionName(section, chapterIndex),
       sectionId: section.id,
     })),
     { id: 'orphaned', kind: 'orphaned', title: 'Orphaned notes' },

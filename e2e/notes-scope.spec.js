@@ -75,6 +75,23 @@ async function openApp(page) {
   await page.waitForSelector('.editor-sheet .paragraph', { timeout: 5000 })
 }
 
+// Since 5.20a the notes are the page of a drawer selection, not a tab. Assert
+// every step, so a missing drawer reads as a failed assertion rather than a
+// click timeout.
+const referencesTab = (page) => page.locator('.view-tab').filter({ hasText: 'References' })
+
+async function openNotes(page) {
+  const tab = referencesTab(page)
+  await expect(tab).toBeVisible({ timeout: 5000 })
+  await tab.click()
+  await expect(page.locator('.references-view')).toBeVisible({ timeout: 5000 })
+
+  // Entering References opens the Reference drawer. The page shows the entry
+  // the shell seeded from the caret.
+  await expect(page.locator('.references-drawer')).toBeVisible({ timeout: 5000 })
+  await expect(page.locator('.notes-view')).toBeVisible({ timeout: 5000 })
+}
+
 /// Open the assistant drawer unless it is already open. The toggle's title
 /// follows its state, so the opener exists only while the drawer is shut.
 /// S-011 sends twice, and must not toggle it closed on the second send.
@@ -193,7 +210,7 @@ test("S-015: shows a deleted section's note under Orphaned notes and keeps it af
     )
     .toBeGreaterThan(0)
 
-  await page.locator('.view-tab').filter({ hasText: 'Notes' }).click()
+  await openNotes(page)
   const orphaned = page.locator('.notes-entry[data-entry-id="orphaned"]')
   await expect(orphaned).toBeVisible({ timeout: 5000 })
   await orphaned.click()
@@ -207,7 +224,7 @@ test("S-015: shows a deleted section's note under Orphaned notes and keeps it af
   // Persisted through the save path: a reload reads the file's notes back.
   await page.reload()
   await page.waitForSelector('.editor-sheet .paragraph', { timeout: 5000 })
-  await page.locator('.view-tab').filter({ hasText: 'Notes' }).click()
+  await openNotes(page)
   await page.locator('.notes-entry[data-entry-id="orphaned"]').click()
   await expect(page.locator('.note-rendered')).toContainText('The door is a lie.')
 })

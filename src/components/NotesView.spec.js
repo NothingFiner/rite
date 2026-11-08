@@ -4,10 +4,12 @@ import { createPinia, setActivePinia } from 'pinia'
 import NotesView from './NotesView.vue'
 import { useDocumentStore } from '../stores/document.js'
 
-// The Notes view surface (SPEC.md 5.17). The sentences here are about what the
-// writer sees and what reaches the store. The pure record helpers live in
-// useNotes.test.js. The browser-only sentences (caret, pages, theme, undo
-// routing) live in e2e/notes-view.spec.js.
+// The note page (SPEC.md 5.20a S-012 … S-017, plus 5.17 S-021).
+//
+// 5.20a moves the list out to ReferencesNavDrawer: this component is the detail
+// page only, and the selected entry arrives as a prop. Everything about reading,
+// editing, the recap and the jump is unchanged, so these sentences keep their
+// behaviour and change only how the entry is chosen.
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => null) }))
 
@@ -33,107 +35,60 @@ function makeStore(notes = { overview: '', sections: {}, orphaned: '' }) {
 
 function mountView(store, props = {}) {
   return mount(NotesView, {
-    props: { store, recaps: {}, ...props },
+    props: { store, recaps: {}, entryId: 'overview', ...props },
   })
 }
 
-const row = (wrapper, id) => wrapper.find(`.notes-entry[data-entry-id="${id}"]`)
-
-/// Assert-then-click: a missing row must fail as an assertion, not as an
-/// @vue/test-utils "empty DOMWrapper" error.
-async function selectEntry(wrapper, id) {
-  expect(row(wrapper, id).exists()).toBe(true)
-  await row(wrapper, id).trigger('click')
-}
+const title = (wrapper) => wrapper.find('.note-head .note-title')
 
 beforeEach(() => {
   setActivePinia(createPinia())
 })
 
-describe('NotesView entries', () => {
-  it('S-001: lists the story overview first and every section in document order', () => {
-    const wrapper = mountView(makeStore())
-    const ids = wrapper.findAll('.notes-entry').map((entry) => entry.attributes('data-entry-id'))
-
-    expect(ids).toEqual(['overview', 'c1', 's1', 'c2', 's2', 'orphaned'])
-  })
-
-  it('S-001: marks chapter rows and section rows differently', () => {
-    const wrapper = mountView(makeStore())
-
-    expect(row(wrapper, 'c1').exists()).toBe(true)
-    expect(row(wrapper, 's1').exists()).toBe(true)
-    expect(row(wrapper, 'c1').classes()).toContain('is-chapter')
-    expect(row(wrapper, 'c2').classes()).toContain('is-chapter')
-    expect(row(wrapper, 's1').classes()).toContain('is-section')
-    expect(row(wrapper, 's2').classes()).toContain('is-section')
-  })
-
-  it('S-019: puts the orphaned draft at the bottom of the list, with no text', async () => {
-    const wrapper = mountView(makeStore())
-    const entries = wrapper.findAll('.notes-entry')
-
-    expect(entries).toHaveLength(6)
-    const last = entries[entries.length - 1]
-    expect(last.attributes('data-entry-id')).toBe('orphaned')
-    expect(last.classes()).toContain('notes-orphans')
-
-    await selectEntry(wrapper, 'orphaned')
-    expect(wrapper.find('.note-empty').exists()).toBe(true)
-  })
-
-  it('S-020: gives every section an always-present note field, with no create or delete action', () => {
-    const wrapper = mountView(makeStore())
-
-    expect(wrapper.findAll('.notes-entry')).toHaveLength(doc.sections.length + 2)
-    expect(wrapper.find('.note-create').exists()).toBe(false)
-    expect(wrapper.find('.note-delete').exists()).toBe(false)
-    expect(row(wrapper, 's2').exists()).toBe(true)
-  })
-
-  it('S-001: titles an unnamed chapter from its derived number, in the row and the note header', async () => {
-    const store = makeStore()
-    store.doc = {
-      ...doc,
-      sections: [
-        { id: 'c1', title: '', sectionType: 'chapter', hidden: false, paragraphs: [] },
-        { id: 's1', title: 'The Door', sectionType: 'section', hidden: false, paragraphs: [] },
-      ],
-    }
-    const wrapper = mountView(store)
-
-    // A Chapter's stored title is its subtitle, so a subtitle-less chapter is
-    // blank unless the row derives the number — a blank row is unreachable.
-    expect(row(wrapper, 'c1').text()).toContain('Chapter 1')
-    await selectEntry(wrapper, 'c1')
-    expect(wrapper.find('.note-head .note-title').text()).toBe('Chapter 1')
-  })
-})
-
-describe('NotesView reading and editing', () => {
-  it('S-002: shows the selected note as rendered markdown, read-only by default', async () => {
+describe('NotesView reading', () => {
+  it('S-012: shows the selected note as rendered markdown, read-only by default', () => {
     const store = makeStore({ overview: '', sections: { s1: 'A **bold** plan.' }, orphaned: '' })
-    const wrapper = mountView(store)
-    await selectEntry(wrapper, 's1')
+    const wrapper = mountView(store, { entryId: 's1' })
 
+    expect(title(wrapper).text()).toBe('The Door')
     expect(wrapper.find('.note-rendered').exists()).toBe(true)
     expect(wrapper.find('.note-rendered').html()).toContain('<strong>bold</strong>')
     expect(wrapper.find('.note-source').exists()).toBe(false)
   })
 
-  it('S-002: shows the empty state when the selected entry has no text', async () => {
-    const wrapper = mountView(makeStore())
-    await selectEntry(wrapper, 'c1')
+  it('S-012: shows the empty state when the selected entry has no text', () => {
+    // The overview carries text, so an entry that still shows it is not the
+    // empty state the sentence is about.
+    const store = makeStore({ overview: 'The whole book in a line.', sections: {}, orphaned: '' })
+    const wrapper = mountView(store, { entryId: 'c1' })
 
+    expect(title(wrapper).text()).toBe('Chapter One')
     expect(wrapper.find('.note-empty').exists()).toBe(true)
     expect(wrapper.find('.note-rendered').exists()).toBe(false)
   })
 
-  it('S-004: enters editing from the rendered note with the pencil, showing check and reset', async () => {
-    const store = makeStore({ overview: '', sections: { s1: 'A plan.' }, orphaned: '' })
-    const wrapper = mountView(store)
-    await selectEntry(wrapper, 's1')
+  it('S-013: shows the story overview and the orphaned draft for their own entries', () => {
+    const store = makeStore({
+      overview: 'The whole book in a line.',
+      sections: {},
+      orphaned: 'Cut in draft four.',
+    })
 
+    const overview = mountView(store, { entryId: 'overview' })
+    expect(overview.find('.note-rendered').text()).toContain('The whole book in a line.')
+
+    const orphaned = mountView(store, { entryId: 'orphaned' })
+    expect(orphaned.find('.note-rendered').text()).toContain('Cut in draft four.')
+    expect(orphaned.find('.note-rendered').text()).not.toContain('The whole book in a line.')
+  })
+})
+
+describe('NotesView editing', () => {
+  it('S-017: enters editing from the pencil, showing check and reset', async () => {
+    const store = makeStore({ overview: '', sections: { s1: 'A plan.' }, orphaned: '' })
+    const wrapper = mountView(store, { entryId: 's1' })
+
+    expect(title(wrapper).text()).toBe('The Door')
     expect(wrapper.find('.note-edit').exists()).toBe(true)
     expect(wrapper.find('.note-save').exists()).toBe(false)
     expect(wrapper.find('.note-reset').exists()).toBe(false)
@@ -146,10 +101,9 @@ describe('NotesView reading and editing', () => {
     expect(wrapper.find('.note-save + .note-edit-divider + .note-reset').exists()).toBe(true)
   })
 
-  it('S-005: commits the edited note and marks the document modified from the check', async () => {
+  it('S-017: commits the edited note and marks the document modified from the check', async () => {
     const store = makeStore({ overview: '', sections: { s1: 'A plan.' }, orphaned: '' })
-    const wrapper = mountView(store)
-    await selectEntry(wrapper, 's1')
+    const wrapper = mountView(store, { entryId: 's1' })
     await wrapper.find('.note-edit').trigger('click')
     await wrapper.find('.note-source').setValue('A better plan.')
     await wrapper.find('.note-save').trigger('click')
@@ -159,10 +113,9 @@ describe('NotesView reading and editing', () => {
     expect(store.isModified).toBe(true)
   })
 
-  it('S-023: restores the last committed note and stays in editing when reset is used', async () => {
+  it('S-017: restores the last committed note and stays in editing when reset is used', async () => {
     const store = makeStore({ overview: '', sections: { s1: 'Committed text.' }, orphaned: '' })
-    const wrapper = mountView(store)
-    await selectEntry(wrapper, 's1')
+    const wrapper = mountView(store, { entryId: 's1' })
     await wrapper.find('.note-edit').trigger('click')
     await wrapper.find('.note-source').setValue('Uncommitted draft.')
 
@@ -174,22 +127,21 @@ describe('NotesView reading and editing', () => {
     expect(store.notes.sections.s1).toBe('Committed text.')
   })
 
-  it('S-025: commits a dirty draft when another entry is chosen', async () => {
+  it('S-017: commits a dirty draft when the selected entry changes', async () => {
     const store = makeStore({ overview: '', sections: { s1: 'Committed text.' }, orphaned: '' })
-    const wrapper = mountView(store)
-    await selectEntry(wrapper, 's1')
+    const wrapper = mountView(store, { entryId: 's1' })
     await wrapper.find('.note-edit').trigger('click')
     await wrapper.find('.note-source').setValue('Dirty draft.')
-    await selectEntry(wrapper, 'c2')
+
+    await wrapper.setProps({ entryId: 'c2' })
     await flushPromises()
 
     expect(store.notes.sections.s1).toBe('Dirty draft.')
   })
 
-  it('S-025: commits a dirty draft when the Notes view is left', async () => {
+  it('S-017: commits a dirty draft when the page is left', async () => {
     const store = makeStore({ overview: '', sections: { s1: 'Committed text.' }, orphaned: '' })
-    const wrapper = mountView(store)
-    await selectEntry(wrapper, 's1')
+    const wrapper = mountView(store, { entryId: 's1' })
     await wrapper.find('.note-edit').trigger('click')
     await wrapper.find('.note-source').setValue('Dirty draft.')
     wrapper.unmount()
@@ -199,21 +151,32 @@ describe('NotesView reading and editing', () => {
   })
 })
 
-describe('NotesView recaps and the section jump', () => {
-  it('S-006: shows the stored recap for the selected section read-only', async () => {
+describe('NotesView recap', () => {
+  it('S-014: shows the stored recap read-only, labelled as model output', () => {
     const store = makeStore({ overview: '', sections: { s1: 'A plan.' }, orphaned: '' })
-    const wrapper = mountView(store, { recaps: { s1: 'A neutral recap of the door.' } })
-    await selectEntry(wrapper, 's1')
+    const wrapper = mountView(store, {
+      entryId: 's1',
+      recaps: { s1: 'A neutral recap of the door.' },
+    })
 
-    expect(wrapper.find('.note-recap').text()).toContain('A neutral recap of the door.')
-    expect(wrapper.find('.note-recap textarea').exists()).toBe(false)
-    expect(wrapper.find('.note-insert-recap').exists()).toBe(true)
+    const block = wrapper.find('.note-recap')
+    expect(block.exists()).toBe(true)
+    expect(block.text()).toContain('A neutral recap of the door.')
+
+    const label = block.find('.note-recap-label')
+    expect(label.exists()).toBe(true)
+    expect(label.text()).toMatch(/assistant recap/i)
+    expect(label.text()).toMatch(/read-only/i)
+    expect(block.find('textarea').exists()).toBe(false)
+    expect(block.find('.note-insert-recap').exists()).toBe(true)
   })
 
-  it('S-024: appends the recap to the draft and enters editing from Insert into note', async () => {
+  it('S-015: appends the recap to the draft and enters editing, without saving', async () => {
     const store = makeStore({ overview: '', sections: { s1: 'My plan.' }, orphaned: '' })
-    const wrapper = mountView(store, { recaps: { s1: 'A neutral recap.' } })
-    await selectEntry(wrapper, 's1')
+    const wrapper = mountView(store, {
+      entryId: 's1',
+      recaps: { s1: 'A neutral recap.' },
+    })
 
     expect(wrapper.find('.note-insert-recap').exists()).toBe(true)
     await wrapper.find('.note-insert-recap').trigger('click')
@@ -223,11 +186,24 @@ describe('NotesView recaps and the section jump', () => {
     expect(value).toContain('My plan.')
     expect(value).toContain('A neutral recap.')
     expect(value.indexOf('My plan.')).toBeLessThan(value.indexOf('A neutral recap.'))
+    // The draft is not the record until it is saved.
+    expect(store.notes.sections.s1).toBe('My plan.')
   })
 
-  it('S-021: places the section jump in the note header immediately after the title', async () => {
-    const wrapper = mountView(makeStore())
-    await selectEntry(wrapper, 's1')
+  it('S-016: shows no recap block for an entry with no stored recap', () => {
+    const store = makeStore({ overview: '', sections: { s1: 'A plan.' }, orphaned: '' })
+    const wrapper = mountView(store, { entryId: 's1', recaps: {} })
+
+    // Title first: the absence below must be about The Door, not the overview.
+    expect(title(wrapper).text()).toBe('The Door')
+    expect(wrapper.find('.note-recap').exists()).toBe(false)
+    expect(wrapper.find('.note-recap-label').exists()).toBe(false)
+  })
+})
+
+describe('NotesView jump', () => {
+  it('5.17 S-021: places the section jump in the note header immediately after the title', () => {
+    const wrapper = mountView(makeStore(), { entryId: 's1' })
 
     expect(wrapper.find('.note-head .note-title').exists()).toBe(true)
     expect(wrapper.find('.note-head .note-title + .note-jump').exists()).toBe(true)

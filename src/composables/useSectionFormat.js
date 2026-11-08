@@ -122,3 +122,10 @@ export function sectionDisplayTitle(section, chapterIndex) {
   }
   return section.title || 'Untitled Section'
 }
+
+/// The name a note page heads an entry with: what the writer typed. A
+/// Chapter's stored `title` is its subtitle (roadmap 5.9), so it counts as a
+/// typed name. A blank one falls back to the numbered `sectionDisplayTitle`.
+export function sectionName(section, chapterIndex) {
+  return section?.title || sectionDisplayTitle(section, chapterIndex)
+}
