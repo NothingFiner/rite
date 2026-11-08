@@ -41,8 +41,10 @@ redesign of it.
 ### The shape
 
 - **The drawer is the outline.** One drawer, titled References, listing Story
-  overview, then the manuscript under a heading per chapter, then Orphaned notes
-  in a Retired group. A row selects; it never navigates.
+  overview, then the manuscript in document order with each chapter's own row
+  standing as its heading, then Orphaned notes. A row selects; it never
+  navigates. Group labels were removed after a review of the running app: a
+  chapter name appeared twice, once as a label nothing could select.
 - **The page is the selection.** One detail page per selected entry: the note
   (rendered markdown), the generated recap beneath it, the pencil, and
   "Go to text". Your note and its recap are the same page.
@@ -113,7 +115,6 @@ so in the PR instead of silently following it.
 | `.notes-entry.is-chapter` / `.is-section` / `.notes-orphans` | row kind |
 | `.notes-entry.selected` | the selected row |
 | `.notes-entry.is-anchor` | the row the writer came from (a state, like `.selected`; the dot is CSS) |
-| `h3.drawer-heading.notes-group` | a chapter heading: the app's own heading class styles it, `.notes-group` is only the hook |
 | `.notes-view` | the detail page |
 | `.note-recap`, `.note-recap-label`, `.note-insert-recap` | the recap and its port |
 | `.note-recap-empty` | the recap slot when there is nothing to show |
@@ -149,7 +150,7 @@ preference; keep them, or change both the test and this note in the same commit.
 | S-002 | unit | it should not offer Sections or Text Options in the References view |
 | S-003 | e2e | it should open the Reference drawer when References is entered, and let the Reference button close and reopen it |
 | S-004 | unit | it should render the entry it is given, so the selection survives a view switch |
-| S-005 | unit | it should list Story overview first, then every manuscript section in document order under a heading for its chapter, then Orphaned notes in a Retired group |
+| S-005 | unit | it should list Story overview first, then every manuscript section in document order with each chapter's own row standing as its heading, then Orphaned notes last |
 | S-006 | unit | it should indent a section row under its chapter and keep a chapter row bold |
 | S-007 | unit | it should name each row with `sectionDisplayTitle`, so a chapter with no subtitle reads "Chapter 1" and never blank |
 | S-008 | unit | it should mark the row of the section the writer came from as the anchor, and mark no other row |
