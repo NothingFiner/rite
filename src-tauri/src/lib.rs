@@ -54,7 +54,8 @@ use state::AppState;
 use structure::structural_signals;
 use thesaurus::thesaurus_lookup;
 use summary::{
-    retrieve_stale_summary_section_ids, retrieve_summaries, summarize_and_store_section,
+    retrieve_document_summary, retrieve_stale_summary_section_ids, retrieve_summaries,
+    summarize_and_store_document, summarize_and_store_section,
 };
 use tauri::{Emitter, Manager};
 
@@ -204,6 +205,8 @@ pub fn run() {
             retrieve_passages,
             structural_signals,
             summarize_and_store_section,
+            summarize_and_store_document,
+            retrieve_document_summary,
             retrieve_summaries,
             thesaurus_lookup,
             show_word_menu,

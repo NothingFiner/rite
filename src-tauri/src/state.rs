@@ -67,6 +67,11 @@ pub struct AppState {
     /// of `section_hashes` above (re-embed debounces on every edit; re-summarize
     /// is user-triggered, so the two baselines drift).
     pub summaries: Mutex<HashMap<String, SectionSummary>>,
+    /// The document-level recap (5.20b), mirroring `Sidecar.document_summary`
+    /// in memory. A dedicated slot rather than a pseudo-section id inside
+    /// `summaries`. A reserved key there reads like a deleted section to that
+    /// map's readers, `retrieve_stale_summary_section_ids` included.
+    pub document_summary: Mutex<Option<SectionSummary>>,
     /// The notes record for the open document (5.17). `open_document` loads it.
     /// `retrieve_notes` reads it. `update_notes` replaces it. The save and
     /// autosave paths copy it into the file through `build_rite_file`.
@@ -91,6 +96,7 @@ impl AppState {
             reembedding: AtomicBool::new(false),
             repending: AtomicBool::new(false),
             summaries: Mutex::new(HashMap::new()),
+            document_summary: Mutex::new(None),
             notes: Mutex::new(Notes::default()),
         }
     }
@@ -152,10 +158,15 @@ impl AppState {
         self.vectors.lock().unwrap().clear();
         self.section_hashes.lock().unwrap().clear();
         self.summaries.lock().unwrap().clear();
+        self.document_summary.lock().unwrap().take();
         if let Some(sidecar) = crate::sidecar::load_sidecar(app, manuscript_path) {
             *self.section_hashes.lock().unwrap() = sidecar.section_hashes;
             *self.vectors.lock().unwrap() = sidecar.vectors;
             *self.summaries.lock().unwrap() = sidecar.summaries;
+            let _ = std::mem::replace(
+                &mut *self.document_summary.lock().unwrap(),
+                sidecar.document_summary,
+            );
         }
     }
 
@@ -183,7 +194,13 @@ impl AppState {
             .lock()
             .map_err(|e| e.to_string())?
             .clone();
-        let sidecar = crate::sidecar::Sidecar::new(section_hashes, vectors, summaries);
+        let document_summary = self
+            .document_summary
+            .lock()
+            .map_err(|e| e.to_string())?
+            .clone();
+        let sidecar = crate::sidecar::Sidecar::new(section_hashes, vectors, summaries)
+            .with_document_summary(document_summary);
         crate::sidecar::write_sidecar(app, manuscript_path, &sidecar)
     }
 

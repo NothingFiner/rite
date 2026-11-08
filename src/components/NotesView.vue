@@ -77,11 +77,11 @@
           aria-label="Insert into note"
           @click="insertRecap"
         >Insert into note</button>
-        <!-- Regenerate belongs to this section alone: it calls summarizeOne
-             with the section id, never the whole-document loop (S-020). It is
-             offered on a current recap too: staleness is a stored flag, so a
-             note edited without tripping it leaves a summary that is quietly
-             out of date and otherwise unrefreshable. -->
+        <!-- Regenerate refreshes the recap at its own scope: summarizeOne
+             with the section id, summarizeDocument for the overview row
+             (S-020, S-036). It is offered on a current recap too. Staleness
+             is a stored flag, so a note edited without tripping it leaves a
+             summary that is quietly out of date and otherwise unrefreshable. -->
         <button
           type="button"
           class="note-regenerate"
@@ -90,11 +90,11 @@
           @click="regenerateRecap"
         >Regenerate</button>
       </div>
-      <!-- The recap slot for a section with no stored recap (S-018). It is a
-           sibling after .note-recap, never inside it, so the empty state never
-           contains .note-recap-text (S-016). -->
+      <!-- The recap slot for a row with no stored recap (S-018, S-035). It
+           sits as a sibling after .note-recap, never inside it, so the empty
+           state never contains .note-recap-text (S-016). -->
       <div v-else-if="showRecapGate" class="note-recap-empty">
-        <p>Nothing has been summarized for this section yet.</p>
+        <p>{{ gateProse }}</p>
         <!-- The gate reads `llmConfigured` (useLlmSettings.js): a model
              configured, never the API key. The closed gate is pointer prose
              with no navigation, as in OutlineView (S-019). -->
@@ -102,10 +102,10 @@
           v-if="gateOpen"
           type="button"
           class="note-generate"
-          title="Generate summaries"
-          aria-label="Generate summaries"
+          :title="gateGenerateLabel"
+          :aria-label="gateGenerateLabel"
           @click="generateRecaps"
-        >Generate summaries</button>
+        >{{ gateGenerateLabel }}</button>
         <p v-else>Configure a model in <span class="note-options-link">General Options</span>.</p>
       </div>
     </div>
@@ -176,6 +176,9 @@ const selectedTitle = computed(() =>
   selectedEntry.value?.name || selectedEntry.value?.title || ''
 )
 const selectedSectionId = computed(() => selectedEntry.value?.sectionId ?? '')
+// The overview row keys the recap reads below: its recap is the document
+// summary, not a per-section entry.
+const isOverviewEntry = computed(() => selectedEntry.value?.kind === 'overview')
 const noteText = computed(() => readNote(props.store.notes, selectedEntry.value.id))
 
 // The subtitle names the section's chapter, the nearest chapter row before
@@ -191,9 +194,26 @@ const selectedSubtitle = computed(() => {
   return chapterName ? `${chapterName} · section` : 'section'
 })
 
+// The document summary arrives either as rust's `{ summary, stale }` record
+// or as a bare string. A missing or blank one reads as no recap (S-034).
+const documentRecap = computed(() => {
+  const entry = props.summaries?.documentSummary
+  const recapText = typeof entry === 'string' ? entry : (entry?.summary ?? '')
+  return recapText.trim() ? recapText : ''
+})
+
+// Staleness reads the object's own `stale`, else the document-level boolean
+// beside the bare string (S-036).
+const documentRecapStale = computed(() => {
+  const entry = props.summaries?.documentSummary
+  if (entry && typeof entry === 'object') return Boolean(entry.stale)
+  return Boolean(props.summaries?.documentSummaryStale)
+})
+
 // Whitespace-only text counts as no recap, so a blank stored recap never
-// renders this block.
+// renders this block. The overview's recap comes from documentRecap (S-034).
 const selectedRecap = computed(() => {
+  if (isOverviewEntry.value) return documentRecap.value
   const recapText = props.recaps?.[selectedSectionId.value] ?? ''
   return recapText.trim() ? recapText : ''
 })
@@ -202,6 +222,20 @@ const selectedRecap = computed(() => {
 // The rule lives in `llmConfigured` (useLlmSettings.js). The settings prop is
 // the composable object, so the predicate reads its `settings` member.
 const gateOpen = computed(() => llmConfigured(props.settings?.settings))
+
+// The gate speaks the row's terms: the manuscript for the overview, the
+// section for the rest (S-018, S-035).
+const gateProse = computed(() =>
+  isOverviewEntry.value
+    ? 'Nothing has been summarized for this manuscript yet.'
+    : 'Nothing has been summarized for this section yet.',
+)
+
+// The overview generates one document summary, so its label is singular
+// (S-035). Sections and chapters keep the per-section loop's plural (S-018).
+const gateGenerateLabel = computed(() =>
+  isOverviewEntry.value ? 'Generate summary' : 'Generate summaries',
+)
 
 // The summaries entry for the selected section, or null. The predicate is the
 // section id, not the row kind: a chapter is a section too and gets a summary
@@ -215,14 +249,19 @@ const selectedSummaryEntry = computed(() => {
   return summaryEntries.find((entry) => entry.sectionId === sectionId) ?? null
 })
 
-// Staleness is the summaries entry's own flag (S-020), not a client-side diff.
-const selectedStale = computed(() => Boolean(selectedSummaryEntry.value?.stale))
+// Staleness is the summaries entry's own flag (S-020), not a client-side
+// diff. On the overview it routes through documentRecapStale (S-036).
+const selectedStale = computed(() => {
+  if (isOverviewEntry.value) return documentRecapStale.value
+  return Boolean(selectedSummaryEntry.value?.stale)
+})
 
-// The empty slot stands in for the recap block once the section has none
-// stored (S-018). It wires only through the summaries prop, so direct mounts
+// The empty slot stands in for the recap block once the row has none stored
+// (S-018, S-035). It wires only through the summaries prop, so direct mounts
 // without it render nothing extra.
 const showRecapGate = computed(() => {
   if (!props.summaries) return false
+  if (isOverviewEntry.value) return !selectedRecap.value
   if (!selectedSectionId.value) return false
   return !selectedRecap.value
 })
@@ -319,14 +358,25 @@ function insertRecap() {
   noteDraftUndo.record(draftText.value)
 }
 
-// The only work of the click (S-018): the summaries composable owns the loop.
+// The only work of the click (S-018, S-035): the summaries composable owns
+// the loop. Sections and chapters run the per-section loop. The overview
+// runs the document-summary loop.
 function generateRecaps() {
+  if (isOverviewEntry.value) {
+    props.summaries?.summarizeDocument()
+    return
+  }
   props.summaries?.generateSummaries()
 }
 
 // Regenerates one section: the bare section id string, which summarizeOne
-// resolves (S-020).
+// resolves (S-020). The overview has no section id, so its recap refreshes
+// through the document-summary loop instead (S-036).
 function regenerateRecap() {
+  if (isOverviewEntry.value) {
+    props.summaries?.summarizeDocument()
+    return
+  }
   props.summaries?.summarizeOne(selectedSectionId.value)
 }
 

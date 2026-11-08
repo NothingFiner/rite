@@ -40,9 +40,17 @@ function makeStore(overrides = {}) {
   })
 }
 
-function makeSummaries({ entries = [], stale = 0 } = {}) {
+function makeSummaries({
+  entries = [],
+  stale = 0,
+  documentSummary = null,
+  documentSummaryStale = false,
+} = {}) {
   return reactive({
     summaryEntries: entries,
+    documentSummary,
+    documentSummaryStale,
+    summarizeDocument: vi.fn(async () => null),
     summaryProgress: { done: entries.length, total: 3, stale },
     summariesBusy: false,
     summaryError: '',
@@ -329,5 +337,68 @@ describe('ReferencesView generation', () => {
 
     expect(summaries.summarizeOne).toHaveBeenCalledWith('s1')
     expect(summaries.generateSummaries).not.toHaveBeenCalled()
+  })
+})
+
+describe('ReferencesView document recap', () => {
+  const overviewRecap = 'Four characters, one letter, no sender.'
+
+  it('S-034: shows the document summary on the overview page, labelled as model output', () => {
+    const wrapper = mountView({
+      entryId: 'overview',
+      summaries: makeSummaries({ documentSummary: overviewRecap }),
+    })
+
+    expect(wrapper.find('.note-recap-text').text()).toContain(overviewRecap)
+    expect(wrapper.find('.note-recap-label').text()).toMatch(/recap/i)
+    expect(wrapper.find('.note-insert-recap').exists()).toBe(true)
+  })
+
+  it('S-035: offers Generate summary on the overview only when a model is configured', () => {
+    const open = mountView({ entryId: 'overview', summaries: makeSummaries() })
+    expect(open.find('.note-generate').exists()).toBe(true)
+
+    const closed = mountView({
+      entryId: 'overview',
+      summaries: makeSummaries(),
+      settings: { settings: reactive({ model: '' }) },
+    })
+    expect(closed.find('.note-generate').exists()).toBe(false)
+    expect(closed.find('.note-options-link').exists()).toBe(true)
+  })
+
+  it('S-036: marks a stale document summary and regenerates it from the overview page', async () => {
+    const summaries = makeSummaries({ documentSummary: overviewRecap, documentSummaryStale: true })
+    const wrapper = mountView({ entryId: 'overview', summaries })
+
+    expect(wrapper.find('.note-recap-stale').exists()).toBe(true)
+
+    await wrapper.find('.note-regenerate').trigger('click')
+
+    expect(summaries.summarizeDocument).toHaveBeenCalled()
+  })
+
+  it('S-037: appends the document summary to the overview note without saving it', async () => {
+    // The note is this file's own fixture string, not the e2e spec's: the draft the
+    // page shows must be the shipped overview note followed by the recap, and the
+    // store's copy must still be just the note.
+    const store = makeStore()
+    const wrapper = mountView({
+      entryId: 'overview',
+      store,
+      summaries: makeSummaries({ documentSummary: overviewRecap }),
+    })
+
+    await wrapper.find('.note-insert-recap').trigger('click')
+
+    const source = wrapper.find('.note-source')
+    expect(source.exists()).toBe(true)
+    const value = source.element.value
+    expect(value).toContain(notes.overview)
+    expect(value).toContain(overviewRecap)
+    expect(value.indexOf(notes.overview)).toBeLessThan(value.indexOf(overviewRecap))
+
+    expect(store.notes.overview).toBe(notes.overview)
+    expect(store.commitNote).not.toHaveBeenCalled()
   })
 })
