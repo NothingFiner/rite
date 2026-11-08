@@ -379,6 +379,9 @@ describe('ReferencesView document recap', () => {
   })
 
   it('S-037: appends the document summary to the overview note without saving it', async () => {
+    // The note is this file's own fixture string, not the e2e spec's: the draft the
+    // page shows must be the shipped overview note followed by the recap, and the
+    // store's copy must still be just the note.
     const store = makeStore()
     const wrapper = mountView({
       entryId: 'overview',
@@ -391,13 +394,11 @@ describe('ReferencesView document recap', () => {
     const source = wrapper.find('.note-source')
     expect(source.exists()).toBe(true)
     const value = source.element.value
-    expect(value).toContain('A letter travels the wrong way.')
+    expect(value).toContain(notes.overview)
     expect(value).toContain(overviewRecap)
-    expect(value.indexOf('A letter travels the wrong way.')).toBeLessThan(
-      value.indexOf(overviewRecap),
-    )
+    expect(value.indexOf(notes.overview)).toBeLessThan(value.indexOf(overviewRecap))
 
-    expect(store.notes.overview).toBe('A letter travels the wrong way.')
+    expect(store.notes.overview).toBe(notes.overview)
     expect(store.commitNote).not.toHaveBeenCalled()
   })
 })
