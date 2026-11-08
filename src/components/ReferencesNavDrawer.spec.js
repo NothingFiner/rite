@@ -4,8 +4,8 @@ import { reactive } from 'vue'
 import ReferencesNavDrawer from './ReferencesNavDrawer.vue'
 import { doc, section } from '../composables/outlineFixtures.js'
 
-// SPEC.md 5.20a's drawer sentences: S-005 through S-010, and S-021's empty
-// state. The drawer lists the document; it does not navigate. The shell owns
+// SPEC.md 5.20a's drawer sentences: S-005 through S-010, S-021's empty state,
+// and the whole-manuscript regeneration gate (S-028, S-029). The drawer lists the document; it does not navigate. The shell owns
 // the selection and the anchor, and this component only draws them.
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => null) }))
@@ -27,28 +27,25 @@ function makeStore(overrides = {}) {
 
 function mountDrawer(props = {}) {
   return mount(ReferencesNavDrawer, {
-    props: { store: makeStore(), selectedId: 'overview', anchorId: null, ...props },
+    props: { store: makeStore(), selectedId: 'overview', ...props },
   })
 }
 
 const row = (wrapper, id) => wrapper.find(`.notes-entry[data-entry-id="${id}"]`)
 const rowIds = (wrapper) =>
   wrapper.findAll('.notes-entry').map((entry) => entry.attributes('data-entry-id'))
-// The heading carries the app's own `.drawer-heading` for its look; `.notes-group`
-// is only the hook (SPEC.md: DOM contract).
-const groupTitles = (wrapper) => wrapper.findAll('h3.drawer-heading.notes-group').map((g) => g.text())
 
 describe('ReferencesNavDrawer entries', () => {
-  it('S-005: lists the story overview, then the manuscript under a heading per chapter, then the retired group', () => {
+  it('S-005: lists the story overview, then the manuscript in document order, then the orphaned draft', () => {
     const wrapper = mountDrawer()
 
     // Document order, one row per section, with the overview first and the
     // orphaned draft last. A section with no note still has a row.
     expect(rowIds(wrapper)).toEqual(['overview', 'c1', 's1', 'c2', 's2', 'orphaned'])
 
-    // A chapter heading groups the rows beneath it; the retired group keeps the
-    // orphaned draft out of the manuscript's order.
-    expect(groupTitles(wrapper)).toEqual(['Chapter One', 'Chapter 2', 'Retired'])
+    // A chapter's own row stands as its heading, so no row is a label a writer
+    // cannot select, and no chapter name appears twice.
+    expect(wrapper.findAll('h3')).toHaveLength(0)
     expect(row(wrapper, 'overview').text()).toContain('Story overview')
     expect(row(wrapper, 'orphaned').text()).toContain('Orphaned notes')
   })
@@ -74,21 +71,8 @@ describe('ReferencesNavDrawer entries', () => {
     // the row derives the number from the document order.
     expect(row(wrapper, 'c2').text()).toContain('Chapter 2')
     expect(row(wrapper, 'c2').text().trim()).not.toBe('')
-    // The heading over the chapter's rows uses the same rule.
-    expect(groupTitles(wrapper)).toContain('Chapter 2')
     // A titled chapter keeps its stored subtitle.
     expect(row(wrapper, 'c1').text()).toContain('Chapter One')
-  })
-
-  it('S-008: marks the anchor row and only the anchor row', () => {
-    const wrapper = mountDrawer({ selectedId: 'overview', anchorId: 's1' })
-
-    expect(row(wrapper, 's1').exists()).toBe(true)
-    expect(row(wrapper, 's1').classes()).toContain('is-anchor')
-    for (const id of ['overview', 'c1', 'c2', 's2', 'orphaned']) {
-      expect(row(wrapper, id).exists()).toBe(true)
-      expect(row(wrapper, id).classes()).not.toContain('is-anchor')
-    }
   })
 
   it('S-009: marks the row it is given as selected and reports a click upward', async () => {
@@ -114,5 +98,29 @@ describe('ReferencesNavDrawer entries', () => {
     expect(wrapper.findAll('.notes-entry')).toHaveLength(0)
     expect(wrapper.find('.notes-empty').exists()).toBe(true)
     expect(wrapper.find('.notes-empty').text()).toMatch(/nothing to outline/i)
+  })
+})
+
+describe('ReferencesNavDrawer generation', () => {
+  const withModel = () => ({ settings: reactive({ model: 'llama3' }) })
+
+  it('S-028: offers Regenerate all when a model is configured and reports the choice upward', async () => {
+    const wrapper = mountDrawer({ settings: withModel() })
+
+    const button = wrapper.find('.references-regenerate-all')
+    expect(button.exists()).toBe(true)
+    expect(button.text()).toMatch(/regenerate all/i)
+
+    await button.trigger('click')
+
+    expect(wrapper.emitted('regenerate-all')).toHaveLength(1)
+  })
+
+  it('S-029: offers no Regenerate all without a configured model', () => {
+    const noModel = mountDrawer({ settings: { settings: reactive({ model: '' }) } })
+    expect(noModel.find('.references-regenerate-all').exists()).toBe(false)
+
+    const noSettings = mountDrawer()
+    expect(noSettings.find('.references-regenerate-all').exists()).toBe(false)
   })
 })

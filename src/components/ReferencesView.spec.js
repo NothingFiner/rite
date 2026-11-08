@@ -220,6 +220,24 @@ describe('ReferencesView recap', () => {
     expect(wrapper.find('.note-recap').exists()).toBe(false)
   })
 
+  it('S-014: shows a chapter row its own recap, because a chapter is a section too', async () => {
+    const wrapper = mountView({
+      entryId: 'c1',
+      summaries: makeSummaries({ entries: [summaryEntry('c1', 'A recap of the arrival.')] }),
+    })
+
+    expect(wrapper.find('.note-recap-text').text()).toContain('A recap of the arrival.')
+    expect(wrapper.find('.note-insert-recap').exists()).toBe(true)
+    expect(wrapper.find('.note-recap-label').text()).toMatch(/assistant recap/i)
+  })
+
+  it('S-018: offers the generation gate on a chapter with no stored summary', () => {
+    const wrapper = mountView({ entryId: 'c1', summaries: makeSummaries() })
+
+    expect(wrapper.find('.note-recap-empty').exists()).toBe(true)
+    expect(wrapper.find('.note-generate').exists()).toBe(true)
+  })
+
   it('S-017: edits with the pencil, and commits a dirty draft when the selection changes', async () => {
     const store = makeStore()
     const wrapper = mountView({ store, entryId: 's1' })
@@ -297,13 +315,19 @@ describe('ReferencesView generation', () => {
     expect(summaries.generateSummaries).not.toHaveBeenCalled()
   })
 
-  it('S-020: leaves a current recap unmarked and offers no regenerate', () => {
-    const wrapper = mountView({
-      entryId: 's1',
-      summaries: makeSummaries({ entries: [summaryEntry('s1', 'A current recap.')] }),
-    })
+  it('S-020: leaves a current recap unmarked but still offers Regenerate for that section', async () => {
+    const summaries = makeSummaries({ entries: [summaryEntry('s1', 'A current recap.')] })
+    const wrapper = mountView({ entryId: 's1', summaries })
 
     expect(wrapper.find('.note-recap-stale').exists()).toBe(false)
-    expect(wrapper.find('.note-regenerate').exists()).toBe(false)
+
+    // Staleness is a stored flag, so a current recap can still be out of date
+    // with the note beside it. The refresh is per section, never the loop.
+    const regenerate = wrapper.find('.note-regenerate')
+    expect(regenerate.exists()).toBe(true)
+    await regenerate.trigger('click')
+
+    expect(summaries.summarizeOne).toHaveBeenCalledWith('s1')
+    expect(summaries.generateSummaries).not.toHaveBeenCalled()
   })
 })

@@ -190,10 +190,9 @@ test('S-022: shows the drawer rows in document order with the selected section o
   )
   expect(ids).toEqual(['overview', 'c1', 's1', 'c2', 's2', 'orphaned'])
 
-  // A chapter heading groups the rows beneath it. An untitled chapter is named
-  // by its number, and the retired group holds the orphaned draft.
-  const groups = await page.locator('h3.drawer-heading.notes-group').allTextContents()
-  expect(groups).toEqual(['The Arrival', 'Chapter 2', 'Retired'])
+  // No group labels: each chapter's own row is its heading, and an untitled
+  // chapter is named by its number.
+  await expect(page.locator('.references-drawer h3')).toHaveCount(0)
 
   await selectRow(page, 'c1')
 
@@ -311,6 +310,4 @@ test('S-027: names the anchor section in the status bar and marks its drawer row
   await expect(chip).toBeVisible()
   await expect(chip).toContainText('Ashes')
 
-  await expect(row(page, 's2')).toHaveClass(/is-anchor/)
-  await expect(row(page, 'c1')).not.toHaveClass(/is-anchor/)
 })

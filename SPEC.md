@@ -41,8 +41,10 @@ redesign of it.
 ### The shape
 
 - **The drawer is the outline.** One drawer, titled References, listing Story
-  overview, then the manuscript under a heading per chapter, then Orphaned notes
-  in a Retired group. A row selects; it never navigates.
+  overview, then the manuscript in document order with each chapter's own row
+  standing as its heading, then Orphaned notes. A row selects; it never
+  navigates. Group labels were removed after a review of the running app: a
+  chapter name appeared twice, once as a label nothing could select.
 - **The page is the selection.** One detail page per selected entry: the note
   (rendered markdown), the generated recap beneath it, the pencil, and
   "Go to text". Your note and its recap are the same page.
@@ -112,13 +114,12 @@ so in the PR instead of silently following it.
 | `.notes-entry[data-entry-id]` | a drawer row (reused from the shipped list) |
 | `.notes-entry.is-chapter` / `.is-section` / `.notes-orphans` | row kind |
 | `.notes-entry.selected` | the selected row |
-| `.notes-entry.is-anchor` | the row the writer came from (a state, like `.selected`; the dot is CSS) |
-| `h3.drawer-heading.notes-group` | a chapter heading: the app's own heading class styles it, `.notes-group` is only the hook |
 | `.notes-view` | the detail page |
 | `.note-recap`, `.note-recap-label`, `.note-insert-recap` | the recap and its port |
 | `.note-recap-empty` | the recap slot when there is nothing to show |
 | `.note-generate`, `.note-options-link` | the two gates inside it |
 | `.note-recap-stale`, `.note-regenerate` | staleness and its per-section trigger |
+| `.references-regenerate-all` | the whole-manuscript regeneration control, in the drawer |
 
 One caveat, stated plainly: the unit tests mount each component directly, so the
 prop names they pass are pinned too — `NotesView` / `ReferencesView` take
@@ -134,9 +135,9 @@ preference; keep them, or change both the test and this note in the same commit.
    selection prop.
 2. **The anchor is not the selection.** The anchor is the section the writer came
    from; the selection is what the page shows. They start equal and diverge as
-   soon as the writer browses. The drawer marks the anchor row (`.is-anchor`);
-   the selected row is the highlighted one (`.selected`). They are two states on
-   the same row markup, and one row can never be mistaken for the other.
+   soon as the writer browses. The anchor is named in the status bar and is what
+   `Go to text` returns to; it is **not** marked in the drawer. A second marker
+   on the same list read as a second selection, which is why S-008 was cut.
 3. **A retired row has no section and no recap.** It selects the orphaned draft;
    its page shows the draft and no recap block. Do not fall back to the last
    section's summary.
@@ -149,11 +150,12 @@ preference; keep them, or change both the test and this note in the same commit.
 | S-002 | unit | it should not offer Sections or Text Options in the References view |
 | S-003 | e2e | it should open the Reference drawer when References is entered, and let the Reference button close and reopen it |
 | S-004 | unit | it should render the entry it is given, so the selection survives a view switch |
-| S-005 | unit | it should list Story overview first, then every manuscript section in document order under a heading for its chapter, then Orphaned notes in a Retired group |
+| S-005 | unit | it should list Story overview first, then every manuscript section in document order with each chapter's own row standing as its heading, then Orphaned notes last |
 | S-006 | unit | it should indent a section row under its chapter and keep a chapter row bold |
 | S-007 | unit | it should name each row with `sectionDisplayTitle`, so a chapter with no subtitle reads "Chapter 1" and never blank |
-| S-008 | unit | it should mark the row of the section the writer came from as the anchor, and mark no other row |
 | S-009 | unit | it should report a row as selected when it is clicked and never leave References |
+
+*S-008 (the anchor marker in the drawer) was cut in review: with the selection highlight beside it, a second marker on the same list read as a second selection. S-009 below covers selection; the anchor still names the status bar chip (S-027).*
 | S-010 | unit | it should fall back to Story overview when the selected section is deleted |
 | S-011 | unit | it should show the selected section's title and a subtitle naming its chapter and type |
 | S-012 | unit | it should show the selected section's note as rendered markdown |
@@ -164,11 +166,13 @@ preference; keep them, or change both the test and this note in the same commit.
 | S-017 | unit | it should edit the selected note with the pencil, keeping Save and Reset, and commit a dirty draft when the selection changes or the view unmounts |
 | S-018 | unit | it should offer Generate summaries in the recap slot when no summary exists and a model is configured, calling `generateSummaries` |
 | S-019 | unit | it should show no generation control when no model is configured, and point at General Options instead |
-| S-020 | unit | it should mark a stale recap and offer Regenerate for that section only, using `summarizeOne` |
+| S-020 | unit | it should mark a stale recap, offer Regenerate on every recap, and regenerate that section only, using `summarizeOne` |
 | S-021 | unit | it should show an empty state in the drawer and the overview page for a document with no sections, and no error |
 | S-022 | e2e | it should open References and show the drawer rows in document order, with the selected section's note and recap on the page |
 | S-023 | e2e | it should select another chapter in the drawer and show that chapter's note without leaving References |
 | S-024 | e2e | it should insert the recap into the note, save it, and keep it after reopening the file |
 | S-025 | e2e | it should return to the view the writer came from on Go to text, with the section's title at the top of the viewport |
 | S-026 | e2e | it should keep the rail and the drawer visible in References, and paint the detail page with the active theme |
-| S-027 | e2e | it should name the anchor section in the status bar while References is open |
+| S-027 | e2e | it should name the anchor section in the status bar while References is open, and mark no row in the drawer as the anchor |
+| S-028 | unit | it should offer Regenerate all in the drawer only when a model is configured, and report the choice upward so the shell calls `generateSummaries` |
+| S-029 | unit | it should offer no Regenerate all when no model is configured |

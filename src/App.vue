@@ -84,9 +84,11 @@
         <ReferencesNavDrawer
           :store="store"
           :theme="theme.currentTheme"
+          :settings="llmSettings"
+          :busy="summaries.summariesBusy"
           :selected-id="notesEntryId"
-          :anchor-id="anchorEntryId"
           @select="onReferenceSelect"
+          @regenerate-all="summaries.generateSummaries()"
         />
       </div>
     </div>
@@ -285,9 +287,10 @@ const referencesTab = ref('outline')
 // Remembered when References is entered: the view the section jump returns to
 // (SPEC.md 5.20). From History the default is the editor.
 const notesOriginView = ref('editor')
-// The row the writer came from (SPEC.md 5.20a). It seeds with the same value
-// as notesEntryId and never follows the selection afterwards. The drawer
-// marks it .is-anchor.
+// The row the writer came from (SPEC.md 5.20a). It seeds with the same value as
+// notesEntryId and never follows the selection afterwards. It names the status
+// bar chip, and nothing in the drawer: a second marker on the list read as a
+// second selection.
 const anchorEntryId = ref('overview')
 const leftDrawerOpen = ref(false)
 const leftDrawerMode = ref('chapters')
@@ -541,7 +544,6 @@ function onSetMode(mode) {
       source === 'editor' || source === 'manuscript'
         ? (editorRef.value?.getCurrentSectionId?.() || 'overview')
         : 'overview'
-    // The drawer marks the came-from row with the same seed the page shows.
     anchorEntryId.value = notesEntryId.value
     // Open the drawer with the seed in place (5.20a). The close-on-switch
     // below permits it here, because isDrawerModeAllowedIn allows 'references'

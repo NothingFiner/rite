@@ -78,9 +78,11 @@
           @click="insertRecap"
         >Insert into note</button>
         <!-- Regenerate belongs to this section alone: it calls summarizeOne
-             with the section id, never the whole-document loop (S-020). -->
+             with the section id, never the whole-document loop (S-020). It is
+             offered on a current recap too: staleness is a stored flag, so a
+             note edited without tripping it leaves a summary that is quietly
+             out of date and otherwise unrefreshable. -->
         <button
-          v-if="selectedStale"
           type="button"
           class="note-regenerate"
           title="Regenerate recap"
@@ -201,11 +203,13 @@ const selectedRecap = computed(() => {
 // the composable object, so the predicate reads its `settings` member.
 const gateOpen = computed(() => llmConfigured(props.settings?.settings))
 
-// The summaries entry for the selected section, or null. Chapter rows carry a
-// sectionId too, so `kind` keeps the recap surface on document sections
-// (SPEC.md trap 3).
+// The summaries entry for the selected section, or null. The predicate is the
+// section id, not the row kind: a chapter is a section too and gets a summary
+// from `summarize_and_store_section`, so keying on `kind === 'section'` hid
+// every chapter's recap. Overview and the orphaned draft carry no section id,
+// which is what keeps the recap surface off the retired row (trap 3).
 const selectedSummaryEntry = computed(() => {
-  if (selectedEntry.value?.kind !== 'section') return null
+  if (!selectedSectionId.value) return null
   const sectionId = selectedSectionId.value
   const summaryEntries = props.summaries?.summaryEntries ?? []
   return summaryEntries.find((entry) => entry.sectionId === sectionId) ?? null
@@ -219,7 +223,7 @@ const selectedStale = computed(() => Boolean(selectedSummaryEntry.value?.stale))
 // without it render nothing extra.
 const showRecapGate = computed(() => {
   if (!props.summaries) return false
-  if (selectedEntry.value?.kind !== 'section') return false
+  if (!selectedSectionId.value) return false
   return !selectedRecap.value
 })
 
@@ -369,13 +373,17 @@ onBeforeUnmount(() => {
 .note-sub {
   margin-top: 4px;
   font-size: 12px;
-  color: var(--text-secondary);
+  /* The pane paints the paper theme's background, so its text follows the
+     paper palette. The chrome greys are mixed for the dark glass drawers and
+     all but vanish on cream. */
+  color: var(--note-text, var(--text-secondary));
+  opacity: 0.7;
 }
 
 .note-title {
   font-size: 15px;
   font-weight: 700;
-  color: var(--text-primary);
+  color: var(--note-text, var(--text-primary));
 }
 
 .note-edit,
@@ -391,7 +399,8 @@ onBeforeUnmount(() => {
   font: inherit;
   font-size: 12px;
   line-height: 1;
-  color: var(--text-secondary);
+  color: var(--note-text, var(--text-secondary));
+  opacity: 0.75;
   background: none;
   border: none;
   border-radius: var(--radius-sm);
@@ -407,7 +416,8 @@ onBeforeUnmount(() => {
 .note-insert-recap:hover,
 .note-generate:hover,
 .note-regenerate:hover {
-  color: var(--text-primary);
+  color: var(--note-text, var(--text-primary));
+  opacity: 1;
   background: var(--hover-bg);
 }
 
@@ -445,7 +455,8 @@ onBeforeUnmount(() => {
 
 .note-empty {
   font-size: 13px;
-  color: var(--text-secondary);
+  color: var(--note-text, var(--text-secondary));
+  opacity: 0.6;
 }
 
 .note-recap {
