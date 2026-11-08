@@ -4,8 +4,8 @@ import { reactive } from 'vue'
 import ReferencesNavDrawer from './ReferencesNavDrawer.vue'
 import { doc, section } from '../composables/outlineFixtures.js'
 
-// SPEC.md 5.20a's drawer sentences: S-005 through S-010, and S-021's empty
-// state. The drawer lists the document; it does not navigate. The shell owns
+// SPEC.md 5.20a's drawer sentences: S-005 through S-010, S-021's empty state,
+// and the whole-manuscript regeneration gate (S-028, S-029). The drawer lists the document; it does not navigate. The shell owns
 // the selection and the anchor, and this component only draws them.
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => null) }))
@@ -109,5 +109,29 @@ describe('ReferencesNavDrawer entries', () => {
     expect(wrapper.findAll('.notes-entry')).toHaveLength(0)
     expect(wrapper.find('.notes-empty').exists()).toBe(true)
     expect(wrapper.find('.notes-empty').text()).toMatch(/nothing to outline/i)
+  })
+})
+
+describe('ReferencesNavDrawer generation', () => {
+  const withModel = () => ({ settings: reactive({ model: 'llama3' }) })
+
+  it('S-028: offers Regenerate all when a model is configured and reports the choice upward', async () => {
+    const wrapper = mountDrawer({ settings: withModel() })
+
+    const button = wrapper.find('.references-regenerate-all')
+    expect(button.exists()).toBe(true)
+    expect(button.text()).toMatch(/regenerate all/i)
+
+    await button.trigger('click')
+
+    expect(wrapper.emitted('regenerate-all')).toHaveLength(1)
+  })
+
+  it('S-029: offers no Regenerate all without a configured model', () => {
+    const noModel = mountDrawer({ settings: { settings: reactive({ model: '' }) } })
+    expect(noModel.find('.references-regenerate-all').exists()).toBe(false)
+
+    const noSettings = mountDrawer()
+    expect(noSettings.find('.references-regenerate-all').exists()).toBe(false)
   })
 })

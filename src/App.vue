@@ -84,9 +84,12 @@
         <ReferencesNavDrawer
           :store="store"
           :theme="theme.currentTheme"
+          :settings="llmSettings"
+          :busy="summaries.summariesBusy"
           :selected-id="notesEntryId"
           :anchor-id="anchorEntryId"
           @select="onReferenceSelect"
+          @regenerate-all="summaries.generateSummaries()"
         />
       </div>
     </div>

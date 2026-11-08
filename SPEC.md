@@ -120,6 +120,7 @@ so in the PR instead of silently following it.
 | `.note-recap-empty` | the recap slot when there is nothing to show |
 | `.note-generate`, `.note-options-link` | the two gates inside it |
 | `.note-recap-stale`, `.note-regenerate` | staleness and its per-section trigger |
+| `.references-regenerate-all` | the whole-manuscript regeneration control, in the drawer |
 
 One caveat, stated plainly: the unit tests mount each component directly, so the
 prop names they pass are pinned too — `NotesView` / `ReferencesView` take
@@ -165,7 +166,7 @@ preference; keep them, or change both the test and this note in the same commit.
 | S-017 | unit | it should edit the selected note with the pencil, keeping Save and Reset, and commit a dirty draft when the selection changes or the view unmounts |
 | S-018 | unit | it should offer Generate summaries in the recap slot when no summary exists and a model is configured, calling `generateSummaries` |
 | S-019 | unit | it should show no generation control when no model is configured, and point at General Options instead |
-| S-020 | unit | it should mark a stale recap and offer Regenerate for that section only, using `summarizeOne` |
+| S-020 | unit | it should mark a stale recap, offer Regenerate on every recap, and regenerate that section only, using `summarizeOne` |
 | S-021 | unit | it should show an empty state in the drawer and the overview page for a document with no sections, and no error |
 | S-022 | e2e | it should open References and show the drawer rows in document order, with the selected section's note and recap on the page |
 | S-023 | e2e | it should select another chapter in the drawer and show that chapter's note without leaving References |
@@ -173,3 +174,5 @@ preference; keep them, or change both the test and this note in the same commit.
 | S-025 | e2e | it should return to the view the writer came from on Go to text, with the section's title at the top of the viewport |
 | S-026 | e2e | it should keep the rail and the drawer visible in References, and paint the detail page with the active theme |
 | S-027 | e2e | it should name the anchor section in the status bar while References is open |
+| S-028 | unit | it should offer Regenerate all in the drawer only when a model is configured, and report the choice upward so the shell calls `generateSummaries` |
+| S-029 | unit | it should offer no Regenerate all when no model is configured |

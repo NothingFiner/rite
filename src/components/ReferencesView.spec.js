@@ -297,13 +297,19 @@ describe('ReferencesView generation', () => {
     expect(summaries.generateSummaries).not.toHaveBeenCalled()
   })
 
-  it('S-020: leaves a current recap unmarked and offers no regenerate', () => {
-    const wrapper = mountView({
-      entryId: 's1',
-      summaries: makeSummaries({ entries: [summaryEntry('s1', 'A current recap.')] }),
-    })
+  it('S-020: leaves a current recap unmarked but still offers Regenerate for that section', async () => {
+    const summaries = makeSummaries({ entries: [summaryEntry('s1', 'A current recap.')] })
+    const wrapper = mountView({ entryId: 's1', summaries })
 
     expect(wrapper.find('.note-recap-stale').exists()).toBe(false)
-    expect(wrapper.find('.note-regenerate').exists()).toBe(false)
+
+    // Staleness is a stored flag, so a current recap can still be out of date
+    // with the note beside it. The refresh is per section, never the loop.
+    const regenerate = wrapper.find('.note-regenerate')
+    expect(regenerate.exists()).toBe(true)
+    await regenerate.trigger('click')
+
+    expect(summaries.summarizeOne).toHaveBeenCalledWith('s1')
+    expect(summaries.generateSummaries).not.toHaveBeenCalled()
   })
 })
