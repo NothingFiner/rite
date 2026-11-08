@@ -1,5 +1,18 @@
 <template>
   <div class="references-drawer" :style="drawerStyles">
+    <!-- Whole-manuscript regeneration. Per-section Regenerate lives on each
+         recap; this is the bulk action after a heavy revision. Gated on a
+         configured model, the same rule as the other generation controls. -->
+    <div v-if="canRegenerateAll" class="references-tools">
+      <button
+        type="button"
+        class="references-regenerate-all"
+        title="Regenerate all summaries"
+        aria-label="Regenerate all summaries"
+        :disabled="busy"
+        @click="emit('regenerate-all')"
+      >{{ busy ? 'Regenerating…' : 'Regenerate all' }}</button>
+    </div>
     <div v-if="isEmptyDocument" class="notes-empty">Nothing to outline.</div>
     <button
       v-for="item in drawerItems"
@@ -28,6 +41,7 @@
 
 import { computed } from 'vue'
 import { noteEntries } from '../composables/useNotes.js'
+import { llmConfigured } from '../composables/useLlmSettings.js'
 
 // The rows paint with the chrome palette, except the selected one: the theme
 // accent stays its colour (S-022's e2e pins it), and a saturated accent reads on
@@ -38,9 +52,15 @@ const props = defineProps({
   selectedId: { type: String, default: 'overview' },
   anchorId: { type: String, default: null },
   theme: { type: Object, default: null },
+  // The raw llm-settings composable: the generation gate reads
+  // `settings.settings.model` through `llmConfigured`.
+  settings: { type: Object, default: null },
+  busy: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['select'])
+const emit = defineEmits(['select', 'regenerate-all'])
+
+const canRegenerateAll = computed(() => llmConfigured(props.settings?.settings))
 
 const drawerStyles = computed(() => {
   const theme = props.theme
@@ -72,6 +92,33 @@ function selectEntry(id) {
 
 <style scoped>
 /* Row chrome adapted from NotesView.vue's list (same flat grammar). */
+.references-tools {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
+.references-regenerate-all {
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: none;
+  border: 1px solid var(--bg-glass-border);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.references-regenerate-all:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--hover-bg);
+}
+
+.references-regenerate-all:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .notes-entry {
   display: block;
   width: 100%;

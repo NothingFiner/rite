@@ -78,9 +78,11 @@
           @click="insertRecap"
         >Insert into note</button>
         <!-- Regenerate belongs to this section alone: it calls summarizeOne
-             with the section id, never the whole-document loop (S-020). -->
+             with the section id, never the whole-document loop (S-020). It is
+             offered on a current recap too: staleness is a stored flag, so a
+             note edited without tripping it leaves a summary that is quietly
+             out of date and otherwise unrefreshable. -->
         <button
-          v-if="selectedStale"
           type="button"
           class="note-regenerate"
           title="Regenerate recap"
