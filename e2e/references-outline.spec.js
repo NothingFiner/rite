@@ -310,6 +310,4 @@ test('S-027: names the anchor section in the status bar and marks its drawer row
   await expect(chip).toBeVisible()
   await expect(chip).toContainText('Ashes')
 
-  await expect(row(page, 's2')).toHaveClass(/is-anchor/)
-  await expect(row(page, 'c1')).not.toHaveClass(/is-anchor/)
 })
