@@ -30,26 +30,23 @@
 import { computed } from 'vue'
 import { noteEntries } from '../composables/useNotes.js'
 
+// The rows paint with the chrome palette, except the selected one: the theme
+// accent stays its colour (S-022's e2e pins it), and a saturated accent reads on
+// the dark glass whatever the paper theme is. The paper theme's *text* colour
+// does not come here: bound to this drawer it was dark ink on dark glass.
 const props = defineProps({
   store: { type: Object, required: true },
   selectedId: { type: String, default: 'overview' },
   anchorId: { type: String, default: null },
-  // The active theme (`{ bg, text, accent }`) or null on a themeless mount.
   theme: { type: Object, default: null },
 })
 
 const emit = defineEmits(['select'])
 
-// Binds the row palette the page paints (S-022): --note-text and --note-accent
-// mirror NotesView.vue's surface. A themeless mount returns an empty object,
-// so the scoped fallbacks keep the chrome colours.
 const drawerStyles = computed(() => {
   const theme = props.theme
-  if (!theme || typeof theme !== 'object') return {}
-  return {
-    '--note-text': theme.text,
-    '--note-accent': theme.accent,
-  }
+  if (!theme || typeof theme !== 'object' || !theme.accent) return {}
+  return { '--note-accent': theme.accent }
 })
 
 // The overview and orphaned rows exist for any document, so emptiness reads
@@ -92,13 +89,20 @@ function selectEntry(id) {
 </script>
 
 <style scoped>
+/* A group label, not a row: smaller than the entries, dim, and spaced away
+   from the row above it. At 13px/600 it read as a duplicate of the chapter
+   row that follows it (both were bold and the same size). */
 .drawer-heading {
-  font-size: 13px;
+  font-size: 10px;
   font-weight: 600;
-  color: var(--text-primary);
-  margin-bottom: 10px;
+  letter-spacing: 1.1px;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+  margin: 12px 6px 4px;
+}
+
+.drawer-heading:first-child {
+  margin-top: 0;
 }
 
 /* Row chrome adapted from NotesView.vue's list (same flat grammar). */
@@ -111,7 +115,7 @@ function selectEntry(id) {
   font: inherit;
   font-size: 13px;
   text-align: left;
-  color: var(--note-text, var(--text-primary));
+  color: var(--text-primary);
   background: none;
   border: none;
   border-radius: var(--radius-sm);
@@ -128,9 +132,12 @@ function selectEntry(id) {
   background: var(--hover-bg);
 }
 
-/* The selected row paints with the theme accent (S-022). The fallback keeps
-   a themeless mount on the chrome accent. */
+/* The drawer is chrome, so it paints with the chrome palette. The paper theme's
+   text colour belongs to the page beside it: bound here it put dark ink on the
+   dark glass drawer and the rows vanished. */
 .notes-entry.selected {
+  background: var(--accent-bg);
+  box-shadow: inset 2px 0 0 var(--accent);
   color: var(--note-accent, var(--accent));
 }
 

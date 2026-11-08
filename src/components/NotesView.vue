@@ -369,13 +369,17 @@ onBeforeUnmount(() => {
 .note-sub {
   margin-top: 4px;
   font-size: 12px;
-  color: var(--text-secondary);
+  /* The pane paints the paper theme's background, so its text follows the
+     paper palette. The chrome greys are mixed for the dark glass drawers and
+     all but vanish on cream. */
+  color: var(--note-text, var(--text-secondary));
+  opacity: 0.7;
 }
 
 .note-title {
   font-size: 15px;
   font-weight: 700;
-  color: var(--text-primary);
+  color: var(--note-text, var(--text-primary));
 }
 
 .note-edit,
@@ -391,7 +395,8 @@ onBeforeUnmount(() => {
   font: inherit;
   font-size: 12px;
   line-height: 1;
-  color: var(--text-secondary);
+  color: var(--note-text, var(--text-secondary));
+  opacity: 0.75;
   background: none;
   border: none;
   border-radius: var(--radius-sm);
@@ -407,7 +412,8 @@ onBeforeUnmount(() => {
 .note-insert-recap:hover,
 .note-generate:hover,
 .note-regenerate:hover {
-  color: var(--text-primary);
+  color: var(--note-text, var(--text-primary));
+  opacity: 1;
   background: var(--hover-bg);
 }
 
@@ -445,7 +451,8 @@ onBeforeUnmount(() => {
 
 .note-empty {
   font-size: 13px;
-  color: var(--text-secondary);
+  color: var(--note-text, var(--text-secondary));
+  opacity: 0.6;
 }
 
 .note-recap {

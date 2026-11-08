@@ -65,8 +65,14 @@ function forwardJump(sectionId) {
 </script>
 
 <style scoped>
+/* `min-height: 100%` alone leaves the view one content-height tall: the wrapper
+ * it sits in has no definite height, so the percentage resolves to auto and the
+ * theme surface stops where the note text stops — a paper strip at the top and
+ * the canvas colour underneath. As a flex item it can grow into the wrapper
+ * instead, which is what makes the page fill the pane. */
 .references-view {
-  min-height: 100%;
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
