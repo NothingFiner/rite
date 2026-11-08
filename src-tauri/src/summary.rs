@@ -40,7 +40,9 @@ use crate::llm::{compose_role_body, ChatMessage, ChatRequest};
 use crate::retrieval::section_text_hash;
 use crate::state::AppState;
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use tauri::{AppHandle, State};
 
 /// A per-section neutral recap, generated once by the model and stored in the
@@ -311,8 +313,40 @@ pub struct DocumentSummaryEntry {
 /// title is only its subtitle and may be empty (5.9), so an untitled chapter is
 /// named by its number. Pure, so the ordering and naming rules are tested
 /// without an AppState or a network call.
-pub fn document_text(_doc: &Document) -> String {
-    todo!()
+pub fn document_text(doc: &Document) -> String {
+    let mut text = String::new();
+    // Same render-derived chapter ordinal rule as build_summary_entries.
+    let mut chapter_number: u32 = 0;
+    for section in &doc.sections {
+        if section.section_type == SectionType::Chapter {
+            chapter_number += 1;
+        }
+        // A blank line between sections keeps a heading clear of the prose above it.
+        if !text.is_empty() {
+            text.push_str("\n\n");
+        }
+        text.push_str(&section_display_title(section, chapter_number));
+        text.push('\n');
+        text.push_str(&section_text(section));
+    }
+    text
+}
+
+/// The heading `document_text` puts above a section's prose. Mirrors
+/// `sectionDisplayTitle` in `src/composables/useSectionFormat.js`, so the
+/// model input carries the headings the writer sees.
+fn section_display_title(section: &Section, chapter_number: u32) -> String {
+    if section.section_type == SectionType::Chapter {
+        if section.title.is_empty() {
+            format!("Chapter {chapter_number}")
+        } else {
+            format!("Chapter {chapter_number}: {}", section.title)
+        }
+    } else if section.title.is_empty() {
+        "Untitled Section".to_string()
+    } else {
+        section.title.clone()
+    }
 }
 
 /// The document summary's OWN staleness baseline: a hash over
@@ -320,8 +354,11 @@ pub fn document_text(_doc: &Document) -> String {
 /// the per-section baselines, for the same reason `SectionSummary`'s is
 /// independent of `section_hashes`: re-summarizing is user-triggered and the
 /// two drift.
-pub fn document_text_hash(_doc: &Document) -> u64 {
-    todo!()
+pub fn document_text_hash(doc: &Document) -> u64 {
+    // DefaultHasher for the cross-process determinism retrieval::section_text_hash relies on.
+    let mut hasher = DefaultHasher::new();
+    document_text(doc).hash(&mut hasher);
+    hasher.finish()
 }
 
 /// Pair the stored document summary with the live document's staleness, or
@@ -329,10 +366,16 @@ pub fn document_text_hash(_doc: &Document) -> u64 {
 /// state for a view, never the empty-store error `retrieve_summaries` raises
 /// for the Summaries Feedback Target.
 pub fn build_document_summary_entry(
-    _stored: Option<&SectionSummary>,
-    _doc: &Document,
+    stored: Option<&SectionSummary>,
+    doc: &Document,
 ) -> Option<DocumentSummaryEntry> {
-    todo!()
+    let Some(stored) = stored else {
+        return None;
+    };
+    Some(DocumentSummaryEntry {
+        summary: stored.summary.clone(),
+        stale: stored.section_hash != document_text_hash(doc),
+    })
 }
 
 /// Generate and store the document-level recap: the whole manuscript in one
