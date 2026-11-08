@@ -27,7 +27,7 @@ function makeStore(overrides = {}) {
 
 function mountDrawer(props = {}) {
   return mount(ReferencesNavDrawer, {
-    props: { store: makeStore(), selectedId: 'overview', anchorId: null, ...props },
+    props: { store: makeStore(), selectedId: 'overview', ...props },
   })
 }
 
@@ -73,17 +73,6 @@ describe('ReferencesNavDrawer entries', () => {
     expect(row(wrapper, 'c2').text().trim()).not.toBe('')
     // A titled chapter keeps its stored subtitle.
     expect(row(wrapper, 'c1').text()).toContain('Chapter One')
-  })
-
-  it('S-008: marks the anchor row and only the anchor row', () => {
-    const wrapper = mountDrawer({ selectedId: 'overview', anchorId: 's1' })
-
-    expect(row(wrapper, 's1').exists()).toBe(true)
-    expect(row(wrapper, 's1').classes()).toContain('is-anchor')
-    for (const id of ['overview', 'c1', 'c2', 's2', 'orphaned']) {
-      expect(row(wrapper, id).exists()).toBe(true)
-      expect(row(wrapper, id).classes()).not.toContain('is-anchor')
-    }
   })
 
   it('S-009: marks the row it is given as selected and reports a click upward', async () => {

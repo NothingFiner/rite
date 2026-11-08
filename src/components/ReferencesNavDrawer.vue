@@ -24,7 +24,6 @@
         'is-section': item.entry.kind === 'section',
         'notes-orphans': item.entry.kind === 'orphaned',
         selected: item.entry.id === selectedId,
-        'is-anchor': item.entry.id === anchorId,
       }"
       :data-entry-id="item.entry.id"
       @click="selectEntry(item.entry.id)"
@@ -50,7 +49,6 @@ import { llmConfigured } from '../composables/useLlmSettings.js'
 const props = defineProps({
   store: { type: Object, required: true },
   selectedId: { type: String, default: 'overview' },
-  anchorId: { type: String, default: null },
   theme: { type: Object, default: null },
   // The raw llm-settings composable: the generation gate reads
   // `settings.settings.model` through `llmConfigured`.
@@ -164,20 +162,6 @@ function selectEntry(id) {
   padding-left: 18px;
 }
 
-/* The anchor dot sits in the gutter, absolutely placed so the state shifts
-   no row layout. */
-.notes-entry.is-anchor::before {
-  content: '';
-  position: absolute;
-  left: 3px;
-  top: 50%;
-  width: 5px;
-  height: 5px;
-  transform: translateY(-50%);
-  border-radius: 50%;
-  background: currentColor;
-  opacity: 0.45;
-}
 
 .notes-empty {
   font-size: 13px;
