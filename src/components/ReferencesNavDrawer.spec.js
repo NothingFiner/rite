@@ -34,21 +34,18 @@ function mountDrawer(props = {}) {
 const row = (wrapper, id) => wrapper.find(`.notes-entry[data-entry-id="${id}"]`)
 const rowIds = (wrapper) =>
   wrapper.findAll('.notes-entry').map((entry) => entry.attributes('data-entry-id'))
-// The heading carries the app's own `.drawer-heading` for its look; `.notes-group`
-// is only the hook (SPEC.md: DOM contract).
-const groupTitles = (wrapper) => wrapper.findAll('h3.drawer-heading.notes-group').map((g) => g.text())
 
 describe('ReferencesNavDrawer entries', () => {
-  it('S-005: lists the story overview, then the manuscript under a heading per chapter, then the retired group', () => {
+  it('S-005: lists the story overview, then the manuscript in document order, then the orphaned draft', () => {
     const wrapper = mountDrawer()
 
     // Document order, one row per section, with the overview first and the
     // orphaned draft last. A section with no note still has a row.
     expect(rowIds(wrapper)).toEqual(['overview', 'c1', 's1', 'c2', 's2', 'orphaned'])
 
-    // A chapter heading groups the rows beneath it; the retired group keeps the
-    // orphaned draft out of the manuscript's order.
-    expect(groupTitles(wrapper)).toEqual(['Chapter One', 'Chapter 2', 'Retired'])
+    // A chapter's own row stands as its heading, so no row is a label a writer
+    // cannot select, and no chapter name appears twice.
+    expect(wrapper.findAll('h3')).toHaveLength(0)
     expect(row(wrapper, 'overview').text()).toContain('Story overview')
     expect(row(wrapper, 'orphaned').text()).toContain('Orphaned notes')
   })
@@ -74,8 +71,6 @@ describe('ReferencesNavDrawer entries', () => {
     // the row derives the number from the document order.
     expect(row(wrapper, 'c2').text()).toContain('Chapter 2')
     expect(row(wrapper, 'c2').text().trim()).not.toBe('')
-    // The heading over the chapter's rows uses the same rule.
-    expect(groupTitles(wrapper)).toContain('Chapter 2')
     // A titled chapter keeps its stored subtitle.
     expect(row(wrapper, 'c1').text()).toContain('Chapter One')
   })
