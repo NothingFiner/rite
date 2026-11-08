@@ -126,6 +126,13 @@ export function useSummaries(store, llmSettings) {
   /// already-generated summaries in place + checkpointed; the writer fixes setup
   /// and reruns). On success, refreshes the status so the stale count is
   /// accurate, then sets `summaryStatus='ready'`.
+  /// Stub: the whole-manuscript recap (5.20b). Null until generated.
+  const documentSummary = ref(null)
+  const documentSummaryStale = ref(false)
+  async function summarizeDocument() {
+    return null
+  }
+
   async function generateSummaries() {
     const sections = store.doc?.sections || []
     if (sections.length === 0) return
@@ -211,6 +218,14 @@ export function useSummaries(store, llmSettings) {
 
   return {
     summaryStatus,
+    // The per-section trigger, used by the recap's Regenerate. Exported so the
+    // view can call it; it was internal until 5.20a's recap buttons needed it.
+    summarizeOne,
+    // Stub (SPEC.md 5.20b, S-034 … S-038): the document-level recap the Story
+    // overview page renders, its staleness, and its generation trigger.
+    documentSummary,
+    documentSummaryStale,
+    summarizeDocument,
     summaryProgress,
     summaryEntries,
     summaryError,

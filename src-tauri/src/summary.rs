@@ -295,6 +295,68 @@ pub async fn summarize_and_store_section(
     Ok(summary)
 }
 
+
+/// One row of `retrieve_document_summary`: the stored document-level recap plus
+/// its staleness flag. The overview page renders it beside the writer's own
+/// story overview note, labelled as model output like every other recap.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentSummaryEntry {
+    pub summary: String,
+    pub stale: bool,
+}
+
+/// The whole manuscript as the document summary's model input: every section in
+/// document order, each preceded by its displayed title — a Chapter's stored
+/// title is only its subtitle and may be empty (5.9), so an untitled chapter is
+/// named by its number. Pure, so the ordering and naming rules are tested
+/// without an AppState or a network call.
+pub fn document_text(_doc: &Document) -> String {
+    todo!()
+}
+
+/// The document summary's OWN staleness baseline: a hash over
+/// `document_text`'s output, so any section edit invalidates it. Independent of
+/// the per-section baselines, for the same reason `SectionSummary`'s is
+/// independent of `section_hashes`: re-summarizing is user-triggered and the
+/// two drift.
+pub fn document_text_hash(_doc: &Document) -> u64 {
+    todo!()
+}
+
+/// Pair the stored document summary with the live document's staleness, or
+/// `None` when nothing has been generated yet. Absence is a normal first-run
+/// state for a view, never the empty-store error `retrieve_summaries` raises
+/// for the Summaries Feedback Target.
+pub fn build_document_summary_entry(
+    _stored: Option<&SectionSummary>,
+    _doc: &Document,
+) -> Option<DocumentSummaryEntry> {
+    todo!()
+}
+
+/// Generate and store the document-level recap: the whole manuscript in one
+/// request, kept in the sidecar beside the per-section summaries.
+#[tauri::command]
+pub async fn summarize_and_store_document(
+    _endpoint: String,
+    _api_key: Option<String>,
+    _model: String,
+    _state: State<'_, AppState>,
+    _app: AppHandle,
+) -> Result<SectionSummary, String> {
+    todo!()
+}
+
+/// Read the stored document summary with its staleness flag. `None` means
+/// "nothing generated yet" — not an error.
+#[tauri::command]
+pub fn retrieve_document_summary(
+    _state: State<'_, AppState>,
+) -> Result<Option<DocumentSummaryEntry>, String> {
+    todo!()
+}
+
 /// Read the stored summaries in manuscript order, each with its render context
 /// + a `stale` flag. Pure-Rust read (no network) — mirrors `structural_signals`
 /// and is what the "Summaries" Feedback Target injects as context. An empty

@@ -176,3 +176,81 @@ preference; keep them, or change both the test and this note in the same commit.
 | S-027 | e2e | it should name the anchor section in the status bar while References is open, and mark no row in the drawer as the anchor |
 | S-028 | unit | it should offer Regenerate all in the drawer only when a model is configured, and report the choice upward so the shell calls `generateSummaries` |
 | S-029 | unit | it should offer no Regenerate all when no model is configured |
+
+---
+
+# 5.20b — Story overview gets a summary of the manuscript
+
+Approved in review: the overview row was the one page in References with no
+recap and no way to make one. The sentences below are the stage's contract; the
+tests are written and red.
+
+## Context
+
+### Why the overview had nothing
+
+Notes are keyed by **row** (`overview`, a section id, `orphaned`); summaries are
+keyed by **section id**, and `summarize_and_store_section` resolves that id from
+the document. There is no overview section, so no summary could exist for it and
+`Generate` had nothing to call. 5.20a fixed the neighbouring bug (chapter rows
+were sections and were refused anyway); this is the other half.
+
+### What the model reads
+
+**The whole manuscript** — every section in document order, each preceded by its
+displayed title — not the writer's overview note. The note is source the writer
+wrote; a recap of a synopsis tells them nothing. Same split as everywhere else:
+the writer writes source, the model writes cache, model output is labelled.
+
+### Storage
+
+`Sidecar` gains `document_summary: Option<SectionSummary>`, `#[serde(default)]`.
+Every sidecar written before this loads with `None`: no schema bump, no
+migration, and a 4.8-era file is still valid. It is a separate field, not a
+pseudo-section id, because every reader of `summaries` walks the document's
+sections — a reserved key would look like a deleted section to
+`retrieve_stale_summary_section_ids`.
+
+### Staleness
+
+`SectionSummary.section_hash` carries this summary's own baseline, as it does per
+section: `document_text_hash` over the whole manuscript, so **any** section edit
+invalidates it. It stays independent of the per-section baselines — re-summarizing
+is user-triggered and the two drift.
+
+### Cost, stated plainly
+
+One request containing the entire manuscript. It is the one summary call that can
+meet the context window on a long novel; the implementation should refuse or
+truncate rather than fail silently, and either choice needs its own sentence
+before it is written.
+
+## Sentences
+
+| ID | Layer | Sentence |
+|---|---|---|
+| S-030 | rust | it should carry the document summary in the sidecar beside the per-section summaries, and load every earlier sidecar as having none |
+| S-031 | rust | it should build the document summary's input from every section's text in manuscript order, each preceded by its displayed title, an untitled chapter reading `Chapter N` |
+| S-032 | rust | it should give the document summary its own baseline hash over that input, stable for an unchanged manuscript and different once any section's text changes |
+| S-033 | rust | it should read "no document summary yet" as an empty result rather than an error, and report a stored one with its staleness against the live manuscript |
+| S-034 | unit | it should show the document summary on the Story overview page, labelled as model output, and expose it from `useSummaries` with its staleness |
+| S-035 | unit | it should offer Generate summary on the overview page only when a model is configured, and point at General Options otherwise |
+| S-036 | unit | it should mark a stale document summary and regenerate it from the overview page through `summarizeDocument` |
+| S-037 | unit | it should append the document summary to the overview note on Insert into note, without saving |
+| S-038 | unit | it should regenerate the document summary as part of `generateSummaries`, after the sections |
+| S-039 | e2e | it should generate the overview summary in the app, reopen the file, and find it there still labelled |
+
+## DOM contract the tests pin
+
+Only what is new; everything else is the recap surface S-014 … S-020 already
+pinned (`.note-recap`, `.note-recap-label`, `.note-insert-recap`,
+`.note-recap-empty`, `.note-generate`, `.note-options-link`,
+`.note-recap-stale`, `.note-regenerate`). The overview page reuses those
+selectors rather than growing a second set.
+
+## Out of scope
+
+- Truncating or chunking an oversized manuscript (see *Cost* above).
+- Summarizing the writer's overview note, or the orphaned draft.
+- Any change to `retrieve_summaries` or to the Summaries Feedback Target's
+  empty-store error.

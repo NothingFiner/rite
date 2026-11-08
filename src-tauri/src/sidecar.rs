@@ -62,6 +62,11 @@ pub struct Sidecar {
     /// this field is always present on write.
     #[serde(default)]
     pub summaries: HashMap<String, SectionSummary>,
+    /// The document-level recap (5.20b), one per manuscript. `#[serde(default)]`
+    /// so every sidecar written before it existed — schema v2 included — loads
+    /// with `None` and no migration.
+    #[serde(default)]
+    pub document_summary: Option<SectionSummary>,
 }
 
 impl Sidecar {
@@ -79,7 +84,18 @@ impl Sidecar {
             section_hashes,
             vectors,
             summaries,
+            // A snapshot built from the store carries the summaries map; the
+            // document-level recap is written by its own command through
+            // `with_document_summary`.
+            document_summary: None,
         }
+    }
+
+    /// Attach or replace the document-level recap. Separate from `new` so the
+    /// snapshot call sites stay one-liners and the field stays optional.
+    pub fn with_document_summary(mut self, summary: Option<SectionSummary>) -> Self {
+        self.document_summary = summary;
+        self
     }
 }
 
