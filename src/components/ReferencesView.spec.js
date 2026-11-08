@@ -220,6 +220,24 @@ describe('ReferencesView recap', () => {
     expect(wrapper.find('.note-recap').exists()).toBe(false)
   })
 
+  it('S-014: shows a chapter row its own recap, because a chapter is a section too', async () => {
+    const wrapper = mountView({
+      entryId: 'c1',
+      summaries: makeSummaries({ entries: [summaryEntry('c1', 'A recap of the arrival.')] }),
+    })
+
+    expect(wrapper.find('.note-recap-text').text()).toContain('A recap of the arrival.')
+    expect(wrapper.find('.note-insert-recap').exists()).toBe(true)
+    expect(wrapper.find('.note-recap-label').text()).toMatch(/assistant recap/i)
+  })
+
+  it('S-018: offers the generation gate on a chapter with no stored summary', () => {
+    const wrapper = mountView({ entryId: 'c1', summaries: makeSummaries() })
+
+    expect(wrapper.find('.note-recap-empty').exists()).toBe(true)
+    expect(wrapper.find('.note-generate').exists()).toBe(true)
+  })
+
   it('S-017: edits with the pencil, and commits a dirty draft when the selection changes', async () => {
     const store = makeStore()
     const wrapper = mountView({ store, entryId: 's1' })

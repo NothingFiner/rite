@@ -203,11 +203,13 @@ const selectedRecap = computed(() => {
 // the composable object, so the predicate reads its `settings` member.
 const gateOpen = computed(() => llmConfigured(props.settings?.settings))
 
-// The summaries entry for the selected section, or null. Chapter rows carry a
-// sectionId too, so `kind` keeps the recap surface on document sections
-// (SPEC.md trap 3).
+// The summaries entry for the selected section, or null. The predicate is the
+// section id, not the row kind: a chapter is a section too and gets a summary
+// from `summarize_and_store_section`, so keying on `kind === 'section'` hid
+// every chapter's recap. Overview and the orphaned draft carry no section id,
+// which is what keeps the recap surface off the retired row (trap 3).
 const selectedSummaryEntry = computed(() => {
-  if (selectedEntry.value?.kind !== 'section') return null
+  if (!selectedSectionId.value) return null
   const sectionId = selectedSectionId.value
   const summaryEntries = props.summaries?.summaryEntries ?? []
   return summaryEntries.find((entry) => entry.sectionId === sectionId) ?? null
@@ -221,7 +223,7 @@ const selectedStale = computed(() => Boolean(selectedSummaryEntry.value?.stale))
 // without it render nothing extra.
 const showRecapGate = computed(() => {
   if (!props.summaries) return false
-  if (selectedEntry.value?.kind !== 'section') return false
+  if (!selectedSectionId.value) return false
   return !selectedRecap.value
 })
 
