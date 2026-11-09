@@ -313,7 +313,11 @@ export function useEditorReadback({ sheetRef, modelRef, zoomRef, lastRenderedBlo
     )
     lastRenderedBlocks.value = baselineBlocks
 
-    skipNextWatcher.value = true
+    // No `skipNextWatcher` here, unlike `fullSyncFromDOM`: this path mutates one
+    // section in place, so the sections array keeps its identity and the
+    // editor's (shallow) watcher never fires. Arming the flag would leave it set
+    // for the NEXT external change — a menu undo, say — which would then be
+    // skipped, and the sheet would show the pre-undo text.
     emit('syncSection', { id: section.id, title: section.title, sectionType: section.sectionType, hidden: section.hidden, paragraphs: section.paragraphs })
   }
 

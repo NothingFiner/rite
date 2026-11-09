@@ -109,3 +109,52 @@ test('S-H3: every spec that mocks IPC goes through the helper', async () => {
     )
   }
 })
+
+// --- Guard: no deep watch on the document ------------------------------------
+//
+// A `{ deep: true }` watch on `doc.sections` re-walks every paragraph — and
+// every element and style object inside it — on every trigger, just to learn
+// that something changed. Three of them (the editor's reconcile, pagination's
+// recalc, the word count's re-tally) cost ~119ms of main-thread time per
+// keystroke in a 100k-word manuscript, measured: 60% of all samples in `traverse`
+// and 20% more in the proxy reads it performs. Typing lagged, and it got worse
+// with every chapter the writer added.
+//
+// Each watcher looked free when it was written, which is exactly why this is a
+// static guard rather than a timing test: the cost is invisible in a fixture of
+// three sections and shows up only in a real manuscript. Watch a scalar, or a
+// getter that reads one property per section — `calculateBreaks` already diffs
+// per-section signatures to find out WHAT changed, so nothing needs the walk.
+
+const SRC_DIR = join(E2E_DIR, '..', 'src')
+
+function sourceFiles(dir = SRC_DIR, out = []) {
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry)
+    if (statSync(full).isDirectory()) sourceFiles(full, out)
+    else if (/\.(js|vue)$/.test(entry) && !/\.(test|spec)\.js$/.test(entry)) out.push(full)
+  }
+  return out
+}
+
+test('S-H4: nothing deep-watches the document', () => {
+  const offenders = []
+  for (const file of sourceFiles()) {
+    const source = readFileSync(file, 'utf8')
+    for (let at = source.indexOf('deep: true'); at !== -1; at = source.indexOf('deep: true', at + 1)) {
+      // The watch() this option belongs to is the nearest one above it.
+      const watchAt = source.lastIndexOf('watch(', at)
+      if (watchAt === -1) continue
+      const getter = source.slice(watchAt, at)
+      if (!/sections|modelValue/.test(getter)) continue
+      const line = source.slice(0, at).split('\n').length
+      offenders.push(`${relative(SRC_DIR, file)}:${line}`)
+    }
+  }
+
+  expect(
+    offenders,
+    'these watchers deep-walk the document on every keystroke; watch a scalar or ' +
+      'one property per section instead (see this test\'s comment)',
+  ).toEqual([])
+})

@@ -724,6 +724,12 @@ function renderFromDoc() {
   renderEditor()
 }
 
+// NOT a deep watch, on purpose. Typing mutates a section's paragraphs in place
+// and the sheet is already in sync with the DOM it produced, so there is
+// nothing to reconcile — a deep watch would walk every paragraph of the
+// manuscript on every keystroke to discover that. External changes (undo,
+// restore, import, open) all replace `doc.sections` with a new array, which a
+// shallow watch sees.
 watch(() => props.modelValue?.sections, () => {
   if (skipNextWatcher.value) {
     skipNextWatcher.value = false
@@ -732,7 +738,7 @@ watch(() => props.modelValue?.sections, () => {
   // External model change: patch by id so the caret stays. Skipped when this
   // component caused it (`skipNextWatcher`).
   reconcileEditor()
-}, { deep: true })
+})
 
 watch(pageBreaks, () => {
   layoutPageBreaks()
