@@ -112,18 +112,11 @@ test('S-H3: every spec that mocks IPC goes through the helper', async () => {
 
 // Guard: no deep watch on the document.
 //
-// A `{ deep: true }` watch on `doc.sections` re-walks every paragraph on every
-// trigger. It walks every element and style object too. Three watchers did that
-// to learn only that something changed: the editor's reconcile, pagination's
-// recalc and the word count's re-tally. Measured, they were ~60% of main-thread
-// time per keystroke in a 100k-word manuscript. Typing lagged, and got worse
-// with each chapter added.
-//
-// Each watcher looked free when written, which is why this is a static guard and
-// not a timing test. The cost is invisible in a three-section fixture and
-// appears only in a real manuscript. Watch a scalar, or a getter that reads one
-// property per section. `calculateBreaks` already diffs per-section signatures
-// to find what changed, so nothing needs the walk.
+// A `{ deep: true }` watch on `doc.sections` walks every paragraph, element and
+// style object on every trigger. That cost grows with the manuscript, and typing
+// pays it per keystroke. Watch a scalar, or a getter that reads one property per
+// section. `calculateBreaks` already diffs per-section signatures to find what
+// changed.
 //
 // The scan masks comments and literals, then walks each `watch(` call to its
 // closing paren. A `deep: true` whose call watches `sections` or `modelValue` is
