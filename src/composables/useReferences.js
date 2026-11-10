@@ -152,14 +152,25 @@ export function excludeSection(references, entryId, sectionId) {
   return { ...references, entries: entries.map((entry) => (entry === target ? updated : entry)) }
 }
 
-/// Add a section to an entry's appears-in list by hand. Returns a new
-/// record, or the input unchanged as `excludeSection` defines.
+/// Add a section to an entry's appears-in list by hand, clearing any
+/// exclusion of it. `deriveMentions` tests exclusions first, so a kept
+/// exclusion would hide the hand-added row. Returns a new record, or the
+/// input unchanged when the section is already included and not excluded,
+/// or the entry is missing.
 export function includeSection(references, entryId, sectionId) {
   const entries = Array.isArray(references?.entries) ? references.entries : []
   const target = entries.find((entry) => entry.id === entryId)
-  const included = Array.isArray(target?.includedSections) ? target.includedSections : []
-  if (!target || !sectionId || included.includes(sectionId)) return references
-  const updated = { ...target, includedSections: [...included, sectionId] }
+  if (!target || !sectionId) return references
+  const included = Array.isArray(target.includedSections) ? target.includedSections : []
+  const excluded = Array.isArray(target.excludedSections) ? target.excludedSections : []
+  const alreadyIncluded = included.includes(sectionId)
+  const alreadyExcluded = excluded.includes(sectionId)
+  if (alreadyIncluded && !alreadyExcluded) return references
+  const updated = {
+    ...target,
+    includedSections: alreadyIncluded ? included : [...included, sectionId],
+    excludedSections: excluded.filter((id) => id !== sectionId),
+  }
   return { ...references, entries: entries.map((entry) => (entry === target ? updated : entry)) }
 }
 

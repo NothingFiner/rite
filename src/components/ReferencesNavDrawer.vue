@@ -4,13 +4,15 @@
          record still reaches the Characters and Glossary tabs. No tab
          carries a disabled state. A click reports the surface id upward.
          The shell owns the switch, the same split as the row clicks. -->
-    <div class="surface-tabs">
+    <div class="surface-tabs" role="tablist">
       <button
         v-for="tab in surfaceTabs"
         :key="tab.id"
         type="button"
+        role="tab"
         class="surface-tab"
         :class="{ selected: tab.id === surface }"
+        :aria-selected="tab.id === surface"
         :data-surface="tab.id"
         @click="emit('update:surface', tab.id)"
       >{{ tab.label }}</button>
@@ -29,28 +31,16 @@
         :data-entry-id="entry.id"
         @click="emit('select-entry', entry.id)"
       >{{ entryDisplayName(entry) }}</button>
-      <!-- The three add kinds render as plain buttons, no menu gate: the options
-           sit in the DOM and read without opening anything. A click reports the
-           kind upward. The shell owns creating the entry. -->
-      <div class="reference-add">
+      <!-- The option sits in the DOM without a menu, so the kind reads at a
+           glance. A click reports the kind upward. The shell owns creating
+           the entry. -->
+      <div v-if="addControl" class="reference-add">
         <button
           type="button"
           class="reference-add-option"
-          data-add-kind="term"
-          @click="emit('add-entry', 'term')"
-        >New term</button>
-        <button
-          type="button"
-          class="reference-add-option"
-          data-add-kind="character"
-          @click="emit('add-entry', 'character')"
-        >New character</button>
-        <button
-          type="button"
-          class="reference-add-option"
-          data-add-kind="place"
-          @click="emit('add-entry', 'place')"
-        >New place</button>
+          :data-add-kind="addControl.kind"
+          @click="emit('add-entry', addControl.kind)"
+        >{{ addControl.label }}</button>
       </div>
     </template>
     <template v-else>
@@ -142,6 +132,16 @@ const surfaceTabs = [
   { id: 'glossary', label: 'Glossary' },
 ]
 
+// The add controls, keyed by surface id. Glossary's control creates a term.
+// The entry page's kind switch turns a fresh term into a place, so no drawer
+// button offers one.
+const surfaceAddControls = {
+  characters: { kind: 'character', label: 'New character' },
+  glossary: { kind: 'term', label: 'New term' },
+}
+
+const addControl = computed(() => surfaceAddControls[props.surface])
+
 const isReferenceSurface = computed(() => props.surface === 'characters' || props.surface === 'glossary')
 
 const referenceRows = computed(() => entriesForSurface(props.references, props.surface))
@@ -152,7 +152,8 @@ function selectEntry(id) {
 </script>
 
 <style scoped>
-/* The add bar's option buttons own their chrome (.reference-add-option below). */
+/* The container carries layout only. The option's chrome lives on
+   .reference-add-option below. */
 .reference-add {
   display: flex;
   gap: 4px;
