@@ -100,7 +100,7 @@ names, props, CSS — follows the component you are touching.
 | Selector | Meaning |
 |---|---|
 | `.surface-tab[data-surface="outline\|characters\|glossary"]` | the drawer-head control; all three enabled |
-| `.reference-entry[data-entry-id]` | one row on the Characters or Glossary surface |
+| `.reference-entry[data-entry-id]` | one row on the Characters or Glossary surface; the active row carries `selected` |
 | `.reference-empty` | the empty surface message |
 | `.reference-add` | the add control |
 | `[data-add-kind="term\|character\|place"]` | its three options |
@@ -108,14 +108,14 @@ names, props, CSS — follows the component you are touching.
 | `.reference-definition` | rendered markdown definition |
 | `.reference-definition-empty` | the empty state when no definition exists |
 | `.reference-definition-source` | the editable definition field |
-| `.reference-save` | commit the definition |
+| `.reference-save` | commit the definition, including an edit that `.reference-definition-edit` reopened |
 | `.reference-alias` / `.reference-tag` / `.reference-fact` | detail chips and rows |
 | `.reference-alias-input` / `.reference-alias-add` / `.reference-alias-remove` | add an alias, and remove one |
-| `.reference-name` / `.reference-name-error` | the entry's name field, and the refusal naming the entry that owns the name |
+| `.reference-name` / `.reference-name-error` | the entry's name field, committed on blur or Enter, and the refusal naming the entry that owns the name. The page hides a stale refusal as soon as the field changes |
 | `.reference-entry-heading` | the entry's display name at the top of its page |
 | `.reference-definition-edit` / `.reference-edit-cancel` | edit a committed definition, and abandon the edit |
 | `.reference-kind-toggle` | switch an entry between term and place |
-| `.reference-section-option[data-section-id]` | one section in the appears-in add picker |
+| `.reference-mention-add` / `.reference-section-option[data-section-id]` | a select listing the sections the entry is not already shown in, and one option per section |
 | `.surface-tabs[role="tablist"]` / `.surface-tab[role="tab"][aria-selected]` | the surface head as one connected group with exactly one selected |
 | `.regenerate-all` | the bulk summary control, in the Assistant panel |
 | `.reference-mention[data-section-id]` | one "Appears in / Used in" row |
@@ -141,7 +141,7 @@ names, props, CSS — follows the component you are touching.
 
 ### Revision 2 — completing the surfaces
 
-5.19a shipped the record and the read-only half. The writer could create an entry but not name it, could not correct a mention, could not re-edit a committed definition, and got no feedback when an add landed on a surface they were not looking at. S-026 onward close that gap. They are new behaviour, not bug fixes: the earlier sentences were satisfied as written.
+5.19a shipped the record and the read-only half. The writer could create an entry but not name it, could not correct a mention, could not re-edit a committed definition, and got no feedback when an add landed on a surface they were not looking at. S-026 onward close that gap. The DOM table states the commit trigger, the picker's control type and the reuse of `.reference-save` for edits, because a test that finds no element cannot tell a missing feature from an unstated contract. They are new behaviour, not bug fixes: the earlier sentences were satisfied as written.
 
 Decisions the implementer needs:
 
