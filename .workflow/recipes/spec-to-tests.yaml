@@ -45,10 +45,10 @@ instructions: |
      the tests or stubs and re-run. Repeat until EVERY new test fails on an assertion.
   6. Confirm that all pre-existing tests still pass.
   7. Confirm every S-ID in SPEC.md appears in at least one test name.
-  8. Run `python3 .workflow/comment_check.py --base {{ base_commit }}` and bring every
-     violation inside the rules in `.workflow/TESTING.md`. Skip `--base` when this run was
-     given no base commit. The coder's report only reaches a coder iteration, so tests you
-     write here are never checked by anything else.
+  8. Run `python3 .workflow/comment_check.py --base <the commit you branched from>` and
+     bring every violation inside the rules in `.workflow/TESTING.md`. Use {{ base_commit }}
+     when this run was given one. The coder's report only reaches a coder iteration, so
+     tests you write here are never checked by anything else.
   9. Commit, push, and open a DRAFT pull request (gh pr create --draft) whose body is SPEC.md's
      sentence list. Tell the user the PR number and the branch name.
 
