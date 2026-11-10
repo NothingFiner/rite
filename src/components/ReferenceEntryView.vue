@@ -10,8 +10,9 @@
         aria-label="Entry name"
         @blur="commitName"
         @keydown.enter.prevent="commitName"
+        @input="isNameTouched = true"
       />
-      <p v-if="nameError" class="reference-name-error">{{ nameError }}</p>
+      <p v-if="nameError && !isNameTouched" class="reference-name-error">{{ nameError }}</p>
       <!-- The switch reports the pick. The shell applies it, like the merge
            offer does. -->
       <div v-if="isKindSwitchable" class="reference-kind-row" role="group" aria-label="Entry kind">
@@ -26,11 +27,22 @@
           @click="emit('kind-change', kind)"
         >{{ kind }}</button>
       </div>
-      <!-- A defined entry reads as prose. Only the empty state is editable, so
-           the two surfaces never show together (SPEC.md 5.19a, S-008). -->
-      <div v-if="hasDefinition" class="reference-definition" v-html="renderedDefinition"></div>
-      <template v-else>
-        <p class="reference-definition-empty">No definition yet.</p>
+      <!-- A defined entry reads as prose until the writer edits it. The
+           rendered surface and the source field swap in place, so the two
+           never show together (SPEC.md 5.19a, S-008, S-030). -->
+      <div
+        v-if="hasDefinition && !isDefinitionEditing"
+        class="reference-definition"
+        v-html="renderedDefinition"
+      ></div>
+      <button
+        v-if="hasDefinition && !isDefinitionEditing"
+        type="button"
+        class="reference-definition-edit"
+        @click="openDefinitionEdit"
+      >Edit definition</button>
+      <template v-if="!hasDefinition || isDefinitionEditing">
+        <p v-if="!hasDefinition" class="reference-definition-empty">No definition yet.</p>
         <!-- The draft is a local ref, so editing never mutates the entry prop.
              The writer commits it through save-definition. -->
         <textarea
@@ -39,6 +51,12 @@
           aria-label="Definition source"
         ></textarea>
         <button type="button" class="reference-save" @click="saveDefinition">Save definition</button>
+        <button
+          v-if="isDefinitionEditing"
+          type="button"
+          class="reference-edit-cancel"
+          @click="cancelDefinitionEdit"
+        >Cancel edit</button>
       </template>
     </div>
     <!-- The rail exists only while it has content: chips, derived mentions
@@ -179,26 +197,46 @@ const switchableKinds = ['term', 'place']
 const isKindSwitchable = computed(() => switchableKinds.includes(props.entry.kind))
 
 const mergeOpen = ref(false)
+const isDefinitionEditing = ref(false)
 const definitionDraft = ref(props.entry.definition)
 const nameDraft = ref(props.entry.name)
+// Editing the field hides a stale refusal (SPEC.md DOM contract). The resets
+// in commitName and the entry watcher keep a fresh refusal showing after a
+// commit or an entry swap.
+const isNameTouched = ref(false)
 
 // The draft follows the shown entry, so one entry's text never opens in
 // another entry's empty state. Merge mode closes with it: the survivor's
 // target list drops the absorbed entry, so the old list cannot be offered.
+// The open edit closes and the touched flag resets with it.
 watch(
   () => props.entry,
   (entry) => {
     definitionDraft.value = entry.definition
     nameDraft.value = entry.name
     mergeOpen.value = false
+    isDefinitionEditing.value = false
+    isNameTouched.value = false
   },
 )
+
+// The draft tracks the entry, so the source opens holding the committed text.
+function openDefinitionEdit() {
+  isDefinitionEditing.value = true
+}
+
+// A cancelled edit restores the draft, so reopening shows the committed text.
+function cancelDefinitionEdit() {
+  isDefinitionEditing.value = false
+  definitionDraft.value = props.entry.definition
+}
 
 function saveDefinition() {
   emit('save-definition', definitionDraft.value)
 }
 
 function commitName() {
+  isNameTouched.value = false
   emit('rename', nameDraft.value)
 }
 
@@ -291,7 +329,9 @@ function chooseMerge(targetId) {
   border-color: var(--accent);
 }
 
-.reference-save {
+.reference-save,
+.reference-definition-edit,
+.reference-edit-cancel {
   align-self: flex-start;
   font: inherit;
   font-size: 12px;
@@ -304,7 +344,9 @@ function chooseMerge(targetId) {
   cursor: pointer;
 }
 
-.reference-save:hover {
+.reference-save:hover,
+.reference-definition-edit:hover,
+.reference-edit-cancel:hover {
   opacity: 1;
   color: var(--text-primary);
 }
