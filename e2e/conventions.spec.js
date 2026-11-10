@@ -109,3 +109,174 @@ test('S-H3: every spec that mocks IPC goes through the helper', async () => {
     )
   }
 })
+
+// Guard: no deep watch on the document.
+//
+// A `{ deep: true }` watch on `doc.sections` walks every paragraph, element and
+// style object on every trigger. That cost grows with the manuscript, and typing
+// pays it per keystroke. Watch a scalar, or a getter that reads one property per
+// section. `calculateBreaks` already diffs per-section signatures to find what
+// changed.
+//
+// The scan masks comments and literals, then walks each `watch(` call to its
+// closing paren. A `deep: true` whose call watches `sections` or `modelValue` is
+// an offender.
+
+const SRC_DIR = join(E2E_DIR, '..', 'src')
+
+function sourceFiles(dir = SRC_DIR, out = []) {
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry)
+    if (statSync(full).isDirectory()) sourceFiles(full, out)
+    else if (/\.(js|vue)$/.test(entry) && !/\.(test|spec)\.js$/.test(entry)) out.push(full)
+  }
+  return out
+}
+
+// A comment or a string literal is not code, so its text must never look like a
+// `watch(` call or a `deep: true` option. This replaces that text with spaces of
+// the same length, which keeps every offset and line number intact.
+function maskNonCode(source) {
+  const masked = source.split('')
+  let lastCode = ''
+  let i = 0
+  while (i < source.length) {
+    const ch = source[i]
+    const next = source[i + 1]
+
+    if (ch === '/' && next === '/') {
+      while (i < source.length && source[i] !== '\n') masked[i++] = ' '
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      masked[i++] = ' '
+      masked[i++] = ' '
+      while (i < source.length && !(source[i] === '*' && source[i + 1] === '/')) {
+        if (source[i] !== '\n') masked[i] = ' '
+        i += 1
+      }
+      if (i < source.length) {
+        masked[i++] = ' '
+        masked[i++] = ' '
+      }
+      continue
+    }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      const quote = ch
+      masked[i++] = ' '
+      while (i < source.length) {
+        if (source[i] === '\\') {
+          masked[i++] = ' '
+          if (i < source.length && source[i] !== '\n') masked[i++] = ' '
+          continue
+        }
+        if (source[i] === quote) {
+          masked[i++] = ' '
+          break
+        }
+        if (source[i] !== '\n') masked[i] = ' '
+        i += 1
+      }
+      lastCode = quote
+      continue
+    }
+    // A slash after a value is division. After an operator or an opener, a slash
+    // starts a regular expression whose parentheses are text.
+    if (ch === '/' && (lastCode === '' || '=(:,[!&|?{};+-*%<>~^'.includes(lastCode))) {
+      masked[i++] = ' '
+      let inClass = false
+      while (i < source.length) {
+        const c = source[i]
+        if (c === '\\') {
+          masked[i++] = ' '
+          if (i < source.length && source[i] !== '\n') masked[i++] = ' '
+          continue
+        }
+        if (c === '[') inClass = true
+        else if (c === ']') inClass = false
+        else if (c === '/' && !inClass) {
+          masked[i++] = ' '
+          break
+        } else if (c === '\n') {
+          break
+        }
+        masked[i] = ' '
+        i += 1
+      }
+      lastCode = '/'
+      continue
+    }
+    if (!/\s/.test(ch)) lastCode = ch
+    i += 1
+  }
+  return masked.join('')
+}
+
+// Split a call's argument list at the commas that sit at its own nesting depth.
+// A callback body and an options object each nest one level, so neither splits.
+function callArguments(callText) {
+  const body = callText.slice('watch('.length, -1)
+  const args = []
+  let depth = 0
+  let from = 0
+  for (let i = 0; i < body.length; i += 1) {
+    const ch = body[i]
+    if ('([{'.includes(ch)) depth += 1
+    else if (')]}'.includes(ch)) depth -= 1
+    else if (ch === ',' && depth === 0) {
+      args.push(body.slice(from, i))
+      from = i + 1
+    }
+  }
+  args.push(body.slice(from))
+  return args
+}
+
+// Every `watch(` call in the source, found on the masked text so only real calls
+// count. Each entry carries the call's text and its offset in the file.
+function watchCalls(source) {
+  const masked = maskNonCode(source)
+  const calls = []
+  const token = 'watch('
+  for (let start = masked.indexOf(token); start !== -1; start = masked.indexOf(token, start + 1)) {
+    // `mywatch(` is a different function.
+    if (start > 0 && /[A-Za-z0-9_$]/.test(masked[start - 1])) continue
+    let depth = 0
+    let end = -1
+    for (let i = start + 'watch'.length; i < masked.length; i += 1) {
+      if (masked[i] === '(') depth += 1
+      else if (masked[i] === ')') {
+        depth -= 1
+        if (depth === 0) {
+          end = i
+          break
+        }
+      }
+    }
+    if (end !== -1) calls.push({ start, text: masked.slice(start, end + 1) })
+  }
+  return calls
+}
+
+test('S-H4: nothing deep-watches the document', () => {
+  const offenders = []
+  for (const file of sourceFiles()) {
+    const source = readFileSync(file, 'utf8')
+    for (const { start, text } of watchCalls(source)) {
+      // Vue's first argument is the watched source. The options object follows.
+      const args = callArguments(text)
+      if (!/sections|modelValue/.test(args[0] || '')) continue
+      const options = args.slice(1).find(arg => /^\s*\{/.test(arg) && /\bdeep\s*:\s*true\b/.test(arg))
+      if (!options) continue
+      const deepIndex = text.search(/\bdeep\s*:\s*true\b/)
+      const line = source.slice(0, start + deepIndex).split('\n').length
+      offenders.push(`${relative(SRC_DIR, file)}:${line}`)
+    }
+  }
+
+  expect(
+    offenders,
+    'these watchers deep-walk the document on every keystroke; watch a scalar or ' +
+      'one property per section instead (see this test\'s comment)',
+  ).toEqual([])
+})

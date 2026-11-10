@@ -47,8 +47,11 @@ export function useWordCount(docRef) {
   // fine; SUBSEQUENT changes (typing bursts) are then debounced as below.
   recompute()
 
+  // Watches the live sections without `deep`, for the reason in usePagination.
+  // Reading each section's paragraphs array is enough to notice an edit, because
+  // `syncSection` replaces it. The re-tally below is debounced anyway.
   watch(
-    () => docRef?.value?.sections,
+    () => docRef?.value?.sections?.map((section) => section.paragraphs),
     () => {
       if (timer) clearTimeout(timer)
       // A tally still at 0 means the setup pass saw no document yet and this
@@ -62,7 +65,6 @@ export function useWordCount(docRef) {
       }
       timer = setTimeout(recompute, DEBOUNCE_MS)
     },
-    { deep: true },
   )
 
   onUnmounted(() => {

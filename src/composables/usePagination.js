@@ -263,12 +263,19 @@ export function usePagination(docRef) {
     }
   })
 
+  // Watches the live sections without `deep`. A deep watch walks every paragraph
+  // and every element inside it on each trigger, only to learn that something
+  // changed. The getter below reads one thing per section: its paragraphs array,
+  // which `syncSection` replaces on every edit. An edit then schedules a recalc
+  // for a few hundred proxy reads instead of thousands of traversed objects.
+  // `calculateBreaks` remains the authority on what changed: it diffs each
+  // section's content signature and re-measures only the section that moved.
   watch(
-    () => docRef.value?.sections,
+    () => docRef.value?.sections?.map((section) => section.paragraphs),
     () => {
       scheduleBreaks()
     },
-    { deep: true, immediate: true }
+    { immediate: true }
   )
 
   // When the manuscript page format changes (the user picks Standard / Shunn /
