@@ -2,13 +2,18 @@
   <div class="references-view" :style="surfaceStyles">
     <!-- A reference surface shows the selected entry's page (5.19a). The
          shell owns record, selection and derived mentions. The page renders
-         them and reports definitions, merges and jumps back up. -->
+         them and reports definitions, merges, jumps and record edits back
+         up. -->
     <ReferenceEntryView
       v-if="shownEntry"
       :entry="shownEntry"
       :mentions="entryMentions"
       :merge-targets="mergeTargets"
+      :sections="sections"
       @save-definition="emit('save-definition', $event)"
+      @rename="emit('rename', $event)"
+      @remove-mention="emit('remove-mention', $event)"
+      @include-section="emit('include-section', $event)"
       @merge="emit('merge', $event)"
       @jump="forwardJump"
     />
@@ -58,9 +63,12 @@ const props = defineProps({
   selectedEntryId: { type: String, default: '' },
   // Where each entry appears, scanned by the shell and keyed by entry id.
   mentions: { type: Object, default: () => ({}) },
+  // The manuscript sections fed to the detail page's appears-in picker
+  // (ReferenceEntryView.vue).
+  sections: { type: Array, default: () => [] },
 })
 
-const emit = defineEmits(['jump', 'save-definition', 'merge'])
+const emit = defineEmits(['jump', 'save-definition', 'rename', 'remove-mention', 'include-section', 'merge'])
 
 // Binds the same two theme fields NotesView.vue's surface binds, so the
 // shell and the notes page read as one surface without a colour seam.

@@ -119,10 +119,10 @@ export function removeAlias(references, entryId, alias) {
   return { ...references, entries: entries.map((entry) => (entry === target ? { ...target, aliases: remaining } : entry)) }
 }
 
-/// Switch `entryId` between `term` and `place` and return a new record. The
-/// input record and its entries stay untouched. A missing entry, a repeat of
-/// the entry's own kind or any kind other than `term` and `place` keeps the
-/// input record. A `character` lives on another surface, so the switch must
+/// Switch `entryId` between `term` and `place` and return the updated
+/// record when the switch applies. A missing entry, a repeat of the entry's
+/// own kind or any kind other than `term` and `place` keeps the record as
+/// it came in. A `character` lives on another surface, so the switch must
 /// not move an entry there.
 export function setEntryKind(references, entryId, kind) {
   const entries = Array.isArray(references?.entries) ? references.entries : []

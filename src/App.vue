@@ -141,9 +141,13 @@
           :references="store.references"
           :selected-entry-id="referenceEntryId"
           :mentions="referenceMentions"
+          :sections="referenceSections"
           @jump="onReferencesJump"
           @save-definition="onReferenceDefinitionSave"
           @merge="onReferenceMerge"
+          @rename="onReferenceRename"
+          @remove-mention="onReferenceRemoveMention"
+          @include-section="onReferenceIncludeSection"
         />
         <DocumentRenderer
           ref="editorRef"
@@ -244,7 +248,7 @@ import { useFocusMode } from './composables/useFocusMode.js'
 import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts.js'
 import { createMenuActions, useMenuActions } from './composables/useMenu.js'
 import { noteDraftUndo, noteEntries } from './composables/useNotes.js'
-import { addEntry, mergeEntries, deriveMentions } from './composables/useReferences.js'
+import { addEntry, mergeEntries, deriveMentions, renameEntry, excludeSection, includeSection, sectionsWithChapterIndex } from './composables/useReferences.js'
 import { useThesaurus } from './composables/useThesaurus.js'
 import { useNewDocument } from './composables/useNewDocument.js'
 import { useVersionHistory } from './composables/useVersionHistory.js'
@@ -287,6 +291,12 @@ const notesRef = computed(() => store.notes)
 // read time and never stored, so it cannot drift. Keyed by entry id. The
 // view takes the selected entry's list.
 const referenceMentions = computed(() => deriveMentions(store.references, doc.value))
+
+// The appears-in picker's offerings: the same sections the mention scan
+// walks, so a hand-added row can only name a section that exists.
+const referenceSections = computed(() =>
+  sectionsWithChapterIndex(doc.value).map((row) => row.section),
+)
 
 const editorRef = ref(null)
 // The scroll container that wraps the editor/manuscript (it scrolls, not the
@@ -508,6 +518,12 @@ function toggleRightDrawer() {
 function onActivitySelect(mode) {
   if (leftDrawerOpen.value && leftDrawerMode.value === mode) {
     leftDrawerOpen.value = false
+    // The References drawer is that view's permanent panel (S-050): closing
+    // another rail panel falls back to it. The references item itself stays
+    // closable (S-051 owns that path).
+    if (viewMode.value === 'references' && mode !== 'references') {
+      openLeftDrawer('references')
+    }
   } else {
     openLeftDrawer(mode)
   }
@@ -710,6 +726,19 @@ function onReferenceDefinitionSave(definition) {
   store.pushReferences()
 }
 
+// The heading and the mention rows derive from the record, so swapping it is
+// the whole change. The refusal toast mirrors onReferenceAdd.
+function onReferenceRename(name) {
+  if (!referenceEntryId.value) return
+  const result = renameEntry(store.references, referenceEntryId.value, name)
+  if (result.error) {
+    store.notifyError(new Error(`name owned by "${result.error.ownerName}"`), 'Rename reference')
+    return
+  }
+  store.references = result.references
+  store.pushReferences()
+}
+
 // A merge keeps the chosen survivor: it absorbs the other entry, takes the
 // selection, and the record goes to Rust (5.19a S-014/S-015). A target not
 // present in the record changes nothing.
@@ -719,6 +748,20 @@ function onReferenceMerge(targetId) {
   if (!targetId || !mergedId || !hasTarget) return
   store.references = mergeEntries(store.references, targetId, mergedId)
   referenceEntryId.value = targetId
+  store.pushReferences()
+}
+
+// The rows re-derive from the record, so each edit lands in the record's
+// excluded/included sections through the helpers.
+function onReferenceRemoveMention(sectionId) {
+  if (!sectionId || !referenceEntryId.value) return
+  store.references = excludeSection(store.references, referenceEntryId.value, sectionId)
+  store.pushReferences()
+}
+
+function onReferenceIncludeSection(sectionId) {
+  if (!sectionId || !referenceEntryId.value) return
+  store.references = includeSection(store.references, referenceEntryId.value, sectionId)
   store.pushReferences()
 }
 
