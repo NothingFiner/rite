@@ -84,14 +84,11 @@
         <ReferencesNavDrawer
           :store="store"
           :theme="theme.currentTheme"
-          :settings="llmSettings"
-          :busy="summaries.summariesBusy"
           :selected-id="notesEntryId"
           :surface="referencesTab"
           :references="store.references"
           :selected-entry-id="referenceEntryId"
           @select="onReferenceSelect"
-          @regenerate-all="summaries.generateSummaries()"
           @update:surface="onReferenceSurface"
           @add-entry="onReferenceAdd"
           @select-entry="onReferenceEntrySelect"
@@ -115,6 +112,7 @@
           :roles="chatManager.roles"
           :busy="chatManager.anyBusy || summaries.summariesBusy"
           @open-settings="openGeneralOptions"
+          @regenerate-all="summaries.generateSummaries()"
         />
       </div>
     </div>
@@ -413,9 +411,10 @@ const retrieval = reactive(useRetrieval(store, llmSettingsRaw))
 // Phase 4.8 semantic-summary generation. Mirrors `retrieval` (the 4.3
 // embeddings trigger): the composable owns generation state + the status
 // readout, wired into GeneralOptionsDrawer. `summariesBusy` is OR'd into the
-// LLM panel's busy gate below so Send is disabled during generation. Uses the
-// RAW llm-settings composable (reads `settings.value.*`, like useChat/
-// useRetrieval). Wrapped in `reactive()` so the drawer readout auto-unwraps.
+// LLM panel's busy gate below, disabling Send and Regenerate all during
+// generation. Uses the RAW llm-settings composable (reads `settings.value.*`,
+// like useChat/useRetrieval). Wrapped in `reactive()` so the drawer readout
+// auto-unwraps.
 const summaries = reactive(useSummaries(store, llmSettingsRaw))
 
 // 5.4 writing stats: one instance at the app root. The drawer is a bare view

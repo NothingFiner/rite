@@ -214,6 +214,15 @@
           id="clearConfirm"
         >Confirm Clear</button>
       </transition>
+      <!-- S-045: Regenerate all refreshes every section summary, a
+           manuscript-wide action, so it shares the action row with Clear
+           Conversation. -->
+      <button
+        v-if="canRegenerateAll"
+        class="llm-clear-btn regenerate-all"
+        :disabled="busy"
+        @click="$emit('regenerate-all')"
+      >Regenerate all</button>
     </div>
   </div>
 </template>
@@ -223,6 +232,7 @@ import { ref, computed, watch, nextTick } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { matchSlashCommands, estimateContextTokens } from '../composables/useChat.js'
+import { llmConfigured } from '../composables/useLlmSettings.js'
 
 const props = defineProps({
   chat: { type: Object, required: true },
@@ -263,6 +273,11 @@ const currentRoleDescription = computed(() => {
   const role = props.roles.find((r) => r.name === props.chat.selectedRoleName)
   return role?.description || ''
 })
+
+// The Regenerate all gate (S-045): a configured model, never the API key.
+// The rule lives in `llmConfigured` (useLlmSettings.js). The summaries prop
+// stays optional. The panel reports the click, and App.vue wires the action.
+const canRegenerateAll = computed(() => llmConfigured(props.settings?.settings))
 
 const toggleClearOpen = () => {
   clearOpen.value = !clearOpen.value;

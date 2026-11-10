@@ -15,19 +15,6 @@
         @click="emit('update:surface', tab.id)"
       >{{ tab.label }}</button>
     </div>
-    <!-- Whole-manuscript regeneration. Per-section Regenerate lives on each
-         recap; this is the bulk action after a heavy revision. Gated on a
-         configured model, the same rule as the other generation controls. -->
-    <div v-if="canRegenerateAll" class="references-tools">
-      <button
-        type="button"
-        class="references-regenerate-all"
-        title="Regenerate all summaries"
-        aria-label="Regenerate all summaries"
-        :disabled="busy"
-        @click="emit('regenerate-all')"
-      >{{ busy ? 'Regenerating…' : 'Regenerate all' }}</button>
-    </div>
     <!-- Reference surfaces list rows from the references record alone. The
          row and naming rules live in useReferences.js. An empty manuscript
          must not hide those rows, so the outline walk keeps its own branch. -->
@@ -98,7 +85,6 @@
 
 import { computed } from 'vue'
 import { noteEntries } from '../composables/useNotes.js'
-import { llmConfigured } from '../composables/useLlmSettings.js'
 import { entriesForSurface, entryDisplayName } from '../composables/useReferences.js'
 
 // The rows paint with the chrome palette, except the selected one: the theme
@@ -109,10 +95,6 @@ const props = defineProps({
   store: { type: Object, required: true },
   selectedId: { type: String, default: 'overview' },
   theme: { type: Object, default: null },
-  // The raw llm-settings composable: the generation gate reads
-  // `settings.settings.model` through `llmConfigured`.
-  settings: { type: Object, default: null },
-  busy: { type: Boolean, default: false },
   // Which reference surface the drawer lists (5.19a): outline, characters
   // or glossary. Defaults to outline so the shipped 5.20a tests are unchanged.
   surface: { type: String, default: 'outline' },
@@ -124,13 +106,10 @@ const props = defineProps({
 
 const emit = defineEmits([
   'select',
-  'regenerate-all',
   'update:surface',
   'add-entry',
   'select-entry',
 ])
-
-const canRegenerateAll = computed(() => llmConfigured(props.settings?.settings))
 
 const drawerStyles = computed(() => {
   const theme = props.theme
@@ -173,35 +152,7 @@ function selectEntry(id) {
 </script>
 
 <style scoped>
-/* Row chrome adapted from NotesView.vue's list (same flat grammar). */
-.references-tools {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 8px;
-}
-
-.references-regenerate-all {
-  font: inherit;
-  font-size: 11px;
-  color: var(--text-secondary);
-  background: none;
-  border: 1px solid var(--bg-glass-border);
-  border-radius: var(--radius-sm);
-  padding: 4px 8px;
-  cursor: pointer;
-}
-
-.references-regenerate-all:hover:not(:disabled) {
-  color: var(--text-primary);
-  background: var(--hover-bg);
-}
-
-.references-regenerate-all:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-/* Add bar reuses the regenerate control's chrome. */
+/* The add bar's option buttons own their chrome (.reference-add-option below). */
 .reference-add {
   display: flex;
   gap: 4px;

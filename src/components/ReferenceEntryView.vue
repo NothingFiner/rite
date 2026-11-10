@@ -1,6 +1,20 @@
 <template>
   <div class="reference-entry-view">
     <div class="reference-definition-column">
+      <!-- The switch reports the pick; the shell applies it, like the merge
+           offer does. -->
+      <div v-if="isKindSwitchable" class="reference-kind-row" role="group" aria-label="Entry kind">
+        <button
+          v-for="kind in switchableKinds"
+          :key="kind"
+          type="button"
+          class="reference-kind-toggle"
+          :class="{ selected: entry.kind === kind }"
+          :data-kind="kind"
+          :aria-pressed="entry.kind === kind"
+          @click="emit('kind-change', kind)"
+        >{{ kind }}</button>
+      </div>
       <!-- A defined entry reads as prose. Only the empty state is editable, so
            the two surfaces never show together (SPEC.md 5.19a, S-008). -->
       <div v-if="hasDefinition" class="reference-definition" v-html="renderedDefinition"></div>
@@ -146,6 +160,12 @@ const mentionHeading = computed(() => (props.entry.kind === 'character' ? 'Appea
 
 // One shared renderer, so the definition matches the note preview's markdown.
 const renderedDefinition = computed(() => renderMarkdown(props.entry.definition))
+
+// Only a term and a place switch kind. A character would move to another
+// surface if its kind changed, so it gets no switch (S-047). setEntryKind in
+// useReferences.js owns the refusal and the record change.
+const switchableKinds = ['term', 'place']
+const isKindSwitchable = computed(() => switchableKinds.includes(props.entry.kind))
 
 const mergeOpen = ref(false)
 const definitionDraft = ref(props.entry.definition)
@@ -320,7 +340,8 @@ function chooseMerge(targetId) {
 .reference-mention-go,
 .reference-merge,
 .reference-merge-target,
-.reference-merge-cancel {
+.reference-merge-cancel,
+.reference-kind-toggle {
   font: inherit;
   font-size: 11px;
   color: var(--text-secondary);
@@ -336,7 +357,8 @@ function chooseMerge(targetId) {
 .reference-mention-go:hover,
 .reference-merge:hover,
 .reference-merge-target:hover,
-.reference-merge-cancel:hover {
+.reference-merge-cancel:hover,
+.reference-kind-toggle:hover {
   opacity: 1;
   color: var(--text-primary);
   background: var(--hover-bg);
@@ -350,5 +372,23 @@ function chooseMerge(targetId) {
 
 .reference-merge-target {
   text-align: left;
+}
+
+.reference-kind-row {
+  align-self: flex-start;
+  display: flex;
+  gap: 6px;
+}
+
+/* Kind names are lowercase values, so the label reads like a noun. */
+.reference-kind-toggle {
+  text-transform: capitalize;
+}
+
+/* The accent border marks the kind the entry already has. */
+.reference-kind-toggle.selected {
+  opacity: 1;
+  color: var(--text-primary);
+  border-color: var(--accent);
 }
 </style>
