@@ -102,9 +102,76 @@ export function includeSection(references, entryId, sectionId) {
 /// Merge `mergedId` into `survivorId`: the survivor keeps its name, absorbs the
 /// other's name and aliases, unions tags and facts, keeps its non-empty
 /// definition, and takes over the other's inclusions and exclusions. The
-/// merged entry is removed.
+/// merged entry is removed. Returns the new record directly. The input record
+/// and its entries stay untouched.
 export function mergeEntries(references, survivorId, mergedId) {
-  throw new Error('not implemented')
+  const entries = Array.isArray(references?.entries) ? references.entries : []
+  if (!survivorId || !mergedId) return references
+  const survivor = entries.find((entry) => entry.id === survivorId)
+  const absorbed = entries.find((entry) => entry.id === mergedId)
+  // A self-merge has nothing to absorb, and the removal step would delete the survivor.
+  if (!survivor || !absorbed || survivor === absorbed) return references
+
+  const definition = survivor.definition?.trim()
+    ? survivor.definition
+    : (absorbed.definition ?? '')
+
+  const aliasKeys = new Set()
+  const aliases = []
+  // Alias identity is the trimmed lowercase key the nameOwner comparison uses.
+  // A blank names nothing and the first spelling wins.
+  const absorbAlias = (value) => {
+    const key = (value ?? '').trim().toLowerCase()
+    if (!key || aliasKeys.has(key)) return
+    aliasKeys.add(key)
+    aliases.push(value)
+  }
+  for (const alias of survivor.aliases ?? []) absorbAlias(alias)
+  absorbAlias(absorbed.name)
+  for (const alias of absorbed.aliases ?? []) absorbAlias(alias)
+
+  const facts = []
+  const factKeys = new Set()
+  const absorbFact = (fact) => {
+    if (!fact) return
+    // A fact's identity is the label and value together, so a shared label or
+    // value alone does not dedupe two facts.
+    const key = JSON.stringify([fact.label ?? '', fact.value ?? ''])
+    if (factKeys.has(key)) return
+    factKeys.add(key)
+    facts.push(fact)
+  }
+  for (const fact of survivor.facts ?? []) absorbFact(fact)
+  for (const fact of absorbed.facts ?? []) absorbFact(fact)
+
+  const mergedEntry = {
+    ...survivor,
+    definition,
+    aliases,
+    tags: uniqueValues(survivor.tags, absorbed.tags),
+    facts,
+    includedSections: uniqueValues(survivor.includedSections, absorbed.includedSections),
+    excludedSections: uniqueValues(survivor.excludedSections, absorbed.excludedSections),
+  }
+  return {
+    ...references,
+    entries: entries
+      .map((entry) => (entry === survivor ? mergedEntry : entry))
+      .filter((entry) => entry !== absorbed),
+  }
+}
+
+// Unioned value list for `mergeEntries` fields: blank values dropped, exact
+// duplicates dropped, first occurrence kept.
+function uniqueValues(first, second) {
+  const seen = new Set()
+  const values = []
+  for (const value of [...(first ?? []), ...(second ?? [])]) {
+    if (!value || seen.has(value)) continue
+    seen.add(value)
+    values.push(value)
+  }
+  return values
 }
 
 // A fresh id for a new entry. jsdom may not expose `crypto.randomUUID`, so the
