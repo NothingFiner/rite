@@ -27,6 +27,29 @@
         :data-entry-id="entry.id"
         @click="emit('select-entry', entry.id)"
       >{{ entryDisplayName(entry) }}</button>
+      <!-- The three add kinds render as plain buttons, no menu gate: the options
+           sit in the DOM and read without opening anything. A click reports the
+           kind upward. The shell owns creating the entry. -->
+      <div class="reference-add">
+        <button
+          type="button"
+          class="reference-add-option"
+          data-add-kind="term"
+          @click="emit('add-entry', 'term')"
+        >New term</button>
+        <button
+          type="button"
+          class="reference-add-option"
+          data-add-kind="character"
+          @click="emit('add-entry', 'character')"
+        >New character</button>
+        <button
+          type="button"
+          class="reference-add-option"
+          data-add-kind="place"
+          @click="emit('add-entry', 'place')"
+        >New place</button>
+      </div>
     </template>
     <template v-else>
       <div v-if="isEmptyDocument" class="notes-empty">Nothing to outline.</div>
@@ -153,6 +176,32 @@ function selectEntry(id) {
 .references-regenerate-all:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* Add bar reuses the regenerate control's chrome. */
+.reference-add {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.reference-add-option {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: none;
+  border: 1px solid var(--bg-glass-border);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.reference-add-option:hover {
+  color: var(--text-primary);
+  background: var(--hover-bg);
 }
 
 /* The reference rows keep the outline rows' chrome, selected highlight included. */
