@@ -102,8 +102,9 @@ export function useSummaries(store, llmSettings) {
         documentSummaryStale.value = false
       }
     } catch {
-      // An absent recap is a normal first-run state, not an error. Reset to
-      // null + false, leaving `summaryError` untouched.
+      // A rejected read leaves the page without a recap, which is where an
+      // unsummarized manuscript starts. Only the recap refs reset, so a real
+      // generation error stays on screen.
       documentSummary.value = null
       documentSummaryStale.value = false
     }
@@ -270,8 +271,8 @@ export function useSummaries(store, llmSettings) {
 
   return {
     summaryStatus,
-    // The per-section trigger, used by the recap's Regenerate. Exported so the
-    // view can call it; it was internal until 5.20a's recap buttons needed it.
+    // The per-section trigger the recap's Regenerate calls. A silent no-op while
+    // it stayed internal, so the view needs it exported.
     summarizeOne,
     // The document recap the overview page renders, its staleness, and its
     // generation trigger.

@@ -379,9 +379,9 @@ describe('ReferencesView document recap', () => {
   })
 
   it('S-037: appends the document summary to the overview note without saving it', async () => {
-    // The note is this file's own fixture string, not the e2e spec's: the draft the
-    // page shows must be the shipped overview note followed by the recap, and the
-    // store's copy must still be just the note.
+    // The note is this file's own fixture string, not the e2e spec's. The draft
+    // must be that note followed by the recap. The store's copy must still hold
+    // the note alone.
     const store = makeStore()
     const wrapper = mountView({
       entryId: 'overview',

@@ -1,10 +1,11 @@
 //! The document-level recap (SPEC.md 5.20b, S-030 … S-033).
 //!
-//! The overview page's summary is the manuscript's, not a section's: the model
-//! reads every section in order under its title, and the staleness baseline is
-//! the whole document. These sentences drive the pure half — the ordering and
-//! naming rules, the hash, and the entry the frontend renders — plus the
-//! sidecar field that carries it. No network and no Tauri state.
+//! The overview page's summary belongs to the manuscript, not to a section. The
+//! input and hash rules live in `src-tauri/src/summary.rs`.
+//!
+//! These sentences drive the pure half: the ordering and naming rules, the hash,
+//! and the entry the frontend renders. They also cover the sidecar field that
+//! carries it. No network and no Tauri state.
 
 use rite_lib::document::{Document, Element, Paragraph, Section, SectionType, TextRun};
 use rite_lib::sidecar::Sidecar;
@@ -35,8 +36,9 @@ fn section(id: &str, title: &str, section_type: SectionType, paragraphs: Vec<Par
     }
 }
 
-/// Three sections in one chapter, in manuscript order, with a title-less
-/// chapter in the middle — the shape that catches an order or a naming bug.
+/// Three sections in manuscript order, the middle one a Chapter with no title.
+///
+/// That shape catches an order bug and a naming bug at once.
 fn manuscript() -> Document {
     Document {
         title: "A Novel".into(),
@@ -58,9 +60,8 @@ fn manuscript() -> Document {
 
 #[test]
 fn s_030_a_sidecar_without_a_document_summary_loads_with_none() {
-    // Every sidecar written before 5.20b — schema v2 included — has no
-    // `documentSummary` key. It must load, not fail, and read as "not
-    // generated yet".
+    // A sidecar written without the recap has no `documentSummary` key.
+    // It must load rather than fail, and read as "not generated yet".
     let json = r#"{
         "schemaVersion": 2,
         "sectionHashes": {},
@@ -108,8 +109,8 @@ fn s_031_document_text_lists_every_section_in_manuscript_order() {
 
 #[test]
 fn s_031_document_text_names_an_untitled_chapter_by_its_number() {
-    // A Chapter's stored title is only its subtitle and may be empty (5.9), so
-    // a bare join would give the model a blank heading for chapter two.
+    // A Chapter's stored title may be empty, as `document_text` documents.
+    // Joining it bare would hand the model a blank heading for chapter two.
     let text = document_text(&manuscript());
 
     assert!(
@@ -176,16 +177,18 @@ fn s_033_a_document_summary_of_an_edited_manuscript_is_stale() {
 
 // --- The command surface (S-040, S-041) ------------------------------------
 //
-// S-030 … S-033 pin the pure half, and they pass against a read that only calls
-// `build_document_summary_entry` and a generation command that does nothing. The
-// app's own path is the command pair, so these two sentences drive it: a
+// S-030 … S-033 pin the pure half. They pass against a read that only calls
+// `build_document_summary_entry`, and against a generation command that does
+// nothing at all.
+//
+// The app's own path is the command pair, so these two sentences drive that. A
 // generation stores what the model returned, and a failed generation leaves the
 // stored recap alone.
 //
-// No network, no model: `stub_model` is a throwaway OpenAI-compatible endpoint
-// on port 0 that answers one POST with a canned completion (or a 500) and hands
-// back the request body it saw. Nothing here names a storage field, so the
-// implementation is free to put the recap wherever it likes.
+// `stub_model` is a throwaway OpenAI-compatible endpoint on port 0. It answers
+// one request with a canned completion, or with a 500, and hands back the
+// request body it saw. Nothing here names a storage field, so the implementation
+// may keep the recap wherever it likes.
 
 use rite_lib::state::AppState;
 use rite_lib::summary::{retrieve_document_summary, summarize_and_store_document};
@@ -203,13 +206,16 @@ fn mock_app_with(doc: Document) -> tauri::App<tauri::test::MockRuntime> {
         .manage(AppState::new())
         .build(tauri::test::mock_context(tauri::test::noop_assets()))
         .expect("mock app builds without a window or event loop");
-    *app.state::<AppState>().document.lock().unwrap() = doc;
+    let state = app.state::<AppState>();
+    let _ = std::mem::replace(&mut *state.document.lock().unwrap(), doc);
     app
 }
 
-/// A one-request OpenAI-compatible endpoint. Returns its base URL (the model
-/// client appends `/v1/chat/completions`) and a handle yielding the raw request
-/// the server received, so a sentence can assert on what the model was sent.
+/// A one-request OpenAI-compatible endpoint.
+///
+/// Returns its base URL, to which the model client appends
+/// `/v1/chat/completions`, and a handle yielding the raw request the server
+/// received. A sentence can then assert on what the model was sent.
 fn stub_model(status: u16, reply: &'static str) -> (String, JoinHandle<Vec<u8>>) {
     let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port is free");
     let port = listener.local_addr().expect("the bound address is readable").port();
@@ -286,8 +292,9 @@ fn s_040_generating_the_document_summary_stores_what_the_model_returned() {
         "the stored recap is the text the model returned"
     );
 
-    // The model reads the whole manuscript — every section, in order, under the
-    // title the writer sees — not the overview note and not one section of it.
+    // The model reads the whole manuscript, every section in order, under the
+    // title the writer sees. It does not read the overview note, nor one section
+    // of the manuscript alone.
     let body = String::from_utf8_lossy(&request.join().expect("the stub thread finishes")).to_string();
     for expected in [
         "Chapter 1: The Arrival",
@@ -341,7 +348,8 @@ fn s_041_a_failed_model_call_leaves_the_stored_recap_untouched() {
     .expect("the first generation succeeds against the answering stub");
     good.join().expect("the stub thread finishes");
 
-    // Now the model fails: a real HTTP error, not a stub that refuses to run.
+    // The second stub answers with a real HTTP error, rather than refusing to
+    // run.
     let (broken, bad) = stub_model(500, "the model is down");
     let error = tauri::async_runtime::block_on(summarize_and_store_document(
         broken,

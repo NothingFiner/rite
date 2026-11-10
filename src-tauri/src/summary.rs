@@ -348,11 +348,12 @@ pub struct DocumentSummaryEntry {
     pub stale: bool,
 }
 
-/// The whole manuscript as the document summary's model input: every section in
-/// document order, each preceded by its displayed title — a Chapter's stored
-/// title is only its subtitle and may be empty (5.9), so an untitled chapter is
-/// named by its number. Pure, so the ordering and naming rules are tested
-/// without an AppState or a network call.
+/// The whole manuscript as the document summary's model input. Every section
+/// appears in document order, each preceded by its displayed title.
+///
+/// A Chapter's stored title is only its subtitle and may be empty (5.9), so an
+/// untitled chapter is named by its number. The function is pure, which lets the
+/// ordering and naming rules be tested without an AppState or a network call.
 pub fn document_text(doc: &Document) -> String {
     let mut text = String::new();
     // Same render-derived chapter ordinal rule as build_summary_entries.
@@ -478,8 +479,10 @@ pub async fn summarize_and_store_document<R: Runtime>(
     Ok(recap)
 }
 
-/// Read the stored document summary with its staleness flag. `None` means
-/// "nothing generated yet" — not an error.
+/// Read the stored document summary with its staleness flag.
+///
+/// `None` means "nothing generated yet". That absence is a normal first-run
+/// state, not an error.
 #[tauri::command]
 pub fn retrieve_document_summary(
     state: State<'_, AppState>,

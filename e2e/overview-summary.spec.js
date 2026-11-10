@@ -1,10 +1,10 @@
 import { test, expect } from '@playwright/test'
 import { installTauriIpc } from './helpers/tauri-ipc.js'
 
-// The Story overview's own summary (SPEC.md 5.20b, S-039). The overview is not
-// a section, so nothing in the per-section summary path can serve it: this is
-// the whole-manuscript recap, stored beside the section summaries and read back
-// on reopen. The unit layer covers the page states; this proves the round trip.
+// The Story overview's own summary (SPEC.md 5.20b, S-039). The overview is not a
+// section, so the per-section summary path cannot serve it. This is the
+// whole-manuscript recap, stored beside the section summaries and read back on
+// reopen. The unit layer covers the page states. This covers the round trip.
 
 const textStyle = { bold: false, italic: false, underline: false, fontSize: null }
 
@@ -47,8 +47,8 @@ const notes = { overview: 'A letter travels the wrong way.', sections: { c1: 'Th
 async function install(page) {
   await installTauriIpc(page, { doc })
   // An init script is serialized and runs in the page, so only its argument
-  // object is in scope — module-scope constants like RECAP are not. Pass every
-  // fixture value the routes need through the argument.
+  // object is in scope. Module-scope constants are not reachable from it, which
+  // is why the recap text travels through the argument below.
   await page.addInitScript(
     ({ doc, notes, recap }) => {
       // First load only: an init script runs on every navigation, so an

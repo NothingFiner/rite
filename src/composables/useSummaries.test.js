@@ -1,10 +1,11 @@
-// The document-level recap's triggers (SPEC.md 5.20b, S-020 and S-038).
+// What the overview page's recap needs from the composable (S-020, S-038).
 //
-// The overview page's summary is generated from the whole manuscript, and it
-// must come from the same composable the sections do — one place decides
-// whether generation is running, so `Regenerate all` cannot start two
-// overlapping loops. These sentences pin the composable's own contract: what it
-// exposes to the view, and that bulk generation covers the document too.
+// Section and manuscript generation share one composable, so a single flag
+// decides whether a generation is in flight. Two loops would otherwise let
+// `Regenerate all` start twice.
+//
+// These sentences pin only what the view is handed. The rust side owns the
+// model input, the hash and the stored shape.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { reactive } from 'vue'
