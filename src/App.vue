@@ -87,8 +87,14 @@
           :settings="llmSettings"
           :busy="summaries.summariesBusy"
           :selected-id="notesEntryId"
+          :surface="referencesTab"
+          :references="store.references"
+          :selected-entry-id="referenceEntryId"
           @select="onReferenceSelect"
           @regenerate-all="summaries.generateSummaries()"
+          @update:surface="onReferenceSurface"
+          @add-entry="onReferenceAdd"
+          @select-entry="onReferenceEntrySelect"
         />
       </div>
     </div>
@@ -129,13 +135,17 @@
           v-else-if="viewMode === 'references'"
           :store="store"
           :theme="theme.currentTheme"
-          :tab="referencesTab"
           :summaries="summaries"
           :settings="llmSettings"
           :entry-id="notesEntryId"
           :origin-view="notesOriginView"
-          @update:tab="referencesTab = $event"
+          :surface="referencesTab"
+          :references="store.references"
+          :selected-entry-id="referenceEntryId"
+          :mentions="referenceMentions"
           @jump="onReferencesJump"
+          @save-definition="onReferenceDefinitionSave"
+          @merge="onReferenceMerge"
         />
         <DocumentRenderer
           ref="editorRef"
@@ -236,6 +246,7 @@ import { useFocusMode } from './composables/useFocusMode.js'
 import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts.js'
 import { createMenuActions, useMenuActions } from './composables/useMenu.js'
 import { noteDraftUndo, noteEntries } from './composables/useNotes.js'
+import { addEntry, mergeEntries, deriveMentions } from './composables/useReferences.js'
 import { useThesaurus } from './composables/useThesaurus.js'
 import { useNewDocument } from './composables/useNewDocument.js'
 import { useVersionHistory } from './composables/useVersionHistory.js'
@@ -274,6 +285,11 @@ const { doc } = storeToRefs(store)
 // when a tab sends. A snapshot would go stale after a swap.
 const notesRef = computed(() => store.notes)
 
+// Where each reference entry appears (5.19a): scanned from the manuscript at
+// read time and never stored, so it cannot drift. Keyed by entry id. The
+// view takes the selected entry's list.
+const referenceMentions = computed(() => deriveMentions(store.references, doc.value))
+
 const editorRef = ref(null)
 // The scroll container that wraps the editor/manuscript (it scrolls, not the
 // views themselves — see the .scroll-layer CSS). Used by onGoToTop to jump the
@@ -281,9 +297,13 @@ const editorRef = ref(null)
 const scrollLayerRef = ref(null)
 const viewMode = ref('editor')
 const notesEntryId = ref('overview')
-// App owns the References tab selection so it survives a view switch
-// (SPEC.md 5.20 wiring decision 2, unit S-004/S-005 contract).
+// App owns the drawer's surface selection so it survives a view switch
+// (SPEC.md 5.20 wiring decision 2, unit S-004/S-005 contract). The entry
+// selection rides beside it (SPEC.md 5.19a).
 const referencesTab = ref('outline')
+// The reference entry the page shows (5.19a). The drawer reports row clicks.
+// The shell owns the selection, the way it owns the outline row's.
+const referenceEntryId = ref('')
 // Remembered when References is entered: the view the section jump returns to
 // (SPEC.md 5.20). From History the default is the editor.
 const notesOriginView = ref('editor')
@@ -650,6 +670,59 @@ function onReferenceSelect(id) {
   notesEntryId.value = id
 }
 
+// The same selection contract for the reference surfaces (5.19a).
+function onReferenceEntrySelect(id) {
+  referenceEntryId.value = id
+}
+
+// A surface click swaps the drawer's list. Outline is the notes surface, so
+// leaving a reference surface drops the stale entry selection.
+function onReferenceSurface(surface) {
+  referencesTab.value = surface
+  if (surface !== 'characters' && surface !== 'glossary') referenceEntryId.value = ''
+}
+
+// Adding an entry selects it unnamed, so the empty definition editor opens
+// on the page (5.19a S-007). The swap reaches Rust immediately: save and
+// autosave copy the record Rust holds, so a skipped push leaves the older
+// record on disk.
+function onReferenceAdd(kind) {
+  const result = addEntry(store.references, kind, '')
+  if (result.error) {
+    store.notifyError(new Error(`name owned by "${result.error.ownerName}"`), 'Add reference')
+    return
+  }
+  store.references = result.references
+  referenceEntryId.value = result.entry.id
+  store.pushReferences()
+}
+
+// A definition commit rewrites one entry's markdown and pushes the record.
+// A selection whose entry is gone writes nothing.
+function onReferenceDefinitionSave(definition) {
+  const entries = store.references?.entries ?? []
+  if (!entries.some((entry) => entry.id === referenceEntryId.value)) return
+  store.references = {
+    ...store.references,
+    entries: entries.map((entry) =>
+      entry.id === referenceEntryId.value ? { ...entry, definition } : entry,
+    ),
+  }
+  store.pushReferences()
+}
+
+// A merge keeps the chosen survivor: it absorbs the other entry, takes the
+// selection, and the record goes to Rust (5.19a S-014/S-015). A target not
+// present in the record changes nothing.
+function onReferenceMerge(targetId) {
+  const mergedId = referenceEntryId.value
+  const hasTarget = (store.references?.entries ?? []).some((entry) => entry.id === targetId)
+  if (!targetId || !mergedId || !hasTarget) return
+  store.references = mergeEntries(store.references, targetId, mergedId)
+  referenceEntryId.value = targetId
+  store.pushReferences()
+}
+
 // Manuscript "Go to top" button (5.1b). The manuscript's first page is the
 // title page (front matter), which sits at the very top of the scroll-layer —
 // so going to the top is just scrolling the layer back to scrollTop 0, not
@@ -749,6 +822,7 @@ onMounted(async () => {
   document.execCommand('styleWithCSS', false, true)
   await store.loadInitialDocument()
   await store.retrieveNotes()
+  await store.retrieveReferences()
 
   autosaveTimer = setInterval(() => { store.autosaveDocument() }, AUTOSAVE_INTERVAL_MS)
   // Coarse tick so the "Saved Xm ago" label refreshes. 15s is well below the
@@ -766,6 +840,10 @@ onUnmounted(() => {
 // Opening a document installs that file's notes in Rust (loadDocument sets
 // lastPath), so lastPath is the trigger to re-read them (SPEC.md 5.17).
 watch(() => store.lastPath, () => { store.retrieveNotes() })
+
+// The references record (5.19a) re-reads on the same trigger as the notes
+// read above: an open swap installs its record in Rust.
+watch(() => store.lastPath, () => { store.retrieveReferences() })
 
 // Note edits swap the record (`useNotes.js` writeNote), so a record-level
 // watch reaches Rust with every commit. Immediate, not debounced: the record
