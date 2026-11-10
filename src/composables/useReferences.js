@@ -119,10 +119,17 @@ export function removeAlias(references, entryId, alias) {
   return { ...references, entries: entries.map((entry) => (entry === target ? { ...target, aliases: remaining } : entry)) }
 }
 
-/// Switch an entry between term and place. Any other kind is refused and the
-/// record is returned unchanged. Stub.
+/// Switch `entryId` between `term` and `place` and return a new record. The
+/// input record and its entries stay untouched. A missing entry, a repeat of
+/// the entry's own kind or any kind other than `term` and `place` keeps the
+/// input record. A `character` lives on another surface, so the switch must
+/// not move an entry there.
 export function setEntryKind(references, entryId, kind) {
-  return references
+  const entries = Array.isArray(references?.entries) ? references.entries : []
+  const target = entries.find((entry) => entry.id === entryId)
+  if (!target || (kind !== 'term' && kind !== 'place') || target.kind === kind) return references
+  const updated = { ...target, kind }
+  return { ...references, entries: entries.map((entry) => (entry === target ? updated : entry)) }
 }
 
 /// The entry that owns `name`, case-insensitively, or null. `exceptId` lets a
