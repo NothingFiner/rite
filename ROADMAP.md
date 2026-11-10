@@ -1,6 +1,6 @@
 # Rite — Roadmap
 
-Status as of **2026-11-07**. Phase 5's most recent shipped item is **5.17** (Notes view, #32); 5.16, 5.19 and 5.20 remain open, and Phase 6 is release polish. This line names no commit or `development` hash on purpose: it was stale three times in one day, because a hash in a file goes out of date on the next merge.
+Status as of **2026-11-10**. Phase 5's most recent shipped item is **5.20** (References view, #40, #42, #43, #44); 5.16 and 5.19 remain open, and Phase 6 is release polish. This line names no commit or `development` hash on purpose: it was stale three times in one day, because a hash in a file goes out of date on the next merge.
 
 Tauri v1 → v2 migration landed as PR #15 — a prerequisite for 5.11's context menu, not a roadmap item of its own.
 
@@ -39,7 +39,7 @@ The last feature phase. When this is done, Rite is feature-complete for a first 
 | 5.17 | Notes view: story overview and per-section notes | done (#32) |
 | 5.18 | Tab characters + fixed 0.5-inch tab stops, with a Tab-set first-line indent | done (#22) |
 | **5.19** | **`[[…]]` links, characters in chapters, and custom words with where they are used** | **open — own data model; deferred by 5.17's spec** |
-| **5.20** | **References view: an Outline tab with each section's summary beside its title, and the notes as a second tab (was 5.17)** | **open — specced (#40), tests written and red** |
+| 5.20 | References view: a drawer listing the manuscript and a page per selection, with the generated recap beside the note (was 5.17) | done (#40, #42, #43, #44) |
 
 **Renumbered 2026-11-07.** The Notes view shipped under the ID **5.17** — its spec,
 its commit (`7468024`) and `src-tauri/src/notes.rs` all say 5.17 — which collided
@@ -107,21 +107,22 @@ blocking the main thread), and does the stopword list need to follow the documen
 language. Needs a tokenizer and a curated list — a real feature, not a garnish on
 5.4's graph.
 
-### 5.20 — References view (was 5.17)
+### 5.20 — References view (was 5.17) — done (#40, #42, #43, #44)
 
 The top-level views are **Editor, Manuscript, References, History**. References
-holds the notes' material as tabs, and the notes are not a view of their own:
-**Outline** and **Notes** are the first two, and Characters joins them in 5.19.
-The glossary's home is still undecided.
+is a drawer plus a page: the drawer lists the manuscript and the page shows the
+selected entry's note and its generated recap. The drawer head is a segmented
+control — Outline today, with Characters and Glossary ghosted until their items
+land. `SPEC.md` records the shipped shape; 5.20a superseded the two-tab strip
+this item first scoped, and 5.20b added the overview summary.
 
-Outline puts each section's summary beside its title in document order, so the
-outline reads as an overview of the manuscript rather than a list of headings.
-Its rows come from the document rather than from `retrieve_summaries`, because
-that command leaves out every section with no summary, and an outline with holes
-is not an outline.
+Outline lists Story overview first, then every manuscript section in document
+order with each chapter's own row as its heading, then Orphaned notes. A row
+selects; it never navigates. Rows come from the document rather than from
+`retrieve_summaries`, because that command leaves out every section with no
+summary, and an outline with holes is not an outline.
 
-The hard half of this is already built and is not in the UI where a writer would
-reach for it:
+The hard half is the summary machinery, which lives outside the References view:
 
 - `src-tauri/src/summary.rs` — `build_summary_request`, `plan_resummarize`,
   `retrieve_summaries`, `retrieve_stale_summary_section_ids`. Summaries are
@@ -130,8 +131,8 @@ reach for it:
   `generateSummaries`, `refreshStaleSummaries`.
 - `LlmPanel.vue` renders them as a flat list inside the LLM panel's "Summaries" mode.
 
-What is missing is presentation. Scope it around the existing data: no new
-generation, no new storage, no Rust change. `retrieve_summaries`'s empty-store
+The scope was presentation around the existing data: no new generation, no new
+storage, no Rust change. `retrieve_summaries`'s empty-store
 error stays, because the Summaries feedback target depends on it. A view reads
 that error as "nothing generated yet". The view may trigger generation, so the
 empty state offers "Generate summaries" and a stale summary offers "Refresh
