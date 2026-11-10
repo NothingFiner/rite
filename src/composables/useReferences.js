@@ -44,9 +44,28 @@ export function addEntry(references, kind, name = '') {
 }
 
 /// Rename an entry. Refuses a name another entry owns; returns
-/// `{ references, error }` with the same error shape as `addEntry`.
+/// `{ references, error }` with the same error shape as `addEntry`. A refusal
+/// or a missing entry returns the input record unchanged.
 export function renameEntry(references, entryId, name) {
-  throw new Error('not implemented')
+  const entries = Array.isArray(references?.entries) ? references.entries : []
+  const target = entries.find((entry) => entry.id === entryId)
+  if (!target) return { references, error: null }
+  // nameOwner reads `name.trim()` directly, so a null new name needs the
+  // empty fallback.
+  const owner = nameOwner(references, name ?? '', entryId)
+  if (owner) {
+    return {
+      references,
+      error: { code: 'name-taken', ownerId: owner.id, ownerName: owner.name },
+    }
+  }
+  return {
+    references: {
+      ...references,
+      entries: entries.map((entry) => (entry === target ? { ...entry, name } : entry)),
+    },
+    error: null,
+  }
 }
 
 /// The row label: the name, or `Untitled term` / `Untitled character` /
@@ -104,14 +123,27 @@ export function deriveMentions(references, doc) {
   return Object.fromEntries(mentions)
 }
 
-/// Remove a derived mention by excluding its section. Returns a new record.
+/// Remove a derived mention by excluding its section. Returns a new record,
+/// or the input unchanged when the section is already excluded or the entry
+/// is missing.
 export function excludeSection(references, entryId, sectionId) {
-  throw new Error('not implemented')
+  const entries = Array.isArray(references?.entries) ? references.entries : []
+  const target = entries.find((entry) => entry.id === entryId)
+  const excluded = Array.isArray(target?.excludedSections) ? target.excludedSections : []
+  if (!target || !sectionId || excluded.includes(sectionId)) return references
+  const updated = { ...target, excludedSections: [...excluded, sectionId] }
+  return { ...references, entries: entries.map((entry) => (entry === target ? updated : entry)) }
 }
 
-/// Add a section to an entry's appears-in list by hand. Returns a new record.
+/// Add a section to an entry's appears-in list by hand. Returns a new
+/// record, or the input unchanged as `excludeSection` defines.
 export function includeSection(references, entryId, sectionId) {
-  throw new Error('not implemented')
+  const entries = Array.isArray(references?.entries) ? references.entries : []
+  const target = entries.find((entry) => entry.id === entryId)
+  const included = Array.isArray(target?.includedSections) ? target.includedSections : []
+  if (!target || !sectionId || included.includes(sectionId)) return references
+  const updated = { ...target, includedSections: [...included, sectionId] }
+  return { ...references, entries: entries.map((entry) => (entry === target ? updated : entry)) }
 }
 
 /// Merge `mergedId` into `survivorId`: the survivor keeps its name, absorbs the
