@@ -233,9 +233,12 @@ const props = defineProps({
   manager: { type: Object, required: true },
   roles: { type: Array, default: () => [] },
   busy: { type: Boolean, default: false },
+  // The summaries store, so the panel can offer the manuscript-wide
+  // Regenerate all action (S-045/S-046).
+  summaries: { type: Object, default: null },
 })
 
-defineEmits(['openSettings'])
+defineEmits(['openSettings', 'regenerate-all'])
 
 // Configure marked once: no extra HTML, compact output.
 marked.setOptions({ breaks: true, gfm: true })

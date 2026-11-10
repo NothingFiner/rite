@@ -104,14 +104,25 @@ const props = defineProps({
   // Every other entry in the record, as merge candidates. A record with one
   // entry sends none, and the rail then holds no merge offer.
   mergeTargets: { type: Array, default: () => [] },
+  // The manuscript sections, so the appears-in picker can offer the ones this
+  // entry is not already shown in (S-034).
+  sections: { type: Array, default: () => [] },
+  // The shell's refusal for the last name commit: empty when the name is free,
+  // otherwise it names the entry that owns it (S-028).
+  nameError: { type: String, default: '' },
 })
 
 const emit = defineEmits([
   'save-definition',
+  'cancel-definition',
+  'rename',
   'remove-mention',
   'include-section',
   'merge',
   'jump',
+  'kind-change',
+  'add-alias',
+  'remove-alias',
 ])
 
 const hasDefinition = computed(() => (props.entry.definition || '').trim().length > 0)

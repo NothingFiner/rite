@@ -73,14 +73,44 @@ describe('ReferencesNavDrawer surfaces', () => {
     expect(ids.sort()).toEqual(['r-place', 'r-term'])
   })
 
-  it('S-006: offers one add control with New term, New character and New place', () => {
-    const wrapper = mountDrawer({ surface: 'glossary' })
+  it('S-006: offers one add control per reference surface and none on Outline', () => {
+    const characters = mountDrawer({ surface: 'characters' })
+    const characterAdds = characters.findAll('[data-add-kind]')
+    expect(characterAdds).toHaveLength(1)
+    expect(characterAdds[0].attributes('data-add-kind')).toBe('character')
 
-    const add = wrapper.find('.reference-add')
-    expect(add.exists()).toBe(true)
+    // Glossary adds a term. The page switches it to a place.
+    const glossary = mountDrawer({ surface: 'glossary' })
+    const glossaryAdds = glossary.findAll('[data-add-kind]')
+    expect(glossaryAdds).toHaveLength(1)
+    expect(glossaryAdds[0].attributes('data-add-kind')).toBe('term')
 
-    const kinds = wrapper.findAll('[data-add-kind]').map((option) => option.attributes('data-add-kind'))
-    expect(kinds.sort()).toEqual(['character', 'place', 'term'])
+    const outline = mountDrawer({ surface: 'outline' })
+    expect(outline.find('.reference-add').exists()).toBe(false)
+  })
+
+  it('S-044: renders the three surfaces as one tab group with exactly one selected', () => {
+    const wrapper = mountDrawer({ surface: 'characters' })
+
+    expect(wrapper.find('.surface-tabs').attributes('role')).toBe('tablist')
+
+    const tabs = wrapper.findAll('.surface-tab')
+    expect(tabs).toHaveLength(3)
+    expect(tabs.every((tab) => tab.attributes('role') === 'tab')).toBe(true)
+
+    const selected = tabs.filter((tab) => tab.attributes('aria-selected') === 'true')
+    expect(selected).toHaveLength(1)
+    expect(selected[0].attributes('data-surface')).toBe('characters')
+  })
+
+  it('S-045: shows no Regenerate all control in the References drawer', () => {
+    // Mount with a configured model: the removed control only rendered then.
+    const wrapper = mountDrawer({
+      surface: 'characters',
+      settings: { settings: { model: 'llama3' } },
+    })
+
+    expect(wrapper.text()).not.toContain('Regenerate all')
   })
 
   it('S-007: reports the chosen kind when an entry is added', async () => {

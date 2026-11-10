@@ -88,6 +88,23 @@ export function entriesForSurface(references, surface) {
   return []
 }
 
+/// Add `alias` to an entry and return a new record. Stub: the input record is
+/// returned unchanged until the implementation lands.
+export function addAlias(references, entryId, alias) {
+  return references
+}
+
+/// Drop `alias` from an entry. Stub: returns the input record.
+export function removeAlias(references, entryId, alias) {
+  return references
+}
+
+/// Switch an entry between term and place. Any other kind is refused and the
+/// record is returned unchanged. Stub.
+export function setEntryKind(references, entryId, kind) {
+  return references
+}
+
 /// The entry that owns `name`, case-insensitively, or null. `exceptId` lets a
 /// rename keep its own name.
 export function nameOwner(references, name, exceptId = null) {

@@ -111,3 +111,45 @@ fn s_020_keeps_references_out_of_exports_and_history_snapshots() {
     assert!(!history.contains("Qualen Square"));
     assert!(!history.contains("Named for Izildar Qualen"));
 }
+
+/// S-040: DOCX is built from `Document` alone. The record sits beside it in the
+/// state, so a change that appends glossary content to exports fails here.
+#[test]
+fn s_040_keeps_reference_entries_out_of_the_docx_export() {
+    use std::io::Read;
+
+    let state = AppState::new();
+    let seeded = document_with_text("Izildar Qualen kept the record.");
+    state.document.lock().unwrap().clone_from(&seeded);
+    references::save_references(
+        &state,
+        References {
+            entries: vec![ReferenceEntry {
+                id: "r1".into(),
+                kind: ReferenceKind::Character,
+                name: "Ashfall".into(),
+                definition: "The seasonal fall of grey ash.".into(),
+                ..Default::default()
+            }],
+        },
+    )
+    .unwrap();
+
+    let document = state.document.lock().unwrap().clone();
+    let bytes = rite_lib::export_docx::document_to_docx(&document);
+
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("docx is a zip");
+    let mut xml = String::new();
+    archive
+        .by_name("word/document.xml")
+        .expect("document part")
+        .read_to_string(&mut xml)
+        .expect("read document part");
+
+    assert!(xml.contains("Izildar Qualen"), "manuscript text is exported");
+    assert!(!xml.contains("Ashfall"), "reference entries stay out of the export");
+    assert!(
+        !xml.contains("seasonal fall of grey ash"),
+        "entry definitions stay out of the export"
+    );
+}

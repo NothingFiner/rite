@@ -478,3 +478,17 @@ describe('LlmPanel', () => {
     })
   })
 })
+
+// Revision 2: the manuscript-wide summary refresh belongs to the Assistant
+// panel, not the References drawer.
+describe('LlmPanel Regenerate all', () => {
+  it('S-045: offers Regenerate all and reports the click', async () => {
+    const wrapper = mountPanel()
+
+    const control = wrapper.find('.regenerate-all')
+    expect(control.exists()).toBe(true)
+    await control.trigger('click')
+
+    expect(wrapper.emitted('regenerate-all')).toBeTruthy()
+  })
+})

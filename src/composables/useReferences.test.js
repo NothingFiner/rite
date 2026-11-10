@@ -5,6 +5,9 @@ import {
   renameEntry,
   entryDisplayName,
   entriesForSurface,
+  addAlias,
+  removeAlias,
+  setEntryKind,
   deriveMentions,
   excludeSection,
   includeSection,
@@ -250,5 +253,88 @@ describe('reference entries', () => {
       ownerName: 'Ashfall',
     })
     expect(clash.references.entries.find((entry) => entry.id === twoIds.grey).name).toBe('Grey Tide')
+  })
+})
+
+// Revision 2 (S-028, S-036, S-041 through S-043, S-047): the helpers behind
+// naming, alias editing, mention restoration and the kind switch.
+describe('reference entries: completion helpers', () => {
+  it('S-028: a refused rename names the owner and leaves the record unchanged', () => {
+    const { references, ids } = withEntries([
+      ['ashfall', 'term', 'Ashfall'],
+      ['grey', 'term', 'Grey Tide'],
+    ])
+
+    const refused = renameEntry(references, ids.grey, '  ASHFALL ')
+
+    expect(refused.error).toEqual({
+      code: 'name-taken',
+      ownerId: ids.ashfall,
+      ownerName: 'Ashfall',
+    })
+    expect(refused.references.entries.find((entry) => entry.id === ids.grey).name).toBe('Grey Tide')
+  })
+
+  it('S-036: clears an exclusion when the section is added back by hand', () => {
+    const { references, ids } = withEntries([['ashfall', 'term', 'Ashfall']])
+
+    // The manuscript mentions Ashfall in s1. Removing that mention excludes it.
+    // `deriveMentions` checks exclusions first, so adding the section back has
+    // to clear the exclusion or the row never returns.
+    const removed = excludeSection(references, ids.ashfall, 's1')
+    expect(deriveMentions(removed, referenceDoc)[ids.ashfall]).toEqual([])
+
+    const restored = includeSection(removed, ids.ashfall, 's1')
+    const entry = restored.entries.find((candidate) => candidate.id === ids.ashfall)
+
+    expect(entry.excludedSections).toEqual([])
+    expect(entry.includedSections).toEqual(['s1'])
+    expect(deriveMentions(restored, referenceDoc)[ids.ashfall].map((mention) => mention.sectionId))
+      .toEqual(['s1'])
+  })
+
+  it('S-041: adds an alias, trimmed, without mutating the input record', () => {
+    const { references, ids } = withEntries([['qualen', 'character', 'Izildar Qualen']])
+
+    const after = addAlias(references, ids.qualen, '  Essidor Agjadoff  ')
+
+    expect(after.entries[0].aliases).toEqual(['Essidor Agjadoff'])
+    expect(references.entries[0].aliases).toEqual([])
+  })
+
+  it('S-042: removes an alias and keeps the rest', () => {
+    const { references, ids } = withEntries([['qualen', 'character', 'Izildar Qualen']])
+    const withAliases = addAlias(addAlias(references, ids.qualen, 'Essidor Agjadoff'), ids.qualen, 'Essidor')
+
+    const after = removeAlias(withAliases, ids.qualen, 'Essidor Agjadoff')
+
+    expect(after.entries[0].aliases).toEqual(['Essidor'])
+    expect(withAliases.entries[0].aliases).toEqual(['Essidor Agjadoff', 'Essidor'])
+  })
+
+  it('S-043: an alias triggers a mention on its own', () => {
+    const { references, ids } = withEntries([['qualen', 'character', 'Izildar Qualen']])
+
+    // referenceDoc names Essidor Agjadoff in s1 and the full name in c1.
+    expect(deriveMentions(references, referenceDoc)[ids.qualen].map((mention) => mention.sectionId))
+      .toEqual(['c1'])
+
+    const aliased = addAlias(references, ids.qualen, 'Essidor Agjadoff')
+
+    expect(deriveMentions(aliased, referenceDoc)[ids.qualen].map((mention) => mention.sectionId))
+      .toEqual(['c1', 's1'])
+  })
+
+  it('S-047: switches between term and place, and refuses any other kind', () => {
+    const { references, ids } = withEntries([['square', 'term', 'Qualen Square']])
+
+    const asPlace = setEntryKind(references, ids.square, 'place')
+    expect(asPlace.entries[0].kind).toBe('place')
+    expect(references.entries[0].kind).toBe('term')
+
+    // A character lives on another surface, so the switch must not move an
+    // entry there.
+    const asCharacter = setEntryKind(references, ids.square, 'character')
+    expect(asCharacter.entries[0].kind).toBe('term')
   })
 })
