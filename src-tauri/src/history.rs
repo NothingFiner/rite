@@ -102,6 +102,12 @@ pub struct RiteFile {
     /// and reads back as the empty record. Notes never live in `Document`.
     #[serde(default)]
     pub notes: crate::notes::Notes,
+    /// Reference entries (5.19a). Additive: an older file has no `references`
+    /// key and reads back as the empty record. Entries never live in
+    /// `Document`, so they stay out of exports, word count, search and history
+    /// snapshots.
+    #[serde(default)]
+    pub references: crate::references::References,
 }
 
 /// The `.rite` schema version this build writes and understands. A file whose
@@ -178,6 +184,7 @@ pub fn read_rite_file(json: &str) -> Result<RiteFile, String> {
         history: Vec::new(),
         schema_version: 0,
         notes: crate::notes::Notes::default(),
+        references: crate::references::References::default(),
     })
 }
 
@@ -513,6 +520,7 @@ mod tests {
             history: vec![snapshot(0, "hello"), delta(5, "hello", "hello world")],
             schema_version: CURRENT_RITE_SCHEMA_VERSION,
             notes: crate::notes::Notes::default(),
+            references: crate::references::References::default(),
         };
         let json = serde_json::to_string_pretty(&file).unwrap();
         let back: RiteFile = serde_json::from_str(&json).unwrap();
@@ -529,6 +537,7 @@ mod tests {
             history: vec![snapshot(0, "hello")],
             schema_version: 0,
             notes: crate::notes::Notes::default(),
+            references: crate::references::References::default(),
         };
         write_rite_file(&tmp.base(), file.clone()).unwrap();
         let json = fs::read_to_string(&tmp.base()).unwrap();
@@ -753,6 +762,7 @@ mod tests {
             history: vec![snapshot(0, "hello")],
             schema_version: version,
             notes: crate::notes::Notes::default(),
+            references: crate::references::References::default(),
         }
     }
 

@@ -54,9 +54,22 @@ const props = defineProps({
   // `settings.settings.model` through `llmConfigured`.
   settings: { type: Object, default: null },
   busy: { type: Boolean, default: false },
+  // Which reference surface the drawer head shows (5.19a): outline, characters
+  // or glossary. Defaults to outline so the shipped 5.20a tests are unchanged.
+  surface: { type: String, default: 'outline' },
+  // The references record (5.19a). Entries are source stored beside the notes.
+  references: { type: Object, default: () => ({ entries: [] }) },
+  // The selected reference entry on the non-outline surfaces.
+  selectedEntryId: { type: String, default: '' },
 })
 
-const emit = defineEmits(['select', 'regenerate-all'])
+const emit = defineEmits([
+  'select',
+  'regenerate-all',
+  'update:surface',
+  'add-entry',
+  'select-entry',
+])
 
 const canRegenerateAll = computed(() => llmConfigured(props.settings?.settings))
 
