@@ -319,15 +319,23 @@ export const useDocumentStore = defineStore('document', {
     /// `retrieveNotes`: a null or partial payload keeps the empty shape,
     /// because unmodelled e2e commands resolve null.
     async retrieveReferences() {
-      // Stub: the implementation reads `retrieve_references` and replaces
-      // `this.references`.
+      try {
+        const refs = await invoke('retrieve_references')
+        this.references = { entries: Array.isArray(refs?.entries) ? refs.entries : [] }
+      } catch (e) {
+        this.notifyError(e, 'Failed to load references')
+      }
     },
 
     /// Push the references record to Rust (5.19a). Save and autosave copy it
     /// through `build_rite_file`, so a skipped push leaves the previous record
     /// on disk.
     async pushReferences() {
-      // Stub: the implementation invokes `update_references`.
+      try {
+        await invoke('update_references', { references: this.references })
+      } catch (e) {
+        this.notifyError(e, 'Failed to save references')
+      }
     },
 
     markModified() {
