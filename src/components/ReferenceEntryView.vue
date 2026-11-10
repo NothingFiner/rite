@@ -1,7 +1,18 @@
 <template>
   <div class="reference-entry-view">
     <div class="reference-definition-column">
-      <!-- The switch reports the pick; the shell applies it, like the merge
+      <h2 class="reference-entry-heading">{{ entryDisplayName(entry) }}</h2>
+      <!-- renameEntry in useReferences.js validates the name on commit. The
+           field reports it as entered (S-027). -->
+      <input
+        v-model="nameDraft"
+        class="reference-name"
+        aria-label="Entry name"
+        @blur="commitName"
+        @keydown.enter.prevent="commitName"
+      />
+      <p v-if="nameError" class="reference-name-error">{{ nameError }}</p>
+      <!-- The switch reports the pick. The shell applies it, like the merge
            offer does. -->
       <div v-if="isKindSwitchable" class="reference-kind-row" role="group" aria-label="Entry kind">
         <button
@@ -169,6 +180,7 @@ const isKindSwitchable = computed(() => switchableKinds.includes(props.entry.kin
 
 const mergeOpen = ref(false)
 const definitionDraft = ref(props.entry.definition)
+const nameDraft = ref(props.entry.name)
 
 // The draft follows the shown entry, so one entry's text never opens in
 // another entry's empty state. Merge mode closes with it: the survivor's
@@ -177,12 +189,17 @@ watch(
   () => props.entry,
   (entry) => {
     definitionDraft.value = entry.definition
+    nameDraft.value = entry.name
     mergeOpen.value = false
   },
 )
 
 function saveDefinition() {
   emit('save-definition', definitionDraft.value)
+}
+
+function commitName() {
+  emit('rename', nameDraft.value)
 }
 
 // App.vue swaps the record and moves the selection to the survivor. This
@@ -207,6 +224,37 @@ function chooseMerge(targetId) {
   flex-direction: column;
   gap: 10px;
   min-width: 0;
+}
+
+.reference-entry-heading {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.3;
+  color: var(--text-primary);
+}
+
+.reference-name {
+  font: inherit;
+  font-size: 14px;
+  color: var(--text-primary);
+  background: var(--glass-bg);
+  border: 1px solid var(--bg-glass-border);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  width: 100%;
+}
+
+.reference-name:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.reference-name-error {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  /* Same red as .ai-error in GeneralOptionsDrawer.vue. */
+  color: #e88;
 }
 
 .reference-definition {
