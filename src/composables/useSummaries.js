@@ -61,13 +61,21 @@ export function useSummaries(store, llmSettings) {
   /// The recaps from the last status read. Feeds the References outline.
   const summaryEntries = ref([])
 
+  /// The whole-manuscript recap as Rust stored it, plus whether it is stale.
+  /// Null until the first generation or read.
+  const documentSummary = ref(null)
+  const documentSummaryStale = ref(false)
+
   /// Re-query the store for the readout counts. A pure-Rust read of the
   /// sidecar-backed summaries (no network) via `retrieve_summaries`, which
   /// returns each summarized section with a `stale` flag. On an empty store
   /// (no summaries generated yet) `retrieve_summaries` returns an error — that
   /// is the EXPECTED "nothing here yet" state, not a user-facing failure, so it
   /// is swallowed silently (progress resets to 0/0) rather than surfaced in
-  /// `summaryError`. `total` is the live document's section count.
+  /// `summaryError`. `total` is the live document's section count. Also
+  /// re-reads the stored document recap via `retrieve_document_summary`, a read
+  /// the overview page needs after a reload. That read gets its own try/catch,
+  /// since a rejected `retrieve_summaries` (empty store) must not skip it.
   async function refreshSummaryStatus() {
     const total = store.doc?.sections?.length || 0
     try {
@@ -83,6 +91,22 @@ export function useSummaries(store, llmSettings) {
       // readout shows 0/0. Not a generation error, so no `summaryError`.
       summaryProgress.value = { done: 0, total, stale: 0 }
       summaryEntries.value = []
+    }
+    try {
+      const entry = await invoke('retrieve_document_summary', {})
+      if (entry) {
+        documentSummary.value = entry
+        documentSummaryStale.value = Boolean(entry.stale)
+      } else {
+        documentSummary.value = null
+        documentSummaryStale.value = false
+      }
+    } catch {
+      // A rejected read leaves the page without a recap, which is where an
+      // unsummarized manuscript starts. Only the recap refs reset, so a real
+      // generation error stays on screen.
+      documentSummary.value = null
+      documentSummaryStale.value = false
     }
   }
 
@@ -119,13 +143,44 @@ export function useSummaries(store, llmSettings) {
     }
   }
 
-  /// Generate (or re-generate) a summary for every section in the document.
-  /// Loops the document's sections in order, one non-streaming LLM call each,
-  /// updating `summaryProgress.done` as it goes so the readout advances. On the
-  /// first section failure, stops the loop (a mid-loop error leaves the
-  /// already-generated summaries in place + checkpointed; the writer fixes setup
-  /// and reruns). On success, refreshes the status so the stale count is
-  /// accurate, then sets `summaryStatus='ready'`.
+  /// Generate the whole-manuscript recap and store it. Like `summarizeOne`: one
+  /// `summarize_and_store_document` call over the full manuscript with the chat
+  /// triple, an empty key going out as `null` (see `summarizeOne`). Rust
+  /// returns the stored entry serialised camelCase, or null. A null result
+  /// means nothing was stored, so the refs stay untouched and the call still
+  /// counts as success. Returns true on success, false on failure
+  /// (`summaryError` + `summaryStatus` carry the detail).
+  async function summarizeDocument() {
+    const settings = llmSettings.settings.value
+    try {
+      const entry = await invoke('summarize_and_store_document', {
+        endpoint: settings.endpoint,
+        apiKey: settings.apiKey || null,
+        model: settings.model,
+      })
+      if (entry) {
+        documentSummary.value = entry
+        documentSummaryStale.value = Boolean(entry.stale)
+      }
+      return true
+    } catch (e) {
+      summaryError.value =
+        'Failed to summarize the document — ' +
+        (typeof e === 'string' ? e : (e?.message || String(e)))
+      summaryStatus.value = 'error'
+      return false
+    }
+  }
+
+  /// Generate (or re-generate) a summary for every section in the document,
+  /// then one recap of the whole manuscript. Loops the document's sections in
+  /// order, one non-streaming LLM call each, updating `summaryProgress.done` as
+  /// it goes so the readout advances. On the first section failure, stops the
+  /// loop (a mid-loop error leaves the already-generated summaries in place +
+  /// checkpointed). The writer fixes setup and reruns. A failed recap call
+  /// stops the same way, since the section recaps are already stored and
+  /// checkpointed. On success, sets `summaryStatus='ready'`, then refreshes
+  /// the status so the stale count is accurate.
   async function generateSummaries() {
     const sections = store.doc?.sections || []
     if (sections.length === 0) return
@@ -144,6 +199,11 @@ export function useSummaries(store, llmSettings) {
         ...summaryProgress.value,
         done: summaryProgress.value.done + 1,
       }
+    }
+    const recapOk = await summarizeDocument()
+    if (!recapOk) {
+      summariesBusy.value = false
+      return
     }
     summaryStatus.value = 'ready'
     summariesBusy.value = false
@@ -211,6 +271,14 @@ export function useSummaries(store, llmSettings) {
 
   return {
     summaryStatus,
+    // The per-section trigger the recap's Regenerate calls. A silent no-op while
+    // it stayed internal, so the view needs it exported.
+    summarizeOne,
+    // The document recap the overview page renders, its staleness, and its
+    // generation trigger.
+    documentSummary,
+    documentSummaryStale,
+    summarizeDocument,
     summaryProgress,
     summaryEntries,
     summaryError,

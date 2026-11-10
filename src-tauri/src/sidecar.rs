@@ -62,6 +62,11 @@ pub struct Sidecar {
     /// this field is always present on write.
     #[serde(default)]
     pub summaries: HashMap<String, SectionSummary>,
+    /// The document-level recap (5.20b): one per manuscript, not one per section,
+    /// so it has no key in `summaries`. Every sidecar written without it loads
+    /// as `None`, which is why the schema version stays at 2.
+    #[serde(default)]
+    pub document_summary: Option<SectionSummary>,
 }
 
 impl Sidecar {
@@ -79,7 +84,13 @@ impl Sidecar {
             section_hashes,
             vectors,
             summaries,
+            document_summary: None,
         }
+    }
+
+    pub fn with_document_summary(mut self, summary: Option<SectionSummary>) -> Self {
+        self.document_summary = summary;
+        self
     }
 }
 

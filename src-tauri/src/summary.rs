@@ -40,8 +40,10 @@ use crate::llm::{compose_role_body, ChatMessage, ChatRequest};
 use crate::retrieval::section_text_hash;
 use crate::state::AppState;
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
-use tauri::{AppHandle, State};
+use std::hash::{Hash, Hasher};
+use tauri::{AppHandle, Runtime, State};
 
 /// A per-section neutral recap, generated once by the model and stored in the
 /// durable sidecar (4.7) keyed by `section_id`. `section_hash` is the summary's
@@ -90,6 +92,16 @@ const SUMMARY_PERSONA: &str = "You are a manuscript section summarizer. Your job
 /// to produce) read independently, mirroring how a role's persona body and a
 /// preset's prompt are separate concerns in the chat path.
 const SUMMARY_TASK: &str = "Summarize this section in 2–3 sentences, capturing key events, characters, and shifts. Do not add interpretation beyond what is present in the text.";
+
+/// The fixed persona for the document-level recap. Whole-manuscript scale does
+/// not change the summary contract. The recap stays a neutral report of the
+/// arc, never a critique of it.
+const DOCUMENT_SUMMARY_PERSONA: &str = "You are a manuscript summarizer. Your job is to produce a faithful, neutral recap of the whole manuscript — the story arc, the main characters, and the key events. Do not interpret, critique, judge quality, or suggest changes. Report only what is on the page.";
+
+/// The prompt suffix instructing the model on the recap shape. It is separate
+/// from the persona by the same split `SUMMARY_PERSONA` and `SUMMARY_TASK`
+/// keep, so the recap shape is editable without touching who the model is.
+const DOCUMENT_SUMMARY_TASK: &str = "Summarize this manuscript in a few sentences, capturing the overall arc, the main characters, and the key events. Do not add interpretation beyond what is present in the text.";
 
 /// Concatenate a paragraph's text runs into a plain string — no HTML, no
 /// styling. The same one-liner `retrieval.rs` / `structure.rs` / every export
@@ -142,6 +154,36 @@ pub fn build_summary_request(
         format!("{}: {}", kind_label, section_title)
     };
     let user = format!("{}\n\n{}\n\n{}", SUMMARY_TASK, header, section_text);
+    ChatRequest {
+        endpoint: String::new(),
+        model: String::new(),
+        api_key: None,
+        messages: vec![
+            ChatMessage {
+                role: "system".to_string(),
+                content: system,
+            },
+            ChatMessage {
+                role: "user".to_string(),
+                content: user,
+            },
+        ],
+        temperature: Some(0.3),
+    }
+}
+
+/// Build the `ChatRequest` for the document-level recap. Pure, no I/O and no
+/// state, so it is the unit-testable core of `summarize_and_store_document`
+/// the way `build_summary_request` is the core of `summarize_and_store_section`.
+/// The system message is the fixed document-summary persona through
+/// `compose_role_body`. The user message is the task plus `document_text`
+/// itself, headings included: the model summarizes exactly the text whose hash
+/// is the staleness baseline. Provider fields stay empty. The command fills
+/// them per call, and a low temperature (0.3) keeps the recap faithful rather
+/// than creative.
+pub fn build_document_summary_request(document_text: &str) -> ChatRequest {
+    let system = compose_role_body(DOCUMENT_SUMMARY_PERSONA);
+    let user = format!("{}\n\n{}", DOCUMENT_SUMMARY_TASK, document_text);
     ChatRequest {
         endpoint: String::new(),
         model: String::new(),
@@ -293,6 +335,168 @@ pub async fn summarize_and_store_section(
     }
 
     Ok(summary)
+}
+
+
+/// One row of `retrieve_document_summary`: the stored document-level recap plus
+/// its staleness flag. The overview page renders it beside the writer's own
+/// story overview note, labelled as model output like every other recap.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentSummaryEntry {
+    pub summary: String,
+    pub stale: bool,
+}
+
+/// The whole manuscript as the document summary's model input. Every section
+/// appears in document order, each preceded by its displayed title.
+///
+/// A Chapter's stored title is only its subtitle and may be empty (5.9), so an
+/// untitled chapter is named by its number. The function is pure, which lets the
+/// ordering and naming rules be tested without an AppState or a network call.
+pub fn document_text(doc: &Document) -> String {
+    let mut text = String::new();
+    // Same render-derived chapter ordinal rule as build_summary_entries.
+    let mut chapter_number: u32 = 0;
+    for section in &doc.sections {
+        if section.section_type == SectionType::Chapter {
+            chapter_number += 1;
+        }
+        // A blank line between sections keeps a heading clear of the prose above it.
+        if !text.is_empty() {
+            text.push_str("\n\n");
+        }
+        text.push_str(&section_display_title(section, chapter_number));
+        text.push('\n');
+        text.push_str(&section_text(section));
+    }
+    text
+}
+
+/// The heading `document_text` puts above a section's prose. Mirrors
+/// `sectionDisplayTitle` in `src/composables/useSectionFormat.js`, so the
+/// model input carries the headings the writer sees.
+fn section_display_title(section: &Section, chapter_number: u32) -> String {
+    if section.section_type == SectionType::Chapter {
+        if section.title.is_empty() {
+            format!("Chapter {chapter_number}")
+        } else {
+            format!("Chapter {chapter_number}: {}", section.title)
+        }
+    } else if section.title.is_empty() {
+        "Untitled Section".to_string()
+    } else {
+        section.title.clone()
+    }
+}
+
+/// The document summary's OWN staleness baseline: a hash over
+/// `document_text`'s output, so any section edit invalidates it. Independent of
+/// the per-section baselines, for the same reason `SectionSummary`'s is
+/// independent of `section_hashes`: re-summarizing is user-triggered and the
+/// two drift.
+pub fn document_text_hash(doc: &Document) -> u64 {
+    // DefaultHasher for the cross-process determinism retrieval::section_text_hash relies on.
+    let mut hasher = DefaultHasher::new();
+    document_text(doc).hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Pair the stored document summary with the live document's staleness, or
+/// `None` when nothing has been generated yet. Absence is a normal first-run
+/// state for a view, never the empty-store error `retrieve_summaries` raises
+/// for the Summaries Feedback Target.
+pub fn build_document_summary_entry(
+    stored: Option<&SectionSummary>,
+    doc: &Document,
+) -> Option<DocumentSummaryEntry> {
+    let Some(stored) = stored else {
+        return None;
+    };
+    Some(DocumentSummaryEntry {
+        summary: stored.summary.clone(),
+        stale: stored.section_hash != document_text_hash(doc),
+    })
+}
+
+/// Generate and store the document-level recap: the whole manuscript in one
+/// request, kept in the sidecar beside the per-section summaries.
+///
+/// One-shot, non-streaming, like `summarize_and_store_section`: no llm-token
+/// event, so no cross-talk with a concurrent chat stream. One HTTP request
+/// per call. Storage happens only after the model call succeeds, so a failed
+/// call leaves the stored recap, in memory and sidecar, exactly as it was.
+#[tauri::command]
+pub async fn summarize_and_store_document<R: Runtime>(
+    endpoint: String,
+    api_key: Option<String>,
+    model: String,
+    state: State<'_, AppState>,
+    app: AppHandle<R>,
+) -> Result<SectionSummary, String> {
+    // Snapshot the document under a brief lock so the async HTTP call does not
+    // hold the document lock across I/O.
+    let (doc_hash, doc_text) = {
+        let doc = state.document.lock().map_err(|e| e.to_string())?.clone();
+        (document_text_hash(&doc), document_text(&doc))
+    };
+
+    // Build the fixed-persona request, then fill the provider fields per call.
+    let mut request = build_document_summary_request(&doc_text);
+    request.endpoint = endpoint;
+    request.api_key = api_key;
+    request.model = model;
+
+    let recap_text = crate::llm::llm_chat(request).await?;
+
+    // Storage follows the model call. A failure above returns before any write,
+    // so the stored recap in memory and sidecar survives failed attempts.
+    let recap = SectionSummary {
+        // One recap per manuscript. The sidecar keeps it in its own field, so
+        // section_id carries no key meaning here.
+        section_id: "document".to_string(),
+        section_hash: doc_hash,
+        summary: recap_text,
+    };
+    state
+        .document_summary
+        .lock()
+        .map_err(|e| e.to_string())?
+        .replace(recap.clone());
+
+    // Best-effort sidecar checkpoint when there is a manuscript path, same
+    // pattern as `summarize_and_store_section`. The write snapshots the whole
+    // sidecar, recap included, so no second write is needed.
+    let manuscript_path = state
+        .last_path
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
+    if let Some(path) = manuscript_path {
+        let _ = state.checkpoint_index_to_sidecar(&app, &path);
+    }
+
+    Ok(recap)
+}
+
+/// Read the stored document summary with its staleness flag.
+///
+/// `None` means "nothing generated yet". That absence is a normal first-run
+/// state, not an error.
+#[tauri::command]
+pub fn retrieve_document_summary(
+    state: State<'_, AppState>,
+) -> Result<Option<DocumentSummaryEntry>, String> {
+    // Both reads are pure-Rust snapshots. Staleness comes from
+    // `build_document_summary_entry`, which diffs the stored baseline against
+    // the live manuscript.
+    let stored = state
+        .document_summary
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
+    let doc = state.document.lock().map_err(|e| e.to_string())?.clone();
+    Ok(build_document_summary_entry(stored.as_ref(), &doc))
 }
 
 /// Read the stored summaries in manuscript order, each with its render context

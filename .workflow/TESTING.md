@@ -94,6 +94,13 @@ in the loop. Check these before handing tests over:
   rewinds the record the test is proving survives. Any scroll-alignment
   assertion needs a seeded document taller than the viewport: a short document
   has `maxScroll === 0`, and then no landing can satisfy it.
+- **An init script is serialized: only its argument is in scope.** Playwright ships
+  `page.addInitScript(fn, arg)` as source text and runs it in the page, so a
+  module-scope constant (`const RECAP = '…'`) referenced inside `fn` throws
+  `ReferenceError` at click time, inside a mock route, where nothing reaches the
+  console — the DOM simply never updates and the test reads as an app bug. Pass
+  every fixture value the routes use through the argument object alongside `doc`
+  and `notes`.
 - **Nothing else in the suite is allowed to be flaky on the way in.** A width or
   position read once, right after an action, races the reflow that follows it.
   Poll (`expect.poll`) rather than sample, and check the test is green three runs
