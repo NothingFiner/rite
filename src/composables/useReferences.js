@@ -88,15 +88,35 @@ export function entriesForSurface(references, surface) {
   return []
 }
 
-/// Add `alias` to an entry and return a new record. Stub: the input record is
-/// returned unchanged until the implementation lands.
+/// Add the trimmed `alias` to an entry and return a new record. The input
+/// record and its entries stay untouched. A blank alias, a duplicate alias or
+/// a missing entry returns the input record unchanged. Alias identity matches
+/// `absorbAlias`, trimmed and lowercase, so the first spelling stays.
 export function addAlias(references, entryId, alias) {
-  return references
+  const entries = Array.isArray(references?.entries) ? references.entries : []
+  const target = entries.find((entry) => entry.id === entryId)
+  const trimmed = (alias ?? '').trim()
+  if (!target || !trimmed) return references
+  const wanted = trimmed.toLowerCase()
+  const aliases = Array.isArray(target.aliases) ? target.aliases : []
+  if (aliases.some((value) => (value ?? '').trim().toLowerCase() === wanted)) return references
+  const updated = { ...target, aliases: [...aliases, trimmed] }
+  return { ...references, entries: entries.map((entry) => (entry === target ? updated : entry)) }
 }
 
-/// Drop `alias` from an entry. Stub: returns the input record.
+/// Drop `alias` from an entry and return a new record, matched like
+/// `absorbAlias`. A missing entry or an unknown alias returns the input record
+/// unchanged. The remaining aliases keep their order.
 export function removeAlias(references, entryId, alias) {
-  return references
+  const entries = Array.isArray(references?.entries) ? references.entries : []
+  const target = entries.find((entry) => entry.id === entryId)
+  const wanted = (alias ?? '').trim().toLowerCase()
+  if (!target || !wanted) return references
+  const aliases = Array.isArray(target.aliases) ? target.aliases : []
+  const remaining = aliases.filter((value) => (value ?? '').trim().toLowerCase() !== wanted)
+  // An unmatched filter removes nothing, so the caller keeps the old record.
+  if (remaining.length === aliases.length) return references
+  return { ...references, entries: entries.map((entry) => (entry === target ? { ...target, aliases: remaining } : entry)) }
 }
 
 /// Switch an entry between term and place. Any other kind is refused and the
