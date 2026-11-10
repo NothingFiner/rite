@@ -35,10 +35,10 @@ sentence ID it contradicts.
 | B-001 | Notes scope sends the manuscript instead of the notes | open | assistant / notes |
 | B-002 | Deleting a section drops its note; the orphaned draft stays empty | open | notes / store |
 | B-003 | An unnamed chapter had a blank row in the Notes list | fixed (6b20319) | notes / titles |
-| B-004 | A generated summary is shown beside the note with no label saying which is which | open | notes / vocabulary |
-| B-005 | The References view hides the whole activity bar | open — bundled into 5.20a | references / drawer |
-| B-006 | The generated recap never reaches the note in References | open — bundled into 5.20a | references / notes |
-| B-007 | "Go to text" lands one page before the section | open — bundled into 5.20a | references / jump |
+| B-004 | A generated summary is shown beside the note with no label saying which is which | fixed (d5ca2c2) | notes / vocabulary |
+| B-005 | The References view hides the whole activity bar | fixed (d5ca2c2) | references / drawer |
+| B-006 | The generated recap never reaches the note in References | fixed (d5ca2c2) | references / notes |
+| B-007 | "Go to text" lands one page before the section | fixed (d5ca2c2) | references / jump |
 
 ---
 
@@ -139,7 +139,7 @@ surface: `"Chapter 3: Ash"`, `"Chapter 3"` for a subtitle-less chapter,
 
 ## B-004 — A generated summary is shown beside the note with no label saying which is which
 
-**Status:** open — needs a spec (breaks no sentence; `VOCABULARY.md` rule 1).
+**Status:** fixed (d5ca2c2) — the recap is labelled "Assistant recap · read-only" (`S-014`).
 **Layer:** unit (`src/components/NotesView.vue`).
 
 **Symptom.** Open a section's note in the Notes view and, when a summary exists
@@ -167,7 +167,7 @@ reachability is solved).
 
 ## B-005 — The References view hides the whole activity bar
 
-**Status:** open — bundled into 5.20a (`S-001`, `S-002`).
+**Status:** fixed (d5ca2c2) — `references` is a drawer mode in its own view (`S-001`, `S-002`).
 **Layer:** unit (`src/constants/drawerVisibility.js`, `src/components/ActivityBar.vue`).
 
 **Symptom.** Choose References and every icon on the left rail disappears. No
@@ -190,7 +190,7 @@ that mode only in its own view. The rail keeps Stats and General Options there.
 
 ## B-006 — The generated recap never reaches the note in References
 
-**Status:** open — bundled into 5.20a (`S-014`, `S-015`).
+**Status:** fixed (d5ca2c2) — `ReferencesView` binds `recaps` from `summaryEntries` (`S-014`, `S-015`).
 **Layer:** unit (`src/components/ReferencesView.vue`).
 
 **Symptom.** On the References page the generated summary appears under the note
@@ -215,7 +215,7 @@ owns it.
 
 ## B-007 — "Go to text" lands one page before the section
 
-**Status:** open — bundled into 5.20a (`S-025`).
+**Status:** fixed (d5ca2c2) — the jump lands the section title at the viewport top (`S-025`).
 **Layer:** e2e (`src/App.vue` jump route, `src/composables/useEditorPageNav.js`).
 
 **Symptom.** From a note, "Go to section" opens the editor with the section one
