@@ -59,8 +59,8 @@
         >Cancel edit</button>
       </template>
     </div>
-    <!-- The rail exists only while it has content: chips, derived mentions
-         or a merge offer. One grid cell keeps the groups from wandering. -->
+    <!-- The rail mounts while it has content, and pickable sections qualify
+         as content. One grid cell keeps the groups from wandering. -->
     <aside v-if="hasRail" class="reference-meta">
       <div v-if="aliases.length" class="reference-alias-row">
         <span
@@ -82,7 +82,7 @@
         </div>
       </div>
       <!-- Where the entry shows up in the manuscript, scanned at read time:
-           the rows are derived, so the one action they offer is the jump. -->
+           the rows are derived, so each action reports to the shell. -->
       <div v-if="mentions.length" class="reference-mentions">
         <div class="reference-rail-label">{{ mentionHeading }}</div>
         <div
@@ -99,8 +99,30 @@
             aria-label="Go to section"
             @click="emit('jump', mention.sectionId)"
           >Go to section</button>
+          <button
+            type="button"
+            class="reference-mention-remove"
+            title="Remove mention"
+            aria-label="Remove mention"
+            @click="emit('remove-mention', mention.sectionId)"
+          >Remove</button>
         </div>
       </div>
+      <select
+        v-if="pickableSections.length"
+        class="reference-mention-add"
+        aria-label="Add section"
+        @change="includePickedSection"
+      >
+        <option value="" disabled>Pick a section…</option>
+        <option
+          v-for="section in pickableSections"
+          :key="section.id"
+          class="reference-section-option"
+          :value="section.id"
+          :data-section-id="section.id"
+        >{{ section.title }}</option>
+      </select>
       <!-- A merge rewrites the record, so the survivor is named behind an
            explicit offer: the writer starts it, then picks the entry to keep. -->
       <div v-if="mergeTargets.length" class="reference-merge-block">
@@ -142,7 +164,7 @@ import { entryDisplayName } from '../composables/useReferences.js'
 const props = defineProps({
   entry: { type: Object, required: true },
   // This entry's appears-in rows (5.19a): the parent derives them from the
-  // manuscript. They carry no edit affordance here.
+  // manuscript. A row's remove button reports remove-mention to the parent.
   mentions: { type: Array, default: () => [] },
   // Every other entry in the record, as merge candidates. A record with one
   // entry sends none, and the rail then holds no merge offer.
@@ -180,8 +202,20 @@ const hasMeta = computed(
   () => aliases.value.length > 0 || tags.value.length > 0 || facts.value.length > 0,
 )
 
+// Shown means this entry has an appears-in row in the section. Excluded
+// sections carry no row, so they stay offered and the shell clears the
+// exclusion on include-section.
+const pickableSections = computed(() => {
+  const shownSectionIds = new Set(props.mentions.map((mention) => mention.sectionId))
+  return props.sections.filter((section) => !shownSectionIds.has(section.id))
+})
+
 const hasRail = computed(
-  () => hasMeta.value || props.mentions.length > 0 || props.mergeTargets.length > 0,
+  () =>
+    hasMeta.value ||
+    props.mentions.length > 0 ||
+    props.mergeTargets.length > 0 ||
+    pickableSections.value.length > 0,
 )
 
 // A character appears in a section. A term or a place is used in one.
@@ -244,6 +278,14 @@ function commitName() {
 // view only reports the choice.
 function chooseMerge(targetId) {
   emit('merge', targetId)
+}
+
+// The picker returns to the placeholder, so the next pick fires a fresh change.
+function includePickedSection(event) {
+  const sectionId = event.target.value
+  if (!sectionId) return
+  emit('include-section', sectionId)
+  event.target.value = ''
 }
 </script>
 
@@ -428,6 +470,7 @@ function chooseMerge(targetId) {
 
 /* Rail controls reuse the definition save button's chrome. */
 .reference-mention-go,
+.reference-mention-remove,
 .reference-merge,
 .reference-merge-target,
 .reference-merge-cancel,
@@ -445,6 +488,7 @@ function chooseMerge(targetId) {
 }
 
 .reference-mention-go:hover,
+.reference-mention-remove:hover,
 .reference-merge:hover,
 .reference-merge-target:hover,
 .reference-merge-cancel:hover,
@@ -452,6 +496,22 @@ function chooseMerge(targetId) {
   opacity: 1;
   color: var(--text-primary);
   background: var(--hover-bg);
+}
+
+/* The select shares the name field's surface at rail scale. */
+.reference-mention-add {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--glass-bg);
+  border: 1px solid var(--bg-glass-border);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+}
+
+.reference-mention-add:focus {
+  outline: none;
+  border-color: var(--accent);
 }
 
 .reference-merge-block {
