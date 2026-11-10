@@ -1,5 +1,20 @@
 <template>
   <div class="references-drawer" :style="drawerStyles">
+    <!-- The surface head renders on every surface, so an empty references
+         record still reaches the Characters and Glossary tabs. No tab
+         carries a disabled state. A click reports the surface id upward.
+         The shell owns the switch, the same split as the row clicks. -->
+    <div class="surface-tabs">
+      <button
+        v-for="tab in surfaceTabs"
+        :key="tab.id"
+        type="button"
+        class="surface-tab"
+        :class="{ selected: tab.id === surface }"
+        :data-surface="tab.id"
+        @click="emit('update:surface', tab.id)"
+      >{{ tab.label }}</button>
+    </div>
     <!-- Whole-manuscript regeneration. Per-section Regenerate lives on each
          recap; this is the bulk action after a heavy revision. Gated on a
          configured model, the same rule as the other generation controls. -->
@@ -140,6 +155,14 @@ const drawerItems = computed(() => {
   }))
 })
 
+// The three surfaces the head offers. Each label is the surface id spelled
+// out, matching the mock-up's tab names.
+const surfaceTabs = [
+  { id: 'outline', label: 'Outline' },
+  { id: 'characters', label: 'Characters' },
+  { id: 'glossary', label: 'Glossary' },
+]
+
 const isReferenceSurface = computed(() => props.surface === 'characters' || props.surface === 'glossary')
 
 const referenceRows = computed(() => entriesForSurface(props.references, props.surface))
@@ -202,6 +225,41 @@ function selectEntry(id) {
 .reference-add-option:hover {
   color: var(--text-primary);
   background: var(--hover-bg);
+}
+
+/* Surface tabs reuse the add-option chrome. The selected tab takes the
+   accent family like .notes-entry.selected, so the active surface reads on
+   the dark glass drawer. */
+.surface-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.surface-tab {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: none;
+  border: 1px solid var(--bg-glass-border);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.surface-tab:hover {
+  color: var(--text-primary);
+  background: var(--hover-bg);
+}
+
+.surface-tab.selected {
+  color: var(--note-accent, var(--accent));
+  background: var(--accent-bg);
+  border-color: var(--accent);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 /* The reference rows keep the outline rows' chrome, selected highlight included. */

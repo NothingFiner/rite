@@ -55,7 +55,7 @@ export function entryDisplayName(entry) {
   // A whitespace-only name still counts as unnamed, as in `nameOwner`.
   if (entry?.name?.trim()) return entry.name
   const kind = entry?.kind ?? ''
-  return `Untitled ${kind.charAt(0).toUpperCase()}${kind.slice(1)}`
+  return `Untitled ${kind}`
 }
 
 /// The rows a surface lists: `characters` shows characters; `glossary` shows
@@ -86,7 +86,22 @@ export function nameOwner(references, name, exceptId = null) {
 /// the longest matching name or alias, so `Izildar Qualen` is not also
 /// `Izildar`. Excluded sections are dropped; included sections are added.
 export function deriveMentions(references, doc) {
-  throw new Error('not implemented')
+  const entries = Array.isArray(references?.entries) ? references.entries : []
+  const mentions = new Map(entries.map((entry) => [entry.id, []]))
+  for (const { section, chapterIndex } of sectionsWithChapterIndex(doc)) {
+    const matched = mentionedEntryIds(entries, section)
+    for (const entry of entries) {
+      if ((entry?.excludedSections ?? []).includes(section.id)) continue
+      const included = (entry?.includedSections ?? []).includes(section.id)
+      if (!included && !matched.has(entry.id)) continue
+      mentions.get(entry.id).push({
+        sectionId: section.id,
+        chapterIndex,
+        title: mentionTitle(section, chapterIndex),
+      })
+    }
+  }
+  return Object.fromEntries(mentions)
 }
 
 /// Remove a derived mention by excluding its section. Returns a new record.
@@ -200,4 +215,64 @@ export function sectionsWithChapterIndex(doc) {
 /// A section's display title, for a mention row.
 export function mentionTitle(section, chapterIndex) {
   return sectionDisplayTitle(section, chapterIndex)
+}
+
+/// The entry ids whose name or alias appears in `section`, after the
+/// longest-match arbitration the `deriveMentions` contract defines.
+function mentionedEntryIds(entries, section) {
+  const claimed = []
+  const mentioned = new Set()
+  for (const paragraph of Array.isArray(section?.paragraphs) ? section.paragraphs : []) {
+    const text = paragraphContent(paragraph)
+    const candidates = []
+    for (const entry of entries) {
+      for (const term of entryScanTerms(entry)) {
+        for (const span of termSpans(text, term)) {
+          candidates.push({ entryId: entry.id, ...span, length: term.length })
+        }
+      }
+    }
+    // The longest claim sorts first, and a candidate overlapping a claimed span
+    // drops, so the full name wins the shared text.
+    candidates.sort((a, b) => b.length - a.length || a.start - b.start)
+    for (const candidate of candidates) {
+      const overlaps = claimed.some((span) => candidate.start < span.end && candidate.end > span.start)
+      if (overlaps) continue
+      claimed.push(candidate)
+      mentioned.add(candidate.entryId)
+    }
+  }
+  return mentioned
+}
+
+/// The strings that name `entry` in prose: its name first, then its aliases,
+/// deduped like `absorbAlias` so a repeated spelling scans once.
+function entryScanTerms(entry) {
+  const terms = []
+  const seen = new Set()
+  for (const value of [entry?.name, ...(Array.isArray(entry?.aliases) ? entry.aliases : [])]) {
+    const key = (value ?? '').trim().toLowerCase()
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    terms.push(value.trim())
+  }
+  return terms
+}
+
+/// The whole-word start/end spans of `term` in `text`, case-insensitive as
+/// `nameOwner` treats names in this file.
+function termSpans(text, term) {
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const spans = []
+  for (const match of text.matchAll(new RegExp(`\\b${escaped}\\b`, 'gi'))) {
+    spans.push({ start: match.index, end: match.index + match[0].length })
+  }
+  return spans
+}
+
+/// The prose a paragraph contributes, flattened the way `useChat.js` reads it.
+function paragraphContent(paragraph) {
+  return (paragraph?.elements ?? [])
+    .map((element) => element?.textRun?.content ?? '')
+    .join('')
 }
