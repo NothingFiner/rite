@@ -141,7 +141,7 @@ names, props, CSS — follows the component you are touching.
 
 ### Revision 2 — completing the surfaces
 
-5.19a shipped the record and the read-only half. The writer could create an entry but not name it, could not correct a mention, could not re-edit a committed definition, and got no feedback when an add landed on a surface they were not looking at. S-025 onward close that gap. They are new behaviour, not bug fixes: the earlier sentences were satisfied as written.
+5.19a shipped the record and the read-only half. The writer could create an entry but not name it, could not correct a mention, could not re-edit a committed definition, and got no feedback when an add landed on a surface they were not looking at. S-026 onward close that gap. They are new behaviour, not bug fixes: the earlier sentences were satisfied as written.
 
 Decisions the implementer needs:
 
@@ -157,9 +157,9 @@ Decisions the implementer needs:
 - **The References rail icon is out of scope.** It draws a bookmark where a library glyph belongs; that change was deferred and must not ride on this one.
 - **`VOCABULARY.md` still lacks Reference entry / Place / Glossary.** 5.19a's spec requires them in the same change. That duty was not done and carries over to this one.
 
-S-048 (the rail icon) was removed from the approved list when the icon work was deferred. S-049–S-051 are tagged `e2e`, not `unit`: they are `App.vue` shell behaviour, and the repository has no `App` mount test, so a unit test would require a helper that does not exist — that would be implementation, not a sentence.
+The rail-icon sentence was removed from the approved list when the icon work was deferred, and it has no ID here on purpose: this file is scanned for every `S-nnn` token, and an ID with no test reads as a missing test. S-049–S-051 are tagged `e2e`, not `unit`: they are `App.vue` shell behaviour, and the repository has no `App` mount test, so a unit test would require a helper that does not exist — that would be implementation, not a sentence.
 
-S-025 was withdrawn after S-006 was revised. It read "it should report which drawer surface lists an entry of a given kind", and its only purpose was to decide where to send the drawer after an add that could create a cross-surface entry. With one add control per surface, an add always creates an entry the current surface lists, so there is nothing to switch to and no consumer for the helper. S-038 was reworded for the same reason: the old text ("add a term from the Characters surface") describes an action the revision removed. Both are recorded here rather than silently dropped.
+One further sentence was withdrawn after S-006 was revised. It mapped an entry kind to its drawer surface, so the shell could switch the drawer after a cross-surface add. With one add control per surface, an add always creates an entry the current surface lists: nothing to switch to, and no consumer for the helper. S-038 was reworded for the same reason, because its old text ("add a term from the Characters surface") described an action the revision removed. Neither is listed with an ID, for the reason above.
 
 ## Sentences
 
