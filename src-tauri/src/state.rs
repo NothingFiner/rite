@@ -295,12 +295,13 @@ impl AppState {
             .map_err(|e| e.to_string())?
             .clone();
         let notes = self.notes.lock().map_err(|e| e.to_string())?.clone();
+        let references = self.references.lock().map_err(|e| e.to_string())?.clone();
         Ok(RiteFile {
             document,
             history,
             schema_version: 0,
             notes,
-            references: crate::references::References::default(),
+            references,
         })
     }
 

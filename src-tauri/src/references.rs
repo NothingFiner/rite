@@ -59,13 +59,26 @@ pub struct ReferenceFact {
 }
 
 /// Replace the open document's references record and return what is now stored.
-pub fn save_references(_state: &AppState, _next: References) -> Result<References, String> {
-    todo!()
+/// Marks the document modified. The autosave path picks the record up through
+/// `build_rite_file` rather than writing the file itself.
+pub fn save_references(state: &AppState, next: References) -> Result<References, String> {
+    let mut stored_references = state.references.lock().map_err(|e| e.to_string())?;
+    (*stored_references) = next;
+    let saved = (*stored_references).clone();
+    drop(stored_references);
+
+    let mut modified = state.is_modified.lock().map_err(|e| e.to_string())?;
+    (*modified) = true;
+
+    Ok(saved)
 }
 
 /// The open document's references record.
-pub fn load_references(_state: &AppState) -> References {
-    todo!()
+///
+/// Returns no Result, so lock poisoning panics here instead of mapping to a
+/// string for the writer.
+pub fn load_references(state: &AppState) -> References {
+    state.references.lock().unwrap().clone()
 }
 
 #[tauri::command]
