@@ -13,21 +13,38 @@
         @click="emit('regenerate-all')"
       >{{ busy ? 'Regenerating…' : 'Regenerate all' }}</button>
     </div>
-    <div v-if="isEmptyDocument" class="notes-empty">Nothing to outline.</div>
-    <button
-      v-for="item in drawerItems"
-      :key="item.entry.id"
-      type="button"
-      class="notes-entry"
-      :class="{
-        'is-chapter': item.entry.kind === 'chapter',
-        'is-section': item.entry.kind === 'section',
-        'notes-orphans': item.entry.kind === 'orphaned',
-        selected: item.entry.id === selectedId,
-      }"
-      :data-entry-id="item.entry.id"
-      @click="selectEntry(item.entry.id)"
-    >{{ item.label }}</button>
+    <!-- Reference surfaces list rows from the references record alone. The
+         row and naming rules live in useReferences.js. An empty manuscript
+         must not hide those rows, so the outline walk keeps its own branch. -->
+    <template v-if="isReferenceSurface">
+      <div v-if="referenceRows.length === 0" class="reference-empty">No entries yet.</div>
+      <button
+        v-for="entry in referenceRows"
+        :key="entry.id"
+        type="button"
+        class="reference-entry"
+        :class="{ selected: entry.id === selectedEntryId }"
+        :data-entry-id="entry.id"
+        @click="emit('select-entry', entry.id)"
+      >{{ entryDisplayName(entry) }}</button>
+    </template>
+    <template v-else>
+      <div v-if="isEmptyDocument" class="notes-empty">Nothing to outline.</div>
+      <button
+        v-for="item in drawerItems"
+        :key="item.entry.id"
+        type="button"
+        class="notes-entry"
+        :class="{
+          'is-chapter': item.entry.kind === 'chapter',
+          'is-section': item.entry.kind === 'section',
+          'notes-orphans': item.entry.kind === 'orphaned',
+          selected: item.entry.id === selectedId,
+        }"
+        :data-entry-id="item.entry.id"
+        @click="selectEntry(item.entry.id)"
+      >{{ item.label }}</button>
+    </template>
   </div>
 </template>
 
@@ -37,10 +54,14 @@
 // heading — a group label above it repeated the chapter name and was not
 // selectable. A row click reports the choice upward: the shell owns navigation,
 // useNotes.js owns the row order and the naming rule.
+//
+// 5.19a adds the Characters and Glossary surfaces. Their rows come from the
+// references record, and useReferences.js owns the row and naming rules.
 
 import { computed } from 'vue'
 import { noteEntries } from '../composables/useNotes.js'
 import { llmConfigured } from '../composables/useLlmSettings.js'
+import { entriesForSurface, entryDisplayName } from '../composables/useReferences.js'
 
 // The rows paint with the chrome palette, except the selected one: the theme
 // accent stays its colour (S-022's e2e pins it), and a saturated accent reads on
@@ -54,7 +75,7 @@ const props = defineProps({
   // `settings.settings.model` through `llmConfigured`.
   settings: { type: Object, default: null },
   busy: { type: Boolean, default: false },
-  // Which reference surface the drawer head shows (5.19a): outline, characters
+  // Which reference surface the drawer lists (5.19a): outline, characters
   // or glossary. Defaults to outline so the shipped 5.20a tests are unchanged.
   surface: { type: String, default: 'outline' },
   // The references record (5.19a). Entries are source stored beside the notes.
@@ -96,6 +117,10 @@ const drawerItems = computed(() => {
   }))
 })
 
+const isReferenceSurface = computed(() => props.surface === 'characters' || props.surface === 'glossary')
+
+const referenceRows = computed(() => entriesForSurface(props.references, props.surface))
+
 function selectEntry(id) {
   emit('select', id)
 }
@@ -130,7 +155,9 @@ function selectEntry(id) {
   cursor: default;
 }
 
-.notes-entry {
+/* The reference rows keep the outline rows' chrome, selected highlight included. */
+.notes-entry,
+.reference-entry {
   display: block;
   width: 100%;
   overflow: hidden;
@@ -152,14 +179,17 @@ function selectEntry(id) {
 }
 
 .notes-entry:hover,
-.notes-entry.selected {
+.notes-entry.selected,
+.reference-entry:hover,
+.reference-entry.selected {
   background: var(--hover-bg);
 }
 
 /* The drawer is chrome, so it paints with the chrome palette. The paper theme's
    text colour belongs to the page beside it: bound here it put dark ink on the
    dark glass drawer and the rows vanished. */
-.notes-entry.selected {
+.notes-entry.selected,
+.reference-entry.selected {
   background: var(--accent-bg);
   box-shadow: inset 2px 0 0 var(--accent);
   color: var(--note-accent, var(--accent));
@@ -176,7 +206,8 @@ function selectEntry(id) {
 }
 
 
-.notes-empty {
+.notes-empty,
+.reference-empty {
   font-size: 13px;
   color: var(--text-secondary);
   text-align: center;
