@@ -140,13 +140,13 @@ test('S-H4: nothing deep-watches the document', () => {
   const offenders = []
   for (const file of sourceFiles()) {
     const source = readFileSync(file, 'utf8')
-    for (let at = source.indexOf('deep: true'); at !== -1; at = source.indexOf('deep: true', at + 1)) {
+    for (let deepAt = source.indexOf('deep: true'); deepAt !== -1; deepAt = source.indexOf('deep: true', deepAt + 1)) {
       // The watch() this option belongs to is the nearest one above it.
-      const watchAt = source.lastIndexOf('watch(', at)
+      const watchAt = source.lastIndexOf('watch(', deepAt)
       if (watchAt === -1) continue
-      const getter = source.slice(watchAt, at)
+      const getter = source.slice(watchAt, deepAt)
       if (!/sections|modelValue/.test(getter)) continue
-      const line = source.slice(0, at).split('\n').length
+      const line = source.slice(0, deepAt).split('\n').length
       offenders.push(`${relative(SRC_DIR, file)}:${line}`)
     }
   }
