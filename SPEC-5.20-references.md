@@ -174,6 +174,14 @@ S-004 and S-005 are covered at both layers: the unit test pins the controlled
 `tab` prop and the `update:tab` event that make persistence possible, and the e2e
 tests pin the round trip through a real view switch.
 
+S-028 is superseded in part. The whole-manuscript Regenerate all control moved
+from this drawer to the Assistant panel (5.19a S-045), because it refreshes the
+entire manuscript rather than anything in References. The gate it described — a
+control that appears only when a model is configured — still holds for the
+per-section regenerate on a recap, which remains in the Notes surface. The two
+unit tests that pinned the bulk control's presence in this drawer were removed
+with the move; its new home is pinned in `LlmPanel.spec.js`.
+
 ## Out of scope
 
 - Any Rust change. `retrieve_summaries`' empty-store error stays.
