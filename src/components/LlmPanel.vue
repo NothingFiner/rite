@@ -35,6 +35,19 @@
       >+</button>
     </div>
 
+    <!-- Whole-manuscript summaries regeneration (S-045): the bulk action after
+         a heavy revision. It renders on the panel body, beside the empty state
+         and the transcript, so a fresh chat still reaches it. Gated on a
+         configured model, the same rule as the other generation controls. -->
+    <div v-if="canRegenerateAll" class="llm-regenerate-row">
+      <button
+        type="button"
+        class="regenerate-all"
+        :disabled="busy"
+        @click="emit('regenerate-all')"
+      >{{ busy ? 'Regenerating…' : 'Regenerate all' }}</button>
+    </div>
+
     <!-- Role selector: the chosen persona's composed body becomes the system
          prompt. Presets layer on top; they don't replace the role. -->
     <div class="llm-role-row">
@@ -223,6 +236,7 @@ import { ref, computed, watch, nextTick } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { matchSlashCommands, estimateContextTokens } from '../composables/useChat.js'
+import { llmConfigured } from '../composables/useLlmSettings.js'
 
 const props = defineProps({
   chat: { type: Object, required: true },
@@ -233,15 +247,17 @@ const props = defineProps({
   manager: { type: Object, required: true },
   roles: { type: Array, default: () => [] },
   busy: { type: Boolean, default: false },
-  // The summaries store, so the panel can offer the manuscript-wide
-  // Regenerate all action (S-045/S-046).
-  summaries: { type: Object, default: null },
 })
 
-defineEmits(['openSettings', 'regenerate-all'])
+const emit = defineEmits(['openSettings', 'regenerate-all'])
 
 // Configure marked once: no extra HTML, compact output.
 marked.setOptions({ breaks: true, gfm: true })
+
+// The regeneration gate: a configured model, never the API key. The rule lives
+// in `llmConfigured` (useLlmSettings.js). The settings prop is the composable
+// object, so the predicate reads its `settings` member.
+const canRegenerateAll = computed(() => llmConfigured(props.settings?.settings))
 
 const messagesContainer = ref(null)
 const clearOpen = ref(false)
@@ -627,6 +643,34 @@ watch(
 .llm-clear-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+/* Whole-manuscript regeneration (S-045): ghost chrome like the clear row, so
+   the bulk action reads as a maintenance control, not a send. */
+.llm-regenerate-row {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.regenerate-all {
+  font: inherit;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: none;
+  border: 1px solid var(--bg-glass-border);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.regenerate-all:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--hover-bg);
+}
+
+.regenerate-all:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* Message list — scrolls independently within the drawer. */

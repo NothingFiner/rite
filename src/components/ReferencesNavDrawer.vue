@@ -3,8 +3,10 @@
     <!-- The surface head renders on every surface, so an empty references
          record still reaches the Characters and Glossary tabs. No tab
          carries a disabled state. A click reports the surface id upward.
-         The shell owns the switch, the same split as the row clicks. -->
-    <div class="surface-tabs">
+         The shell owns the switch, the same split as the row clicks. The
+         head speaks the tab roles. aria-selected spells false on unselected
+         tabs too, so exactly one tab is explicitly selected. -->
+    <div class="surface-tabs" role="tablist">
       <button
         v-for="tab in surfaceTabs"
         :key="tab.id"
@@ -12,21 +14,10 @@
         class="surface-tab"
         :class="{ selected: tab.id === surface }"
         :data-surface="tab.id"
+        role="tab"
+        :aria-selected="tab.id === surface ? 'true' : 'false'"
         @click="emit('update:surface', tab.id)"
       >{{ tab.label }}</button>
-    </div>
-    <!-- Whole-manuscript regeneration. Per-section Regenerate lives on each
-         recap; this is the bulk action after a heavy revision. Gated on a
-         configured model, the same rule as the other generation controls. -->
-    <div v-if="canRegenerateAll" class="references-tools">
-      <button
-        type="button"
-        class="references-regenerate-all"
-        title="Regenerate all summaries"
-        aria-label="Regenerate all summaries"
-        :disabled="busy"
-        @click="emit('regenerate-all')"
-      >{{ busy ? 'Regenerating…' : 'Regenerate all' }}</button>
     </div>
     <!-- Reference surfaces list rows from the references record alone. The
          row and naming rules live in useReferences.js. An empty manuscript
@@ -42,28 +33,15 @@
         :data-entry-id="entry.id"
         @click="emit('select-entry', entry.id)"
       >{{ entryDisplayName(entry) }}</button>
-      <!-- The three add kinds render as plain buttons, no menu gate: the options
-           sit in the DOM and read without opening anything. A click reports the
-           kind upward. The shell owns creating the entry. -->
+      <!-- One add control per surface, a plain button with no menu gate. A
+           click reports the kind upward. The shell owns creating the entry. -->
       <div class="reference-add">
         <button
           type="button"
           class="reference-add-option"
-          data-add-kind="term"
-          @click="emit('add-entry', 'term')"
-        >New term</button>
-        <button
-          type="button"
-          class="reference-add-option"
-          data-add-kind="character"
-          @click="emit('add-entry', 'character')"
-        >New character</button>
-        <button
-          type="button"
-          class="reference-add-option"
-          data-add-kind="place"
-          @click="emit('add-entry', 'place')"
-        >New place</button>
+          :data-add-kind="addKind"
+          @click="emit('add-entry', addKind)"
+        >New {{ addKind }}</button>
       </div>
     </template>
     <template v-else>
@@ -98,7 +76,6 @@
 
 import { computed } from 'vue'
 import { noteEntries } from '../composables/useNotes.js'
-import { llmConfigured } from '../composables/useLlmSettings.js'
 import { entriesForSurface, entryDisplayName } from '../composables/useReferences.js'
 
 // The rows paint with the chrome palette, except the selected one: the theme
@@ -109,10 +86,7 @@ const props = defineProps({
   store: { type: Object, required: true },
   selectedId: { type: String, default: 'overview' },
   theme: { type: Object, default: null },
-  // The raw llm-settings composable: the generation gate reads
-  // `settings.settings.model` through `llmConfigured`.
   settings: { type: Object, default: null },
-  busy: { type: Boolean, default: false },
   // Which reference surface the drawer lists (5.19a): outline, characters
   // or glossary. Defaults to outline so the shipped 5.20a tests are unchanged.
   surface: { type: String, default: 'outline' },
@@ -124,13 +98,10 @@ const props = defineProps({
 
 const emit = defineEmits([
   'select',
-  'regenerate-all',
   'update:surface',
   'add-entry',
   'select-entry',
 ])
-
-const canRegenerateAll = computed(() => llmConfigured(props.settings?.settings))
 
 const drawerStyles = computed(() => {
   const theme = props.theme
@@ -167,41 +138,18 @@ const isReferenceSurface = computed(() => props.surface === 'characters' || prop
 
 const referenceRows = computed(() => entriesForSurface(props.references, props.surface))
 
+// The add kind follows the surface. The glossary lists places too, but a new
+// glossary entry starts as a term and the page owns switching the kind.
+const addKind = computed(() => (props.surface === 'characters' ? 'character' : 'term'))
+
 function selectEntry(id) {
   emit('select', id)
 }
 </script>
 
 <style scoped>
-/* Row chrome adapted from NotesView.vue's list (same flat grammar). */
-.references-tools {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 8px;
-}
-
-.references-regenerate-all {
-  font: inherit;
-  font-size: 11px;
-  color: var(--text-secondary);
-  background: none;
-  border: 1px solid var(--bg-glass-border);
-  border-radius: var(--radius-sm);
-  padding: 4px 8px;
-  cursor: pointer;
-}
-
-.references-regenerate-all:hover:not(:disabled) {
-  color: var(--text-primary);
-  background: var(--hover-bg);
-}
-
-.references-regenerate-all:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-/* Add bar reuses the regenerate control's chrome. */
+/* The add options wear the same ghost chrome as the surface tabs, so the
+   drawer's action buttons read as one family on the glass. */
 .reference-add {
   display: flex;
   gap: 4px;

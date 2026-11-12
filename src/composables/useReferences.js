@@ -88,21 +88,50 @@ export function entriesForSurface(references, surface) {
   return []
 }
 
-/// Add `alias` to an entry and return a new record. Stub: the input record is
-/// returned unchanged until the implementation lands.
+/// Append a trimmed alias to an entry and return a new record. Returns the
+/// input record unchanged for a blank alias, a missing entry, or a key an
+/// existing alias already holds. An alias is its trimmed lowercase key, the
+/// identity `absorbAlias` and `entryScanTerms` dedupe spellings on.
 export function addAlias(references, entryId, alias) {
-  return references
+  const value = (alias ?? '').trim()
+  const entries = Array.isArray(references?.entries) ? references.entries : []
+  const target = entries.find((entry) => entry.id === entryId)
+  if (!value || !target) return references
+  const key = aliasKey(value)
+  const existing = Array.isArray(target.aliases) ? target.aliases : []
+  if (existing.some((stored) => aliasKey(stored) === key)) return references
+  const updated = { ...target, aliases: [...existing, value] }
+  return { ...references, entries: entries.map((entry) => (entry === target ? updated : entry)) }
 }
 
-/// Drop `alias` from an entry. Stub: returns the input record.
+/// Remove every alias spelling whose key matches and return a new record.
+/// Refusals mirror `addAlias`: a blank alias, a missing entry or an absent
+/// key returns the input unchanged. All spellings drop, so removing one
+/// casing clears a case-only duplicate.
 export function removeAlias(references, entryId, alias) {
-  return references
+  const key = aliasKey(alias)
+  const entries = Array.isArray(references?.entries) ? references.entries : []
+  const target = entries.find((entry) => entry.id === entryId)
+  if (!key || !target) return references
+  const existing = Array.isArray(target.aliases) ? target.aliases : []
+  if (!existing.some((stored) => aliasKey(stored) === key)) return references
+  const updated = { ...target, aliases: existing.filter((stored) => aliasKey(stored) !== key) }
+  return { ...references, entries: entries.map((entry) => (entry === target ? updated : entry)) }
 }
 
-/// Switch an entry between term and place. Any other kind is refused and the
-/// record is returned unchanged. Stub.
+/// Switch an entry between term and place. Returns the plain record. Only
+/// those two kinds are accepted: a character cannot move to another surface
+/// (SPEC.md 5.20). A refused kind or a missing entry returns the input
+/// record unchanged.
 export function setEntryKind(references, entryId, kind) {
-  return references
+  if (kind !== 'term' && kind !== 'place') return references
+  const entries = Array.isArray(references?.entries) ? references.entries : []
+  const target = entries.find((entry) => entry.id === entryId)
+  if (!target) return references
+  return {
+    ...references,
+    entries: entries.map((entry) => (entry === target ? { ...entry, kind } : entry)),
+  }
 }
 
 /// The entry that owns `name`, case-insensitively, or null. `exceptId` lets a
@@ -152,14 +181,22 @@ export function excludeSection(references, entryId, sectionId) {
   return { ...references, entries: entries.map((entry) => (entry === target ? updated : entry)) }
 }
 
-/// Add a section to an entry's appears-in list by hand. Returns a new
-/// record, or the input unchanged as `excludeSection` defines.
+/// Add a section to an entry's appears-in list by hand. Returns a new record,
+/// or the input unchanged when the section is already included or the entry
+/// is missing. The addition drops the section from `excludedSections` too,
+/// because `deriveMentions` refuses an excluded section before it reads
+/// inclusions, so the mention row would never return.
 export function includeSection(references, entryId, sectionId) {
   const entries = Array.isArray(references?.entries) ? references.entries : []
   const target = entries.find((entry) => entry.id === entryId)
   const included = Array.isArray(target?.includedSections) ? target.includedSections : []
   if (!target || !sectionId || included.includes(sectionId)) return references
-  const updated = { ...target, includedSections: [...included, sectionId] }
+  const excluded = Array.isArray(target?.excludedSections) ? target.excludedSections : []
+  const updated = {
+    ...target,
+    includedSections: [...included, sectionId],
+    excludedSections: excluded.filter((id) => id !== sectionId),
+  }
   return { ...references, entries: entries.map((entry) => (entry === target ? updated : entry)) }
 }
 
@@ -236,6 +273,12 @@ function uniqueValues(first, second) {
     values.push(value)
   }
   return values
+}
+
+// Names an alias spelling the way `absorbAlias` and `entryScanTerms` do:
+// trimmed and lowercase.
+function aliasKey(value) {
+  return (value ?? '').trim().toLowerCase()
 }
 
 // A fresh id for a new entry. jsdom may not expose `crypto.randomUUID`, so the

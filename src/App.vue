@@ -85,13 +85,11 @@
           :store="store"
           :theme="theme.currentTheme"
           :settings="llmSettings"
-          :busy="summaries.summariesBusy"
           :selected-id="notesEntryId"
           :surface="referencesTab"
           :references="store.references"
           :selected-entry-id="referenceEntryId"
           @select="onReferenceSelect"
-          @regenerate-all="summaries.generateSummaries()"
           @update:surface="onReferenceSurface"
           @add-entry="onReferenceAdd"
           @select-entry="onReferenceEntrySelect"
@@ -115,6 +113,7 @@
           :roles="chatManager.roles"
           :busy="chatManager.anyBusy || summaries.summariesBusy"
           @open-settings="openGeneralOptions"
+          @regenerate-all="summaries.generateSummaries()"
         />
       </div>
     </div>
@@ -143,9 +142,13 @@
           :references="store.references"
           :selected-entry-id="referenceEntryId"
           :mentions="referenceMentions"
+          :sections="referenceSections"
           @jump="onReferencesJump"
           @save-definition="onReferenceDefinitionSave"
           @merge="onReferenceMerge"
+          @rename="onReferenceRename"
+          @remove-mention="onReferenceRemoveMention"
+          @include-section="onReferenceIncludeSection"
         />
         <DocumentRenderer
           ref="editorRef"
@@ -246,7 +249,11 @@ import { useFocusMode } from './composables/useFocusMode.js'
 import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts.js'
 import { createMenuActions, useMenuActions } from './composables/useMenu.js'
 import { noteDraftUndo, noteEntries } from './composables/useNotes.js'
-import { addEntry, mergeEntries, deriveMentions } from './composables/useReferences.js'
+import {
+  addEntry, mergeEntries, deriveMentions,
+  renameEntry, excludeSection, includeSection,
+  sectionsWithChapterIndex, mentionTitle,
+} from './composables/useReferences.js'
 import { useThesaurus } from './composables/useThesaurus.js'
 import { useNewDocument } from './composables/useNewDocument.js'
 import { useVersionHistory } from './composables/useVersionHistory.js'
@@ -289,6 +296,16 @@ const notesRef = computed(() => store.notes)
 // read time and never stored, so it cannot drift. Keyed by entry id. The
 // view takes the selected entry's list.
 const referenceMentions = computed(() => deriveMentions(store.references, doc.value))
+
+// The picker's stock: every section as { id, title }, so the entry page can
+// offer the ones the derived mentions do not show. Titles follow the same
+// naming rule the mention rows use (mentionTitle over the chapter walk).
+const referenceSections = computed(() =>
+  sectionsWithChapterIndex(doc.value).map(({ section, chapterIndex }) => ({
+    id: section.id,
+    title: mentionTitle(section, chapterIndex),
+  })),
+)
 
 const editorRef = ref(null)
 // The scroll container that wraps the editor/manuscript (it scrolls, not the
@@ -507,8 +524,18 @@ function toggleRightDrawer() {
 }
 
 function onActivitySelect(mode) {
+  // Inside References the panel is a persistent surface, not a toggle.
+  if (viewMode.value === 'references' && mode === 'references'
+      && leftDrawerOpen.value && leftDrawerMode.value === 'references') {
+    return
+  }
   if (leftDrawerOpen.value && leftDrawerMode.value === mode) {
     leftDrawerOpen.value = false
+    // The References view keeps its panel. Closing another drawer falls back
+    // to it because the panel is the view's only navigation.
+    if (viewMode.value === 'references' && mode !== 'references') {
+      openLeftDrawer('references')
+    }
   } else {
     openLeftDrawer(mode)
   }
@@ -720,6 +747,38 @@ function onReferenceMerge(targetId) {
   if (!targetId || !mergedId || !hasTarget) return
   store.references = mergeEntries(store.references, targetId, mergedId)
   referenceEntryId.value = targetId
+  store.pushReferences()
+}
+
+// A name commit renames through the record helper, so a duplicate name is
+// refused exactly as an add is (S-028). A selection whose entry is gone
+// writes nothing, the same guard as the definition commit.
+function onReferenceRename(name) {
+  const entries = store.references?.entries ?? []
+  if (!entries.some((entry) => entry.id === referenceEntryId.value)) return
+  const result = renameEntry(store.references, referenceEntryId.value, name)
+  if (result.error) {
+    store.notifyError(new Error(`name owned by "${result.error.ownerName}"`), 'Rename reference')
+    return
+  }
+  store.references = result.references
+  store.pushReferences()
+}
+
+// Mention corrections never edit a stored list: the rows are derived, so the
+// helpers only move a section in or out of the inclusions. Same
+// dead-selection guard as the definition commit.
+function onReferenceRemoveMention(sectionId) {
+  const entries = store.references?.entries ?? []
+  if (!entries.some((entry) => entry.id === referenceEntryId.value)) return
+  store.references = excludeSection(store.references, referenceEntryId.value, sectionId)
+  store.pushReferences()
+}
+
+function onReferenceIncludeSection(sectionId) {
+  const entries = store.references?.entries ?? []
+  if (!entries.some((entry) => entry.id === referenceEntryId.value)) return
+  store.references = includeSection(store.references, referenceEntryId.value, sectionId)
   store.pushReferences()
 }
 
