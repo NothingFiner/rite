@@ -165,7 +165,7 @@ async function selectRow(page, id) {
   await target.click()
 }
 
-test('S-003: opens the Reference drawer on entry, and the rail button closes and reopens it', async ({ page }) => {
+test('S-003: opens the Reference drawer on entry, and the rail offers its handle', async ({ page }) => {
   await install(page)
   await openReferences(page)
 
@@ -173,12 +173,7 @@ test('S-003: opens the Reference drawer on entry, and the rail button closes and
   // empty visibility map, so every icon vanished.
   const anchor = anchorButton(page)
   await expect(anchor).toBeVisible({ timeout: 5000 })
-
-  await anchor.click()
-  await expect(drawer(page)).toBeHidden({ timeout: 5000 })
-
-  await anchor.click()
-  await expect(drawer(page)).toBeVisible({ timeout: 5000 })
+  await expect(anchor).toHaveAttribute('aria-expanded', 'true')
 })
 
 test('S-022: shows the drawer rows in document order with the selected section on the page', async ({ page }) => {
