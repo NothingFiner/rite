@@ -1,278 +1,217 @@
-# 5.20a — References: the drawer is the outline, the page is the selection
+# 5.19a — Reference entries: one flat record, three kinds
 
 Approved sentence list for the spec-to-tests stage. The tests are written and
 red; they define what "done" means. This file is the implementer's whole
 context.
 
-Supersedes part of 5.20 (`SPEC-5.20-references.md`, kept intact as the record of
-what shipped). This is the same move 5.20 made against 5.17 S-013.
+Part of 5.19. 5.19b (`[[…]]` links in notes) and 5.19c (spellcheck vocabulary
+sync) are separate specs and are **not** in scope here.
 
 ## Context
 
 ### Why this exists
 
-5.20 shipped the summary data into a References view, and the view was reviewed
-in the running app. Four things were wrong with it:
+5.19 was deferred by 5.17's spec with one sentence: *"`[[…]]` links, characters
+in chapters, and custom words with where they are used … their own data model."*
+This spec is that data model.
 
-1. **The activity bar vanished.** `src/constants/drawerVisibility.js` lists
-   `editor`, `manuscript` and `history`; `references` is absent, and
-   `ActivityBar.vue` filters every icon through `isDrawerModeAllowedIn()`. An
-   unlisted view resolves to "no drawer applies here", so the whole rail
-   disappears and any open drawer closes on the way in.
-2. **The summary could not reach the note.** `NotesView.vue` already has a
-   `recaps` prop, a `.note-recap` block and an "Insert into note" button
-   (`insertRecap`). `ReferencesView.vue` never binds `recaps`, so the block never
-   renders. Nothing in 5.20 asked for it, so nothing caught it.
-3. **"Go to section" landed a page early.** `onReferencesJump` →
-   `nav.scrollToSection` → one `nextTick` → `editorDisplay.scrollToSection` →
-   `focusPageStartInSheet(el, 'smooth', 'center')`. The smooth scroll starts
-   before the freshly mounted sheet has finished layout, and `center` gives no
-   page alignment to recover to. The tests could not see it: `references-outline`
-   S-024 and `notes-view` S-017 assert only `toBeInViewport()`, which a
-   page-early landing satisfies.
-4. **The view was structurally confused.** An on-page tab strip (Outline |
-   Notes), a second list inside the page, and unstyled browser buttons
-   (`OutlineView.vue` has no `<style>` block at all).
+The approved model collapses the three ideas into **one flat record with a
+kind**:
 
-The approved mock-up is `~/Projects/rite-mockups/reference-view.html`, with the
-state coverage in `reference-view-v3.html`. This spec is that mock-up, not a
-redesign of it.
+```js
+ReferenceEntry {
+  id,
+  kind: 'term' | 'character' | 'place',
+  name,
+  definition,        // markdown; '' is legal
+  aliases: [],
+  tags: [],          // flat organisation, all kinds
+  facts: [],         // [{ label, value }]
+  includedSections: [],  // source: manual "appears in" additions
+  excludedSections: [],  // source: manual removals of wrong matches
+}
+```
 
-### The shape
+A **custom word is a `term` entry**. Defining it fills `definition`; leaving it
+empty is a valid, undefined glossary entry. A **place** is term-shaped: it
+carries no field a term does not.
 
-- **The drawer is the outline.** One drawer, titled References, listing Story
-  overview, then the manuscript in document order with each chapter's own row
-  standing as its heading, then Orphaned notes. A row selects; it never
-  navigates. Group labels were removed after a review of the running app: a
-  chapter name appeared twice, once as a label nothing could select.
-- **The page is the selection.** One detail page per selected entry: the note
-  (rendered markdown), the generated recap beneath it, the pencil, and
-  "Go to text". Your note and its recap are the same page.
-- **The three surfaces are a segmented control in the drawer head** — Outline
-  today, Characters (5.19) and Glossary later. Only Outline is built here; the
-  other two are ghosted so the shape is real and nothing pretends to work.
-- **The rail stays.** References is the drawer mode for this view; Sections and
-  Text Options do not apply there.
-- **"Go to text"** returns to the view the writer came from and lands with the
-  section's title at the top of the viewport.
+### Source vs cache — the one rule
 
-### Superseded sentences
+`VOCABULARY.md` is the authority:
 
-| 5.20 / 5.17 sentence | Was | Becomes |
-|---|---|---|
-| 5.20 S-002 | an on-page tab strip of Outline and Notes | one drawer surface control; no tab strip |
-| 5.20 S-007 … S-021 | the outline list and its summaries live on the page | the list is the drawer; the page is one selection |
-| 5.20 S-023 … S-028 | e2e against the on-page list and tabs | e2e against drawer rows and the detail page |
-| 5.17 S-001, S-019, S-020 | the notes list lives inside `NotesView` | the same rows live in `ReferencesNavDrawer` |
+- **Source** is authored, permanent, lives in the `.rite`. Entries are source.
+- **Cache** is derived and disposable. *Where an entry appears* is derived from
+  a scan of the manuscript, and is **never stored on the entry**.
 
-5.17 S-002 … S-006, S-021 … S-026 (note reading, editing, recap label, insert,
-dirty-draft commit, jump placement) survive unchanged; their tests move from clicking a row inside `NotesView` to
-rendering the entry the drawer selected. What the list contains, and where it is
-drawn, is the drawer's business.
+The two arrays `includedSections` / `excludedSections` are source because a
+human made them. The derived list is recomputed on read.
+
+### The worked example the tests pin
+
+An entry `Izildar Qualen` (alias `Essidor Agjadoff`), an entry `Izildar` (a
+minor character sharing the first name), and an entry `Qualen Square` (a place).
+Mentions match **whole names and aliases, longest first**, so:
+
+- `Izildar Qualen` in the text belongs to the full-name entry only.
+- `Essidor Agjadoff` belongs to it through the alias.
+- a bare `Izildar` belongs to the minor character.
+
+If a bare `Izildar` is also an alias of the first entry, the match is genuinely
+ambiguous; manual inclusion/exclusion is how the writer fixes it.
+
+### Vocabulary this spec must add
+
+`VOCABULARY.md` says new terms enter it **before** they are used. The
+implementation PR must update it in the same change:
+
+- **Reference entry** — an authored record about the manuscript's world. Source.
+- **Place** — a reference entry of kind `place`, term-shaped.
+- **Glossary** — rewrite: the surface listing `term` and `place` entries,
+  defined or not. It is no longer "authored term and definition only", and the
+  old warning against calling a custom-word list a glossary is superseded by
+  this model.
 
 ### What already exists — reuse it, do not rebuild it
 
-- **`NotesView.vue`** already renders the detail: `.note-head` with `.note-title`
-  and `.note-jump`, `.note-rendered` / `.note-source`, `.note-recap` with
-  `.note-recap-label` and `.note-insert-recap`, the pencil/save/reset cycle, and
-  the dirty-draft commit on selection change and unmount. Its editing and recap
-  behaviour is already correct — change as little of it as the sentences
-  require. What it cannot keep is a *second* list: while References is open the
-  drawer is the only list on screen (S-005, S-009), so the page shows the
-  selection. How the shipped list markup gets reused — or where it moves to —
-  is yours to decide.
-- **`useNotes.js`** owns `noteEntries(store.doc)` (overview, sections, orphaned,
-  in order) and `readNote`. `noteEntries` already returns the order S-005 needs;
-  what it does not return is the chapter grouping.
-- **`useSectionFormat.js` → `sectionDisplayTitle(section, chapterIndex)`** is the
-  naming rule: a chapter's stored title is its subtitle and may be `''` (5.9), so
-  an untitled chapter reads `Chapter 1`. Do not derive a title any other way.
-- **`useSummaries.js`** gives `summaryEntries`, `summaryProgress`, `summarizeOne`,
-  `generateSummaries` and `refreshStaleSummaries`. The view calls these; it must
-  not reimplement them.
-- **`retrieve_summaries` skips unsummarized sections** (`build_summary_entries`
-  does `let Some(summary) = … else { continue }`). Its list is "summaries with
-  their sections", not the reverse. Join from the document, never from the
-  summaries.
-- **`llmConfigured(settings)`** in `useLlmSettings.js` is the generation gate. A
-  model, never an API key.
+- **`Notes`** is the template for a new additive `.rite` record:
+  `src-tauri/src/notes.rs` (struct + `serde(default)`),
+  `RiteFile.notes` (`src-tauri/src/history.rs`),
+  `AppState.notes` (`src-tauri/src/state.rs`),
+  `retrieve_notes` / `update_notes` (`src-tauri/src/commands.rs`),
+  the load in `open_document`, and `build_rite_file`.
+- **`useNotes.js`** is the template for pure record helpers: it returns new
+  records, never mutates.
+- **`useSectionFormat.js` → `sectionDisplayTitle`** is the naming rule for
+  chapters. Do not derive a chapter title any other way.
+- **`search_document`** (`src-tauri/src/commands.rs`) already walks every
+  paragraph's `TextRun.content`. The mention scan uses the same walk shape; it
+  does not need Rust, because it is a pure function over `doc`.
+- **`ReferencesNavDrawer.vue` / `ReferencesView.vue` / `NotesView.vue`** are the
+  shipped References surfaces. The three-surface control exists in the mock-ups
+  (`~/Projects/rite-mockups/reference-view-v3.html`) but **not in the code**;
+  build it here.
 
 ### DOM contract the tests pin
 
-Only the selectors below are contract, and each one either already ships or is
-this app's own convention (`.drawer-heading`, `is-*` row states). Anything not
-listed here — component names, props and emits, file layout, class names not in
-the table, CSS — is **not** prescribed: match the component you are touching and
-the rest of the app, and do not restyle or restructure a shipped surface to fit a
-shape invented by this spec. If you deviate from a suggestion in this file, say
-so in the PR instead of silently following it.
+Only these selectors are contract. Everything else — file layout, component
+names, props, CSS — follows the component you are touching.
 
 | Selector | Meaning |
 |---|---|
-| `.references-view` | the detail surface root (keeps its theme binding) |
-| `.references-drawer` | the drawer content root |
-| `.notes-entry[data-entry-id]` | a drawer row (reused from the shipped list) |
-| `.notes-entry.is-chapter` / `.is-section` / `.notes-orphans` | row kind |
-| `.notes-entry.selected` | the selected row |
-| `.notes-view` | the detail page |
-| `.note-recap`, `.note-recap-label`, `.note-insert-recap` | the recap and its port |
-| `.note-recap-empty` | the recap slot when there is nothing to show |
-| `.note-generate`, `.note-options-link` | the two gates inside it |
-| `.note-recap-stale`, `.note-regenerate` | staleness and its per-section trigger |
-| `.references-regenerate-all` | the whole-manuscript regeneration control, in the drawer |
+| `.surface-tab[data-surface="outline\|characters\|glossary"]` | the drawer-head control; all three enabled |
+| `.reference-entry[data-entry-id]` | one row on the Characters or Glossary surface; the active row carries `selected` |
+| `.reference-empty` | the empty surface message |
+| `.reference-add` | the add control |
+| `[data-add-kind="term\|character\|place"]` | its three options |
+| `.reference-entry-view` | the detail page root |
+| `.reference-definition` | rendered markdown definition |
+| `.reference-definition-empty` | the empty state when no definition exists |
+| `.reference-definition-source` | the editable definition field |
+| `.reference-save` | commit the definition, including an edit that `.reference-definition-edit` reopened |
+| `.reference-alias` / `.reference-tag` / `.reference-fact` | detail chips and rows |
+| `.reference-alias-input` / `.reference-alias-add` / `.reference-alias-remove` | add an alias, and remove one |
+| `.reference-name` / `.reference-name-error` | the entry's name field, committed on blur or Enter, and the refusal naming the entry that owns the name. The page hides a stale refusal as soon as the field changes |
+| `.reference-entry-heading` | the entry's display name at the top of its page |
+| `.reference-definition-edit` / `.reference-edit-cancel` | edit a committed definition, and abandon the edit |
+| `.reference-kind-toggle` | switch an entry between term and place |
+| `.reference-mention-add` / `.reference-section-option[data-section-id]` | a select listing the sections the entry is not already shown in, and one option per section |
+| `.surface-tabs[role="tablist"]` / `.surface-tab[role="tab"][aria-selected]` | the surface head as one connected group with exactly one selected |
+| `.regenerate-all` | the bulk summary control, in the Assistant panel |
+| `.reference-mention[data-section-id]` | one "Appears in / Used in" row |
+| `.reference-mention-go` | its jump control |
+| `.reference-mention-remove` | remove a derived mention |
+| `.reference-mention-add` | add a section by hand |
+| `.reference-merge` | start a merge |
+| `.reference-merge-target[data-entry-id]` | choose the entry to absorb |
 
-One caveat, stated plainly: the unit tests mount each component directly, so the
-prop names they pass are pinned too — `NotesView` / `ReferencesView` take
-`entryId`, the drawer takes `selectedId` and `anchorId` and emits `select`,
-`ReferencesView` emits `jump`. These names are the tests' business, not a design
-preference; keep them, or change both the test and this note in the same commit.
+### Traps this spec exists to avoid
 
-### Three traps this spec exists to avoid
+1. **Do not store derived mentions.** Storing them turns a cache into a second
+   source that drifts from the manuscript on every keystroke.
+2. **Longest match, whole words.** A substring match makes `Izildar` match
+   `Izildar Qualen`, which is the exact false positive the example is about.
+3. **Do not put entries in `Document`.** They must stay out of exports, the
+   word count, search, and version-history snapshots — exactly as `Notes` does.
+4. **Do not let a merge lose manual associations.** They are source the writer
+   authored; move them to the survivor.
+5. **Blank names are not blank rows.** A new entry shows `Untitled term` /
+   `Untitled character` / `Untitled place`, the same way an unnamed chapter
+   shows `Chapter N`.
 
-1. **Do not delete the shipped note behaviour while moving the list out.** The
-   dirty-draft commit on selection change and unmount is what stops a writer
-   losing a paragraph by clicking a row. It stays, and it follows the new
-   selection prop.
-2. **The anchor is not the selection.** The anchor is the section the writer came
-   from; the selection is what the page shows. They start equal and diverge as
-   soon as the writer browses. The anchor is named in the status bar and is what
-   `Go to text` returns to; it is **not** marked in the drawer. A second marker
-   on the same list read as a second selection, which is why S-008 was cut.
-3. **A retired row has no section and no recap.** It selects the orphaned draft;
-   its page shows the draft and no recap block. Do not fall back to the last
-   section's summary.
+### Revision 2 — completing the surfaces
 
-## Sentences
+5.19a shipped the record and the read-only half. The writer could create an entry but not name it, could not correct a mention, could not re-edit a committed definition, and got no feedback when an add landed on a surface they were not looking at. S-026 onward close that gap. The DOM table states the commit trigger, the picker's control type and the reuse of `.reference-save` for edits, because a test that finds no element cannot tell a missing feature from an unstated contract. They are new behaviour, not bug fixes: the earlier sentences were satisfied as written.
 
-| ID | Layer | Sentence |
-|---|---|---|
-| S-001 | unit | it should offer Reference, Stats and Options in the activity bar in the References view |
-| S-002 | unit | it should not offer Sections or Text Options in the References view |
-| S-003 | e2e | it should open the Reference drawer when References is entered, and let the Reference button close and reopen it |
-| S-004 | unit | it should render the entry it is given, so the selection survives a view switch |
-| S-005 | unit | it should list Story overview first, then every manuscript section in document order with each chapter's own row standing as its heading, then Orphaned notes last |
-| S-006 | unit | it should indent a section row under its chapter and keep a chapter row bold |
-| S-007 | unit | it should name each row with `sectionDisplayTitle`, so a chapter with no subtitle reads "Chapter 1" and never blank |
-| S-009 | unit | it should report a row as selected when it is clicked and never leave References |
+Decisions the implementer needs:
 
-*S-008 (the anchor marker in the drawer) was cut in review: with the selection highlight beside it, a second marker on the same list read as a second selection. S-009 below covers selection; the anchor still names the status bar chip (S-027).*
-| S-010 | unit | it should fall back to Story overview when the selected section is deleted |
-| S-011 | unit | it should show the selected section's title and a subtitle naming its chapter and type |
-| S-012 | unit | it should show the selected section's note as rendered markdown |
-| S-013 | unit | it should show the story overview for the overview row and the orphaned note for the Orphaned notes row |
-| S-014 | unit | it should label the generated summary "Assistant recap · read-only" and place it below the note |
-| S-015 | unit | it should append the recap to the note draft when Insert into note is chosen, and not save it |
-| S-016 | unit | it should show no recap block for a section with no stored summary, and none for a retired row |
-| S-017 | unit | it should edit the selected note with the pencil, keeping Save and Reset, and commit a dirty draft when the selection changes or the view unmounts |
-| S-018 | unit | it should offer Generate summaries in the recap slot when no summary exists and a model is configured, calling `generateSummaries` |
-| S-019 | unit | it should show no generation control when no model is configured, and point at General Options instead |
-| S-020 | unit | it should mark a stale recap, offer Regenerate on every recap, and regenerate that section only, using `summarizeOne` |
-| S-021 | unit | it should show an empty state in the drawer and the overview page for a document with no sections, and no error |
-| S-022 | e2e | it should open References and show the drawer rows in document order, with the selected section's note and recap on the page |
-| S-023 | e2e | it should select another chapter in the drawer and show that chapter's note without leaving References |
-| S-024 | e2e | it should insert the recap into the note, save it, and keep it after reopening the file |
-| S-025 | e2e | it should return to the view the writer came from on Go to text, with the section's title at the top of the viewport |
-| S-026 | e2e | it should keep the rail and the drawer visible in References, and paint the detail page with the active theme |
-| S-027 | e2e | it should name the anchor section in the status bar while References is open, and mark no row in the drawer as the anchor |
-| S-028 | unit | it should offer Regenerate all in the drawer only when a model is configured, and report the choice upward so the shell calls `generateSummaries` |
-| S-029 | unit | it should offer no Regenerate all when no model is configured |
+- **Naming is in place on the entry page**, committed the way the definition is. No `PromptModal` on create. The page heading shows the display name; a blank name reads `Untitled term` / `Untitled character` / `Untitled place` (S-026).
+- **Adding an entry switches the drawer** to the surface that lists it (S-038). A term added from Characters currently lands in a list the writer cannot see, so the click reads as a no-op.
+- **A committed definition keeps an edit path** (S-030–S-032): an edit control reopens the source field holding the current text, saving replaces it, cancelling discards.
+- **Mentions are correctable in the UI** (S-033–S-035), and **adding a section back must clear its exclusion** (S-036). Without that last rule the control is a dead end: `deriveMentions` skips an excluded section before it looks at inclusions, so an exclusion outranks an inclusion for the same section and a removed mention can never come back.
+- **Aliases are editable** (S-041–S-043). The worked example needs `Essidor Agjadoff` to trigger a mention; with aliases display-only the record cannot express it. Tags and facts stay display-only in this change.
+- **`place` keeps its kind but loses its own creation button.** Glossary's single add control creates a term, and the page switches an entry between term and place (S-047). Character is not switchable — that would move the entry to another surface. The two kinds are structurally identical today; the kind survives because it is single-valued, schema-bearing, already persisted, and the only place future place-specific fields can attach. Dropping it needs a schema migration and is not this change.
+- **The References panel is permanent in the References view** (S-049–S-052). One 5.20a e2e sentence that made the rail button close the drawer is retired for the same reason as the Regenerate all test: it is protected, it contradicts these sentences, and only this stage may change it. It is the only navigation for entries: closing it leaves the view showing "Choose an entry in the drawer." with no drawer to choose from. It stays collapsible in every other view, where it is a tool drawer over the text. Closing another panel while in References must fall back to it, not to no panel.
+- **Regenerate all belongs to the Assistant panel** (S-045–S-046). It refreshes every section summary, which is a manuscript-wide action; it was sitting in the References drawer. Moving it supersedes the 5.20a drawer sentences that pinned the control's old home: their unit tests are removed, the per-section regenerate they also guarded stays where it was, and `SPEC-5.20-references.md` records the supersession. A coder cannot resolve this class of conflict, because the old test is protected — the spec stage has to retire it.
+- **Surface head and add control reuse existing chrome.** The connected tab group is `.view-tabs` in `Toolbar.vue`; the plus is `.add-btn` in `NavigationDrawer.vue`. Design directives, not testable — do not invent a third style.
+- **The References rail icon is out of scope.** It draws a bookmark where a library glyph belongs; that change was deferred and must not ride on this one.
+- **`VOCABULARY.md` still lacks Reference entry / Place / Glossary.** 5.19a's spec requires them in the same change. That duty was not done and carries over to this one.
 
----
+The rail-icon sentence was removed from the approved list when the icon work was deferred, and it has no ID here on purpose: this file is scanned for every `S-nnn` token, and an ID with no test reads as a missing test. S-049–S-051 are tagged `e2e`, not `unit`: they are `App.vue` shell behaviour, and the repository has no `App` mount test, so a unit test would require a helper that does not exist — that would be implementation, not a sentence.
 
-# 5.20b — Story overview gets a summary of the manuscript
-
-Approved in review: the overview row was the one page in References with no
-recap and no way to make one. The sentences below are the stage's contract; the
-tests are written and red.
-
-## Context
-
-### Why the overview had nothing
-
-Notes are keyed by **row** (`overview`, a section id, `orphaned`); summaries are
-keyed by **section id**, and `summarize_and_store_section` resolves that id from
-the document. There is no overview section, so no summary could exist for it and
-`Generate` had nothing to call. 5.20a fixed the neighbouring bug (chapter rows
-were sections and were refused anyway); this is the other half.
-
-### What the model reads
-
-**The whole manuscript** — every section in document order, each preceded by its
-displayed title — not the writer's overview note. The note is source the writer
-wrote; a recap of a synopsis tells them nothing. Same split as everywhere else:
-the writer writes source, the model writes cache, model output is labelled.
-
-### Storage
-
-`Sidecar` gains `document_summary: Option<SectionSummary>`, `#[serde(default)]`.
-Every sidecar written before this loads with `None`: no schema bump, no
-migration, and a 4.8-era file is still valid. It is a separate field, not a
-pseudo-section id, because every reader of `summaries` walks the document's
-sections — a reserved key would look like a deleted section to
-`retrieve_stale_summary_section_ids`.
-
-### Staleness
-
-`SectionSummary.section_hash` carries this summary's own baseline, as it does per
-section: `document_text_hash` over the whole manuscript, so **any** section edit
-invalidates it. It stays independent of the per-section baselines — re-summarizing
-is user-triggered and the two drift.
-
-### Cost, stated plainly
-
-One request containing the entire manuscript. It is the one summary call that can
-meet the context window on a long novel; the implementation should refuse or
-truncate rather than fail silently, and either choice needs its own sentence
-before it is written.
-
-### The command, not just the helpers
-
-S-030 … S-033 pin the pure half — ordering, naming, hashing, the sidecar field.
-They are satisfiable by a `retrieve_document_summary` that only calls
-`build_document_summary_entry`, and by a generation command that still panics, so
-the feature can read as green while the app cannot generate anything: S-039's
-e2e mocks the IPC command, and every unit test supplies its own fixture.
-
-S-040 and S-041 exist to close that gap through the command surface alone, with
-no reference to storage internals. They run against a mock Tauri app (the seam
-`tests/smoke.rs` and `tests/epub_export.rs` already use) and a throwaway
-OpenAI-compatible endpoint bound to port 0, so they need no network and no model:
-one answers with a canned completion, the other answers `500`.
-
-The observable requirement is the round trip and the survivability, not where the
-recap is kept: generating stores what the model returned, the read returns it
-fresh, the same read reports it stale once a section's text changes, and a failed
-generation leaves the previously stored recap exactly as it was.
-
+One further sentence was withdrawn after S-006 was revised. It mapped an entry kind to its drawer surface, so the shell could switch the drawer after a cross-surface add. With one add control per surface, an add always creates an entry the current surface lists: nothing to switch to, and no consumer for the helper. S-038 was reworded for the same reason, because its old text ("add a term from the Characters surface") described an action the revision removed. Neither is listed with an ID, for the reason above.
 
 ## Sentences
 
 | ID | Layer | Sentence |
 |---|---|---|
-| S-030 | rust | it should carry the document summary in the sidecar beside the per-section summaries, and load every earlier sidecar as having none |
-| S-031 | rust | it should build the document summary's input from every section's text in manuscript order, each preceded by its displayed title, an untitled chapter reading `Chapter N` |
-| S-032 | rust | it should give the document summary its own baseline hash over that input, stable for an unchanged manuscript and different once any section's text changes |
-| S-033 | rust | it should read "no document summary yet" as an empty result rather than an error, and report a stored one with its staleness against the live manuscript |
-| S-034 | unit | it should show the document summary on the Story overview page, labelled as model output, and expose it from `useSummaries` with its staleness |
-| S-035 | unit | it should offer Generate summary on the overview page only when a model is configured, and point at General Options otherwise |
-| S-036 | unit | it should mark a stale document summary and regenerate it from the overview page through `summarizeDocument` |
-| S-037 | unit | it should append the document summary to the overview note on Insert into note, without saving |
-| S-038 | unit | it should regenerate the document summary as part of `generateSummaries`, after the sections |
-| S-039 | e2e | it should generate the overview summary in the app, reopen the file, and find it there still labelled |
-| S-040 | rust | it should store the recap the model returned for the whole manuscript, so the app's own read returns it fresh, and stale once the manuscript changes |
-| S-041 | rust | it should report a failed model call for the document summary and leave the stored recap untouched |
-
-## DOM contract the tests pin
-
-Only what is new; everything else is the recap surface S-014 … S-020 already
-pinned (`.note-recap`, `.note-recap-label`, `.note-insert-recap`,
-`.note-recap-empty`, `.note-generate`, `.note-options-link`,
-`.note-recap-stale`, `.note-regenerate`). The overview page reuses those
-selectors rather than growing a second set.
-
-## Out of scope
-
-- Truncating or chunking an oversized manuscript (see *Cost* above).
-- Summarizing the writer's overview note, or the orphaned draft.
-- Any change to `retrieve_summaries` or to the Summaries Feedback Target's
-  empty-store error.
+| S-001 | rust | it should store a references record in the `.rite` file beside the notes record, and read a file without one as an empty record |
+| S-002 | unit | it should keep one flat list of reference entries, each with an id, a kind, a name, a definition, aliases, tags and facts |
+| S-003 | unit | it should support three kinds — term, character and place — and give a place the same shape as a term |
+| S-004 | unit | it should offer Outline, Characters and Glossary in the References drawer head, with all three enabled |
+| S-005 | unit | it should list character entries on the Characters surface and term and place entries on the Glossary surface |
+| S-006 | unit | it should show one add control on each reference surface, creating an entry of that surface's kind — a character on Characters, a term on Glossary — and show no add control on Outline |
+| S-007 | unit | it should create an entry of the chosen kind, select it, and show it as `Untitled term` / `Untitled character` / `Untitled place` until it is named |
+| S-008 | unit | it should render an entry's definition as markdown, and show an empty definition as an editable empty state |
+| S-009 | unit | it should show an entry's aliases, tags and facts beside its definition |
+| S-010 | unit | it should derive the sections an entry appears in by scanning manuscript paragraphs for its name and aliases as whole words |
+| S-011 | unit | it should give a mention to the longest matching name or alias, so `Izildar Qualen` does not also count as `Izildar` |
+| S-012 | unit | it should let the writer remove a derived mention from a section, and keep that exclusion in the saved record |
+| S-013 | unit | it should let the writer add a section to an entry's appears-in list by hand, and keep that inclusion in the saved record |
+| S-014 | unit | it should merge two entries into the chosen survivor, absorbing the other's name and aliases, unioning tags and facts, and keeping the survivor's non-empty definition |
+| S-015 | unit | it should move the merged entry's inclusions and exclusions to the survivor and remove the merged entry |
+| S-016 | unit | it should save and load the references record through one command pair, so a reopened file shows the same entries |
+| S-017 | unit | it should refuse to create or rename an entry to a name another entry already uses, and say which entry owns it |
+| S-018 | unit | it should show an empty Characters and Glossary surface for a document with no entries, with no error |
+| S-019 | unit | it should keep reference entries out of the word count and out of search results |
+| S-020 | rust | it should keep reference entries out of the text and DOCX exports and out of version-history snapshots |
+| S-021 | e2e | it should add a term, define it, reopen the file, and show the definition |
+| S-022 | e2e | it should show a character's appears-in sections and jump to one |
+| S-023 | e2e | it should merge two entries and show the survivor carrying both names |
+| S-024 | e2e | it should switch between Outline, Characters and Glossary without leaving References |
+| S-026 | unit | it should show the selected entry's name as its page heading, and `Untitled term` / `Untitled character` / `Untitled place` while the name is blank |
+| S-027 | unit | it should let the writer commit a new name for the selected entry and keep it in the saved record |
+| S-028 | unit | it should refuse a name another entry already owns when the writer commits it, name the owning entry, and leave the record unchanged |
+| S-029 | unit | it should clear the name error when the writer changes the field to a name no entry owns |
+| S-030 | unit | it should offer an edit control on a rendered definition that reopens the source field holding the current definition |
+| S-031 | unit | it should replace an entry's definition when the writer saves an edit to a rendered definition |
+| S-032 | unit | it should leave the definition unchanged when the writer cancels an edit |
+| S-033 | unit | it should offer a remove control on every appears-in row that excludes that section and removes the row |
+| S-034 | unit | it should offer an add control listing the sections this entry is not already shown in, and no others |
+| S-035 | unit | it should add the chosen section to an entry's appears-in rows even when the entry's name does not occur in that section, and keep it in the saved record |
+| S-036 | unit | it should clear a section's exclusion when the writer adds that section by hand, so a removed mention can be restored |
+| S-037 | e2e | it should name a character, show the sections its name appears in, and keep the name after reopening the file |
+| S-038 | e2e | it should add an entry from the Characters surface, show the new row selected in the drawer, and open its page with the untitled heading |
+| S-039 | e2e | it should remove a mention, then add the same section back by hand, and show the row again |
+| S-040 | rust | it should keep reference entries out of the DOCX export |
+| S-041 | unit | it should let the writer add an alias to the selected entry and keep it in the saved record |
+| S-042 | unit | it should let the writer remove an alias from the selected entry |
+| S-043 | unit | it should treat an alias as a mention trigger, so a section containing only the alias appears in the entry's appears-in rows |
+| S-044 | unit | it should render Outline, Characters and Glossary as one connected tab group in which exactly one surface is marked selected |
+| S-045 | unit | it should show Regenerate all in the Assistant panel and not in the References drawer |
+| S-046 | e2e | it should regenerate all summaries from the Assistant panel |
+| S-047 | unit | it should let the writer switch an entry between the term and place kinds on its page, and refuse any other kind change |
+| S-049 | e2e | it should keep the References panel open whenever the References view is active, and refuse to close it there |
+| S-050 | e2e | it should return to the References panel when the writer closes another panel while the References view is active |
+| S-051 | e2e | it should keep the References panel open when the writer clicks the References rail item while it is already showing |
+| S-052 | e2e | it should show the References panel on entering References and still show it after opening and closing Stats |

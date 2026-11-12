@@ -1,6 +1,7 @@
 use crate::document::{apply_doc_ops, compute_doc_ops, DocOp, Document};
 use crate::history::{self, HistoryRecord, RiteFile};
 use crate::notes::Notes;
+use crate::references::References;
 use crate::retrieval::StoredChunk;
 use crate::summary::SectionSummary;
 use std::collections::HashMap;
@@ -76,6 +77,10 @@ pub struct AppState {
     /// `retrieve_notes` reads it. `update_notes` replaces it. The save and
     /// autosave paths copy it into the file through `build_rite_file`.
     pub notes: Mutex<Notes>,
+    /// The references record for the open document (5.19a). `open_document`
+    /// loads it, the two commands replace and read it, and `build_rite_file`
+    /// copies it into the `.rite`.
+    pub references: Mutex<References>,
 }
 
 impl AppState {
@@ -98,6 +103,7 @@ impl AppState {
             summaries: Mutex::new(HashMap::new()),
             document_summary: Mutex::new(None),
             notes: Mutex::new(Notes::default()),
+            references: Mutex::new(References::default()),
         }
     }
 
@@ -289,11 +295,13 @@ impl AppState {
             .map_err(|e| e.to_string())?
             .clone();
         let notes = self.notes.lock().map_err(|e| e.to_string())?.clone();
+        let references = self.references.lock().map_err(|e| e.to_string())?.clone();
         Ok(RiteFile {
             document,
             history,
             schema_version: 0,
             notes,
+            references,
         })
     }
 

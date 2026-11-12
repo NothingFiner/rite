@@ -28,6 +28,7 @@ pub mod history;
 pub mod llm;
 pub mod menu;
 pub mod notes;
+pub mod references;
 pub mod retrieval;
 pub mod sidecar;
 pub mod state;
@@ -42,6 +43,7 @@ use commands::{
     retrieve_notes, save_document, save_snapshot, search_document, set_section_hidden,
     split_paragraph, sync_document, undo, update_notes,
 };
+use references::{retrieve_references, update_references};
 use export_docx::export_docx;
 use export_epub::export_epub;
 use export_text::export_text;
@@ -187,6 +189,8 @@ pub fn run() {
             diff_against_current,
             retrieve_notes,
             update_notes,
+            retrieve_references,
+            update_references,
             sync_document,
             undo,
             redo,

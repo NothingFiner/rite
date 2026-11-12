@@ -37,6 +37,10 @@ export const useDocumentStore = defineStore('document', {
     // holds markdown source, and `orphaned` is the single draft that collects
     // notes from deleted sections.
     notes: { overview: '', sections: {}, orphaned: '' },
+    // Reference entries (SPEC.md 5.19a), mirrored from Rust's `AppState`. Kept
+    // OUTSIDE `doc`: entries are authored source about the manuscript, so they
+    // never reach the word count, search, exports or history snapshots.
+    references: { entries: [] },
   }),
 
   actions: {
@@ -308,6 +312,29 @@ export const useDocumentStore = defineStore('document', {
         await invoke('update_notes', { notes: this.notes })
       } catch (e) {
         this.notifyError(e, 'Failed to save notes')
+      }
+    },
+
+    /// Load the open document's references record from Rust (5.19a). Mirrors
+    /// `retrieveNotes`: a null or partial payload keeps the empty shape,
+    /// because unmodelled e2e commands resolve null.
+    async retrieveReferences() {
+      try {
+        const refs = await invoke('retrieve_references')
+        this.references = { entries: Array.isArray(refs?.entries) ? refs.entries : [] }
+      } catch (e) {
+        this.notifyError(e, 'Failed to load references')
+      }
+    },
+
+    /// Push the references record to Rust (5.19a). Save and autosave copy it
+    /// through `build_rite_file`, so a skipped push leaves the previous record
+    /// on disk.
+    async pushReferences() {
+      try {
+        await invoke('update_references', { references: this.references })
+      } catch (e) {
+        this.notifyError(e, 'Failed to save references')
       }
     },
 

@@ -174,6 +174,22 @@ S-004 and S-005 are covered at both layers: the unit test pins the controlled
 `tab` prop and the `update:tab` event that make persistence possible, and the e2e
 tests pin the round trip through a real view switch.
 
+S-028 is superseded in part. The whole-manuscript Regenerate all control moved
+from this drawer to the Assistant panel (5.19a S-045), because it refreshes the
+entire manuscript rather than anything in References. The gate it described — a
+control that appears only when a model is configured — still holds for the
+per-section regenerate on a recap, which remains in the Notes surface. The two
+unit tests that pinned the bulk control's presence in this drawer were removed
+with the move; its new home is pinned in `LlmPanel.spec.js`.
+
+One e2e sentence in `e2e/references-outline.spec.js` is also superseded. It
+asserted that the References rail button closes the drawer and reopens it.
+5.19a makes that panel the view's navigation, permanent while References is
+active (its S-049 to S-052), so the drawer can no longer be toggled shut there.
+The close-and-reopen half of the test is gone; what remains pins the two things
+5.20 still owns — the drawer opens on entry, and the rail offers its handle.
+The panel's new permanence is pinned in `e2e/references-entries.spec.js`.
+
 ## Out of scope
 
 - Any Rust change. `retrieve_summaries`' empty-store error stays.
