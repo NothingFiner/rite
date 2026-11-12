@@ -176,6 +176,9 @@ const props = defineProps({
   // The shell's refusal for the last name commit: empty when the name is free,
   // otherwise it names the entry that owns it (S-028).
   nameError: { type: String, default: '' },
+  // The active paper palette. The page publishes it as custom properties
+  // because the shell's chrome tokens stay dark inside this view.
+  theme: { type: Object, default: null },
 })
 
 const emit = defineEmits([
@@ -189,6 +192,10 @@ const emit = defineEmits([
   'kind-change',
   'add-alias',
   'remove-alias',
+  'add-tag',
+  'remove-tag',
+  'add-fact',
+  'remove-fact',
 ])
 
 const hasDefinition = computed(() => (props.entry.definition || '').trim().length > 0)

@@ -402,3 +402,43 @@ describe('ReferencesView document recap', () => {
     expect(store.commitNote).not.toHaveBeenCalled()
   })
 })
+
+// Revision 3: the References navigation lives in the view as a panel, so the
+// page never depends on a rail-toggled drawer.
+describe('ReferencesView reference panel', () => {
+  const entry = {
+    id: 'r1',
+    kind: 'character',
+    name: 'Mara',
+    definition: '',
+    aliases: [],
+    tags: [],
+    facts: [],
+    includedSections: [],
+    excludedSections: [],
+  }
+
+  it('S-069: renders the surface head and rows inside the References view', () => {
+    const wrapper = mountView({
+      surface: 'characters',
+      references: { entries: [entry] },
+      selectedEntryId: 'r1',
+    })
+
+    expect(wrapper.find('.references-panel').exists()).toBe(true)
+    expect(wrapper.find('.references-panel .surface-tabs').exists()).toBe(true)
+    expect(wrapper.find('.references-panel .reference-entry[data-entry-id="r1"]').exists())
+      .toBe(true)
+  })
+
+  it('S-070: publishes the theme text and accent for the panel', () => {
+    const wrapper = mountView({
+      theme: reactive({ bg: 'rgb(250, 247, 242)', text: '#222222', accent: '#4f8ef7' }),
+      surface: 'characters',
+      references: { entries: [entry] },
+    })
+
+    expect(wrapper.element.style.getPropertyValue('--note-text')).toBe('#222222')
+    expect(wrapper.element.style.getPropertyValue('--note-accent')).toBe('#4f8ef7')
+  })
+})

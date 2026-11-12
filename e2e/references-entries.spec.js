@@ -54,9 +54,9 @@ const entry = (id, kind, name, overrides = {}) => ({
   ...overrides,
 })
 
-async function openApp(page, references = { entries: [] }) {
+async function openApp(page, references = { entries: [] }, { bg = null } = {}) {
   await installTauriIpc(page, { doc: seededDoc })
-  await page.addInitScript((seed) => {
+  await page.addInitScript(({ seed, bg }) => {
     window.__tauriMock.route('retrieve_references', () => {
       const stored = localStorage.getItem('rite-references')
       return JSON.parse(stored || seed)
@@ -65,7 +65,8 @@ async function openApp(page, references = { entries: [] }) {
       localStorage.setItem('rite-references', JSON.stringify(args.references))
       return null
     })
-  }, JSON.stringify(references))
+    if (bg) localStorage.setItem('rite-bg', bg)
+  }, { seed: JSON.stringify(references), bg })
   await page.goto('/')
   await page.waitForSelector('.editor-sheet .paragraph', { timeout: 5000 })
 }
@@ -96,6 +97,8 @@ test('S-021: adds a term, defines it, reopens the file and shows the definition'
   const addTerm = page.locator('[data-add-kind="term"]')
   await expect(addTerm).toBeVisible({ timeout: 5000 })
   await addTerm.click()
+
+  await page.locator('.reference-definition-edit').click()
 
   const source = page.locator('.reference-definition-source')
   await expect(source).toBeVisible({ timeout: 5000 })
@@ -201,10 +204,12 @@ test('S-037: names a character, shows its mentions and keeps the name after reop
 
   await referenceRow(page, 'r-qualen').click()
 
+  await page.locator('.reference-name-edit').click()
+
   const nameField = page.locator('.reference-name')
   await expect(nameField).toBeVisible({ timeout: 5000 })
   await nameField.fill('Izildar Qualen')
-  await nameField.blur()
+  await page.locator('.reference-name-save').click()
 
   await expect(page.locator('.reference-entry-heading')).toContainText('Izildar Qualen')
   await expect(page.locator('.reference-mention[data-section-id="c1"]')).toBeVisible({ timeout: 5000 })
@@ -232,7 +237,13 @@ test('S-038: adds an entry from Characters, selects its row and opens its page',
   await expect(selected).toHaveCount(1, { timeout: 5000 })
   await expect(selected).toContainText('Untitled character')
   await expect(page.locator('.reference-entry-heading')).toContainText('Untitled character')
-  await expect(page.locator('.reference-definition-source')).toBeVisible({ timeout: 5000 })
+
+  const nameField = page.locator('.reference-name')
+  await expect(nameField).toBeVisible({ timeout: 5000 })
+  await expect(nameField).toBeFocused()
+
+  await expect(page.locator('.reference-definition-edit')).toBeVisible({ timeout: 5000 })
+  await expect(page.locator('.reference-definition-source')).toHaveCount(0)
 })
 
 test('S-039: removes a mention and adds the same section back by hand', async ({ page }) => {
@@ -285,51 +296,79 @@ test('S-046: regenerates all summaries from the Assistant panel', async ({ page 
     .toBe(true)
 })
 
-test('S-049: keeps the References panel open while the References view is active', async ({ page }) => {
+test('S-072: shows the panel as soon as References opens', async ({ page }) => {
+  await openApp(page)
+  await referencesTab(page).click()
+
+  await expect(page.locator('.references-panel')).toBeVisible({ timeout: 5000 })
+  await expect(page.locator('.references-panel .surface-tabs')).toBeVisible({ timeout: 5000 })
+  await expect(page.locator('.activity-icons [title="References"]')).toHaveCount(0)
+})
+
+test('S-073: keeps the panel through a Stats round trip', async ({ page }) => {
   await openApp(page)
   await openReferences(page)
-
-  // Check `aria-expanded`, not visibility: the panel slides for 250ms, so a
-  // visibility read right after an action is still true.
-  await expect(railItem(page, 'References')).toHaveAttribute('aria-expanded', 'true')
-
   await openSurface(page, 'characters')
 
-  await expect(railItem(page, 'References')).toHaveAttribute('aria-expanded', 'true')
-  await expect(page.locator('.surface-tabs')).toBeVisible({ timeout: 5000 })
+  await railItem(page, 'Stats').click()
+  await railItem(page, 'Stats').click()
+
+  await expect(page.locator('.references-panel .surface-tabs')).toBeVisible({ timeout: 5000 })
+  await expect(surfaceTab(page, 'characters')).toHaveAttribute('aria-selected', 'true')
 })
 
-test('S-050: returns to the References panel after closing another panel', async ({ page }) => {
+test('S-074: leaves no references panel in the editor layout', async ({ page }) => {
   await openApp(page)
   await openReferences(page)
+  await expect(page.locator('.references-panel')).toBeVisible({ timeout: 5000 })
 
-  await railItem(page, 'Stats').click()
-  await expect(railItem(page, 'References')).toHaveAttribute('aria-expanded', 'false')
+  await page.locator('.view-tab').filter({ hasText: 'Editor' }).click()
 
-  await railItem(page, 'Stats').click()
-
-  await expect(railItem(page, 'References')).toHaveAttribute('aria-expanded', 'true')
-  await expect(page.locator('.surface-tabs')).toBeVisible({ timeout: 5000 })
+  await expect(page.locator('.references-panel')).toHaveCount(0)
 })
 
-test('S-051: clicking the References rail item while the panel shows does not collapse it', async ({ page }) => {
-  await openApp(page)
+test('S-068: adds an alias on the entry page and keeps it after reopening', async ({ page }) => {
+  await openApp(page, { entries: [entry('r-qualen', 'character', 'Izildar Qualen')] })
   await openReferences(page)
+  await openSurface(page, 'characters')
+  await referenceRow(page, 'r-qualen').click()
 
-  await railItem(page, 'References').click()
+  await page.locator('.reference-alias-input').fill('Essidor Agjadoff')
+  await page.locator('.reference-alias-add').click()
 
-  await expect(railItem(page, 'References')).toHaveAttribute('aria-expanded', 'true')
+  await expect(
+    page.locator('.reference-alias').filter({ hasText: 'Essidor Agjadoff' }),
+  ).toBeVisible({ timeout: 5000 })
+  await expect(page.locator('.reference-mention[data-section-id="s1"]')).toBeVisible({ timeout: 5000 })
+
+  await page.reload()
+  await page.waitForSelector('.editor-sheet .paragraph', { timeout: 5000 })
+  await openReferences(page)
+  await openSurface(page, 'characters')
+  await referenceRow(page, 'r-qualen').click()
+
+  await expect(
+    page.locator('.reference-alias').filter({ hasText: 'Essidor Agjadoff' }),
+  ).toBeVisible({ timeout: 5000 })
+  await expect(page.locator('.reference-mention[data-section-id="s1"]')).toBeVisible({ timeout: 5000 })
 })
 
-test('S-052: shows the References panel after a Stats round trip', async ({ page }) => {
-  await openApp(page)
+test('S-056: keeps the entry page legible on a light theme', async ({ page }) => {
+  await openApp(
+    page,
+    { entries: [entry('r-qualen', 'character', 'Izildar Qualen')] },
+    { bg: '#FFFFE3' },
+  )
   await openReferences(page)
+  await openSurface(page, 'characters')
+  await referenceRow(page, 'r-qualen').click()
 
-  await expect(railItem(page, 'References')).toHaveAttribute('aria-expanded', 'true')
+  await expect(page.locator('.references-view'))
+    .toHaveCSS('background-color', 'rgb(255, 255, 227)')
+  await expect(page.locator('.reference-entry-heading')).toHaveCSS('color', 'rgb(81, 83, 89)')
 
-  await railItem(page, 'Stats').click()
-  await railItem(page, 'Stats').click()
-
-  await expect(railItem(page, 'References')).toHaveAttribute('aria-expanded', 'true')
-  await expect(page.locator('.surface-tabs')).toBeVisible({ timeout: 5000 })
+  await page.locator('.reference-definition-edit').click()
+  const field = page.locator('.reference-definition-source')
+  await expect(field).toBeVisible({ timeout: 5000 })
+  await expect(field).not.toHaveCSS('background-color', 'rgba(20, 20, 25, 0.78)')
 })

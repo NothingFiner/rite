@@ -215,3 +215,114 @@ One further sentence was withdrawn after S-006 was revised. It mapped an entry k
 | S-050 | e2e | it should return to the References panel when the writer closes another panel while the References view is active |
 | S-051 | e2e | it should keep the References panel open when the writer clicks the References rail item while it is already showing |
 | S-052 | e2e | it should show the References panel on entering References and still show it after opening and closing Stats |
+
+## Revision 3 — entry page UI and a structural References panel
+
+Revision 1 and 2 satisfied their sentences. This revision answers what the merged
+UI review found: the entry page read as an unstyled form, its fields did not
+follow the paper theme, the name field was always visible beside the heading,
+tags and facts existed in the record but had no way in, and the References
+drawer had become a panel the writer must never close.
+
+### What the review found
+
+- **The page did not use the paper palette.** `useTheme.js` publishes the dark
+  chrome tokens whenever the view is not `editor`. The References page paints
+  `theme.bg` but its children read `--text-primary` and `--glass-bg`, so text
+  washed out and fields were dark boxes on the paper.
+- **The name was two things at once.** A heading and an always-visible input
+  showed the same value.
+- **An empty definition always showed a textarea.** A committed definition had
+  an edit control, an empty one did not.
+- **Aliases, tags and facts were display-only in practice.** The record stores
+  all three, and `ReferenceEntryView` declares `add-alias` / `remove-alias`, but
+  no control emits them. A new entry showed only heading, definition and
+  appears-in.
+- **The drawer was kept open by rule.** S-049–S-052 forbade closing it because
+  it is the only navigation for entries. A panel the view owns needs no such
+  rule.
+
+### Decisions the implementer needs
+
+- **The page receives the theme.** `ReferenceEntryView` takes a `theme` prop and
+  publishes these custom properties on its root: `--note-text`, `--note-accent`,
+  `--note-field-bg`, `--note-field-border`, `--note-hover-bg`. The two field
+  tokens derive from `theme.text` with an alpha suffix, because a paper theme's
+  text colour is the only ink that reads on its own paper. `ReferencesView`
+  passes `theme` down and sets the same `--note-text` / `--note-accent` on its
+  own root, matching `NotesView.vue`.
+- **Name is display first.** The heading and an `Edit name` control show until
+  editing starts. Editing replaces the heading with the field. A commit returns
+  to the heading only when the entry prop carries the new name; a refusal keeps
+  the field open so the draft can be corrected (S-057–S-061).
+- **A new untitled entry starts in name edit with focus** (S-062). Nothing else
+  on the page is useful before the entry is named.
+- **Empty definition reads like empty prose.** `No definition yet` plus the
+  `Edit definition` control; the source field appears only while editing
+  (S-063). This supersedes the empty half of S-008.
+- **All three list fields are editable** (S-064–S-067). Aliases, tags and facts
+  always render as labelled groups with an empty state, so a new entry shows the
+  record's full shape. The page reports `add-alias`, `remove-alias`, `add-tag`,
+  `remove-tag`, `add-fact` and `remove-fact`; the shell mutates the record.
+  `add-fact` carries `{ label, value }`, `remove-fact` carries the row index.
+- **The References navigation is a panel inside the view** (S-069, S-070).
+  `ReferencesView` renders the surface head, the rows and the add control in a
+  `.references-panel` column beside the page. `ReferencesNavDrawer` keeps its
+  `.references-drawer` root class so the shipped 5.20a e2e selectors still find
+  the rows, but the element is no longer a rail-toggled drawer.
+- **The References rail item is removed** (S-071). The view tab is the only way
+  into References. Supersedes the 5.20a sentences that required the rail handle
+  in this view.
+- **Superseded tests.** S-049–S-052 are retired; their drawer-preservation
+  behaviour no longer exists. The 5.20a e2e sentence that asserted the rail
+  handle and drawer (S-003 in `references-outline.spec.js`) and the two 5.20a
+  ActivityBar sentences that required a References rail item are retired for the
+  same reason. Only this stage may retire them, because they are protected.
+- **Amended in place.** S-008's empty-definition half becomes S-063's behaviour.
+  S-026–S-029 keep their IDs but the name is a heading until `Edit name` is
+  chosen. S-021, S-037 and S-038 gain the `Edit` steps that S-063 and S-062
+  require.
+
+### DOM contract added by revision 3
+
+| Selector | Meaning |
+|---|---|
+| `.reference-name-edit` / `.reference-name-save` / `.reference-name-cancel` | open, commit and abandon the name edit |
+| `.reference-definition-edit` | the edit control, offered on a committed and on an empty definition |
+| `.reference-group[data-group="aliases\|tags\|facts"]` | one labelled list group |
+| `.reference-group-empty` | the quiet empty state inside a group with no values |
+| `.reference-alias-input` / `.reference-alias-add` | add an alias |
+| `.reference-alias-remove[data-alias]` | remove one alias chip |
+| `.reference-tag-input` / `.reference-tag-add` / `.reference-tag-remove[data-tag]` | add and remove tags |
+| `.reference-fact-label-input` / `.reference-fact-value-input` / `.reference-fact-add` | add a fact |
+| `.reference-fact-remove[data-index]` | remove a fact row |
+| `.references-panel` | the References view's own navigation column |
+| `.references-panel .surface-tabs` / `.reference-entry[data-entry-id]` | the panel's surface head and rows |
+| `.activity-icons [title="References"]` | must not exist in any view |
+
+### Sentences
+
+| ID | Layer | Sentence |
+|---|---|---|
+| S-053 | unit | the entry page should paint its text with the active theme's text colour and its controls with the theme's accent, not the dark chrome palette |
+| S-054 | unit | the name field, definition field and section picker should use a field surface and text colour derived from the active theme, so both stay legible on every preset |
+| S-055 | unit | the entry page should stack naming, kind switch, definition, aliases, tags, facts and appears-in in one column with consistent spacing, and never place appears-in beside the definition editor |
+| S-056 | e2e | on a light theme (Cream), the entry heading, definition prose, fields and appears-in rows should all be legible against the paper background |
+| S-057 | unit | the entry page should show the name as a heading with an Edit name control, and no name field until editing starts |
+| S-058 | unit | choosing Edit name should replace the heading with a name field seeded with the committed name, focused so the writer can type immediately, plus Save name and Cancel |
+| S-059 | unit | Save name should emit the rename and return the page to the heading |
+| S-060 | unit | Cancel should discard the draft and return the page to the committed name |
+| S-061 | unit | a name-taken refusal should appear beside the name field, keep the page in edit mode, and keep the writer's draft |
+| S-062 | unit | a newly created untitled entry should open with the name field in edit mode and focused, so the first keystroke names it |
+| S-063 | unit | an empty definition should read as "No definition yet" with an Edit definition control, and show the source field only while editing |
+| S-064 | unit | the page should show aliases, tags and facts as labelled groups, each with a quiet empty state when it has no values, so the record's structure is always visible |
+| S-065 | unit | the page should let the writer add an alias and remove an alias chip, reporting each change upward for saving |
+| S-066 | unit | the page should let the writer add a tag and remove a tag chip, reporting each change upward for saving |
+| S-067 | unit | the page should let the writer add a fact with a label and a value, and remove a fact row, reporting each change upward for saving |
+| S-068 | e2e | it should add an alias on the entry page, reopen the file, and still show the alias chip and its appears-in trigger |
+| S-069 | unit | the References view should render the surface tabs, entry rows and add control in its own layout, so the panel is visible whenever the References view is active without a rail click |
+| S-070 | unit | the References panel should paint with the active theme's text and accent, matching the page beside it |
+| S-071 | unit | the activity bar should not offer a References rail item; the References view tab is the only way into References |
+| S-072 | e2e | opening References should show the panel immediately, with no drawer toggle involved |
+| S-073 | e2e | a Stats round trip while in References should leave the panel visible and unchanged |
+| S-074 | e2e | switching from References to the editor should leave no References panel in the editor layout |
