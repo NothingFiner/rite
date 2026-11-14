@@ -1,15 +1,25 @@
 <template>
   <div class="reference-entry-view" :style="entryStyles">
+    <!-- Display first (SPEC.md revision 3, S-057): the heading and the Edit
+         name control stand in until editing starts. The name field exists
+         only inside an open edit. -->
     <div class="reference-naming">
-      <h2 class="reference-entry-heading">{{ entryDisplayName(entry) }}</h2>
-      <input
-        v-model="nameDraft"
-        class="reference-name"
-        aria-label="Entry name"
-        @blur="commitName"
-        @keydown.enter="commitName"
-      >
-      <p v-if="hasCurrentNameError" class="reference-name-error">{{ nameError }}</p>
+      <template v-if="editingName">
+        <input
+          ref="nameInput"
+          v-model="nameDraft"
+          class="reference-name"
+          aria-label="Entry name"
+          @keydown.enter="saveName"
+        >
+        <button type="button" class="reference-name-save" @click="saveName">Save name</button>
+        <button type="button" class="reference-name-cancel" @click="cancelNameEdit">Cancel</button>
+        <p v-if="hasCurrentNameError" class="reference-name-error">{{ nameError }}</p>
+      </template>
+      <template v-else>
+        <h2 class="reference-entry-heading">{{ entryDisplayName(entry) }}</h2>
+        <button type="button" class="reference-name-edit" @click="openNameEdit">Edit name</button>
+      </template>
     </div>
     <!-- Only term and place switch on this page: a character cannot move to
          another surface (SPEC.md 5.20), so a character entry offers no toggle. -->
@@ -149,7 +159,7 @@
 // the definition surface and the chip rail stack in one column. The appears-in
 // rows and the merge offer are the derived parts. Props and emits are the
 // tests' contract, and the markup is the implementation's job.
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, nextTick } from 'vue'
 import { renderMarkdown } from '../composables/useMarkdown.js'
 import { entryDisplayName } from '../composables/useReferences.js'
 
@@ -277,31 +287,48 @@ const canSwitchKind = computed(() => switchableKinds.some((item) => item.kind ==
 
 const mergeOpen = ref(false)
 const editingDefinition = ref(false)
+const editingName = ref(false)
+const nameInput = ref(null)
 const definitionDraft = ref(props.entry.definition)
 const nameDraft = ref(props.entry.name)
 const lastCommittedName = ref(props.entry.name)
 
-// A refusal belongs to the name the last commit was issued for. The page
-// hides it once the field moves off that name, so a stale refusal never
-// lingers over a fresh edit. A commit refreshes lastCommittedName before it
-// emits, so a new refusal shows even when its text repeats the old one.
+// A refusal belongs to the name the last commit was issued for, and it
+// shows only beside an open field. The page hides it once the draft moves
+// off that name, so a stale refusal never lingers over a fresh edit. A
+// commit refreshes lastCommittedName before it emits, so a new refusal
+// shows even when its text repeats the old one.
 const hasCurrentNameError = computed(
-  () => props.nameError.length > 0 && nameDraft.value === lastCommittedName.value,
+  () =>
+    editingName.value &&
+    props.nameError.length > 0 &&
+    nameDraft.value === lastCommittedName.value,
 )
 
 // The drafts follow the shown entry, so one entry's text never opens in
-// another entry's fields. Merge mode closes with it: the survivor's
-// target list drops the absorbed entry, so the old list cannot be offered.
-// The definition edit closes with it too: an open edit belongs to the entry
-// it was opened on.
+// another entry's fields. The definition edit closes with every record
+// update, because an open edit belongs to the entry it was opened on.
+// Merge mode closes too: the survivor's target list drops the absorbed
+// entry, so the old list cannot be offered.
+//
+// The name edit is the exception. An accepted rename echoes the saved name
+// through this prop, and that echo returns the page to the heading (S-059).
+// A refusal instead arrives as a nameError prop with the record unchanged,
+// so an open edit keeps its draft beside the field.
 watch(
   () => props.entry,
-  (entry) => {
+  (entry, previous) => {
+    if (editingName.value && entry.name === lastCommittedName.value) {
+      editingName.value = false
+    }
+    if (previous && entry.id !== previous.id) editingName.value = false
+    if (!editingName.value) {
+      nameDraft.value = entry.name
+      lastCommittedName.value = entry.name
+    }
     definitionDraft.value = entry.definition
-    nameDraft.value = entry.name
-    lastCommittedName.value = entry.name
-    mergeOpen.value = false
     editingDefinition.value = false
+    mergeOpen.value = false
   },
 )
 
@@ -321,13 +348,30 @@ function cancelDefinitionEdit() {
   definitionDraft.value = props.entry.definition
 }
 
-function commitName() {
-  // Blur without an edit would recommit the shown name on every focus walk,
-  // so only a changed value reports rename.
-  if (nameDraft.value === lastCommittedName.value) return
-  // The scope updates first, so a fresh refusal survives an identical text.
+// Display-first naming (SPEC.md revision 3, S-057): the heading owns the
+// page until the writer asks to edit. The field reseeds from the committed
+// name, so a discarded draft never leaks back.
+function openNameEdit() {
+  nameDraft.value = props.entry.name
+  editingName.value = true
+  nextTick(() => nameInput.value?.focus())
+}
+
+function saveName() {
+  // Saving the committed name reports nothing and just closes the edit.
+  if (nameDraft.value === props.entry.name) {
+    editingName.value = false
+    return
+  }
+  // The edit stays open: the accepted rename returns through the entry prop
+  // and the refusal arrives as nameError with the record unchanged. The
+  // scope updates first, so a fresh refusal survives an identical text.
   lastCommittedName.value = nameDraft.value
   emit('rename', nameDraft.value)
+}
+
+function cancelNameEdit() {
+  editingName.value = false
 }
 
 // The picker is one-shot: report include-section (S-035) even when no
@@ -460,7 +504,10 @@ function chooseKind(kind) {
 /* The flex column stretches buttons across the column, so the edit and
      cancel controls pin to the start. */
 .reference-definition-edit,
-.reference-edit-cancel {
+.reference-edit-cancel,
+.reference-name-edit,
+.reference-name-save,
+.reference-name-cancel {
   align-self: flex-start;
 }
 
@@ -538,9 +585,12 @@ function chooseKind(kind) {
   color: var(--text-primary);
 }
 
-/* Definition-page controls reuse the save button's ghost chrome. The
-     select keeps its native dropdown arrow. */
+/* Kind toggles, name controls, rail buttons and the definition edit share
+     one ghost chrome. The select keeps its native dropdown arrow. */
 .reference-kind-toggle,
+.reference-name-edit,
+.reference-name-save,
+.reference-name-cancel,
 .reference-mention-add,
 .reference-mention-go,
 .reference-mention-remove,
@@ -562,6 +612,9 @@ function chooseKind(kind) {
 }
 
 .reference-kind-toggle:hover,
+.reference-name-edit:hover,
+.reference-name-save:hover,
+.reference-name-cancel:hover,
 .reference-mention-add:hover,
 .reference-mention-go:hover,
 .reference-mention-remove:hover,
