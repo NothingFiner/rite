@@ -249,6 +249,10 @@ const props = defineProps({
   // The active paper palette. The page publishes it as custom properties
   // because the shell's chrome tokens stay dark inside this view.
   theme: { type: Object, default: null },
+  // Whether an untitled selection opens the name field on arrival. The shell
+  // turns the flag off for an entry it selected rather than added, so an
+  // existing untitled record still offers Edit name (S-062, S-037).
+  autoNameEdit: { type: Boolean, default: true },
 })
 
 const emit = defineEmits([
@@ -403,9 +407,9 @@ watch(
       nameDraft.value = entry.name
       lastCommittedName.value = entry.name
     }
-    // Nothing can reference the entry until it carries a name, so an
-    // untitled record opens naming as its first act (S-062).
-    if (hasEntryChanged && isUntitled(entry.name)) openNameEdit()
+    // An untitled arrival opens naming unless the shell opted out. The
+    // autoNameEdit prop comment holds the rule.
+    if (hasEntryChanged && props.autoNameEdit && isUntitled(entry.name)) openNameEdit()
     definitionDraft.value = entry.definition
     editingDefinition.value = false
     mergeOpen.value = false
@@ -521,7 +525,9 @@ function chooseKind(kind) {
   margin: 0;
   font-size: 18px;
   line-height: 1.35;
-  color: var(--text-primary);
+  /* The heading sits on the paper surface, so it wears the theme ink that
+     entryStyles publishes (S-053). */
+  color: var(--note-text, var(--text-primary));
 }
 
 .reference-name,

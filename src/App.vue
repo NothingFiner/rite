@@ -122,12 +122,15 @@
           :selected-entry-id="referenceEntryId"
           :mentions="referenceMentions"
           :sections="referenceSections"
+          :auto-name-edit="refNameAutoEdit"
           @jump="onReferencesJump"
           @save-definition="onReferenceDefinitionSave"
           @merge="onReferenceMerge"
           @rename="onReferenceRename"
           @remove-mention="onReferenceRemoveMention"
           @include-section="onReferenceIncludeSection"
+          @add-alias="onReferenceAddAlias"
+          @remove-alias="onReferenceRemoveAlias"
           @select="onReferenceSelect"
           @update:surface="onReferenceSurface"
           @add-entry="onReferenceAdd"
@@ -235,6 +238,7 @@ import { noteDraftUndo, noteEntries } from './composables/useNotes.js'
 import {
   addEntry, mergeEntries, deriveMentions,
   renameEntry, excludeSection, includeSection,
+  addAlias, removeAlias,
   sectionsWithChapterIndex, mentionTitle,
 } from './composables/useReferences.js'
 import { useThesaurus } from './composables/useThesaurus.js'
@@ -303,6 +307,10 @@ const referencesTab = ref('outline')
 // The reference entry the page shows (5.19a). The drawer reports row clicks.
 // The shell owns the selection, the way it owns the outline row's.
 const referenceEntryId = ref('')
+// True only for an entry the shell just added, which opens an untitled
+// record's name field (S-062). Every other selection clears it, so an
+// existing untitled record displays first (S-037).
+const refNameAutoEdit = ref(false)
 // Remembered when References is entered: the view the section jump returns to
 // (SPEC.md 5.20). From History the default is the editor.
 const notesOriginView = ref('editor')
@@ -667,6 +675,7 @@ function onReferenceSelect(id) {
 
 // The same selection contract for the reference surfaces (5.19a).
 function onReferenceEntrySelect(id) {
+  refNameAutoEdit.value = false
   referenceEntryId.value = id
 }
 
@@ -674,6 +683,7 @@ function onReferenceEntrySelect(id) {
 // leaving a reference surface drops the stale entry selection.
 function onReferenceSurface(surface) {
   referencesTab.value = surface
+  refNameAutoEdit.value = false
   if (surface !== 'characters' && surface !== 'glossary') referenceEntryId.value = ''
 }
 
@@ -688,6 +698,9 @@ function onReferenceAdd(kind) {
     return
   }
   store.references = result.references
+  // The flag rides the selection in the same tick, so the fresh mount opens
+  // the name field on the untitled record.
+  refNameAutoEdit.value = true
   referenceEntryId.value = result.entry.id
   store.pushReferences()
 }
@@ -714,6 +727,7 @@ function onReferenceMerge(targetId) {
   const hasTarget = (store.references?.entries ?? []).some((entry) => entry.id === targetId)
   if (!targetId || !mergedId || !hasTarget) return
   store.references = mergeEntries(store.references, targetId, mergedId)
+  refNameAutoEdit.value = false
   referenceEntryId.value = targetId
   store.pushReferences()
 }
@@ -747,6 +761,28 @@ function onReferenceIncludeSection(sectionId) {
   const entries = store.references?.entries ?? []
   if (!entries.some((entry) => entry.id === referenceEntryId.value)) return
   store.references = includeSection(store.references, referenceEntryId.value, sectionId)
+  store.pushReferences()
+}
+
+// An alias edit goes through the record helper. A refusal returns the input
+// record unchanged, so the push is skipped. Same dead-selection guard as the
+// definition commit.
+function onReferenceAddAlias(alias) {
+  const entries = store.references?.entries ?? []
+  if (!entries.some((entry) => entry.id === referenceEntryId.value)) return
+  const updated = addAlias(store.references, referenceEntryId.value, alias)
+  if (updated === store.references) return
+  store.references = updated
+  store.pushReferences()
+}
+
+// The refusal shape matches onReferenceAddAlias above.
+function onReferenceRemoveAlias(alias) {
+  const entries = store.references?.entries ?? []
+  if (!entries.some((entry) => entry.id === referenceEntryId.value)) return
+  const updated = removeAlias(store.references, referenceEntryId.value, alias)
+  if (updated === store.references) return
+  store.references = updated
   store.pushReferences()
 }
 

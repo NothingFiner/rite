@@ -24,10 +24,14 @@
       <ReferenceEntryView
         v-if="shownEntry"
         :entry="shownEntry"
+        :theme="theme"
+        :auto-name-edit="autoNameEdit"
         :mentions="entryMentions"
         :merge-targets="mergeTargets"
         :sections="sections"
         @save-definition="emit('save-definition', $event)"
+        @add-alias="emit('add-alias', $event)"
+        @remove-alias="emit('remove-alias', $event)"
         @merge="emit('merge', $event)"
         @rename="emit('rename', $event)"
         @remove-mention="emit('remove-mention', $event)"
@@ -83,6 +87,9 @@ const props = defineProps({
   // The manuscript sections, forwarded so the entry page's appears-in
   // picker keeps the whole list. The shell derives them from the doc.
   sections: { type: Array, default: () => [] },
+  // Forwarded to the entry page. ReferenceEntryView.vue owns the auto-open
+  // rule. The shell sets it per selection.
+  autoNameEdit: { type: Boolean, default: true },
   // Where each entry appears, scanned by the shell and keyed by entry id.
   mentions: { type: Object, default: () => ({}) },
 })
@@ -91,6 +98,8 @@ const emit = defineEmits([
   'jump',
   'save-definition',
   'merge',
+  'add-alias',
+  'remove-alias',
   'rename',
   'remove-mention',
   'include-section',
