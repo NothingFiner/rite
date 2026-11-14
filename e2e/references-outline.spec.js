@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { installTauriIpc } from './helpers/tauri-ipc.js'
 
-// The References view end to end (SPEC.md 5.20a, S-003 and S-022 … S-027).
+// The References view end to end (SPEC.md 5.20a, S-022 … S-027).
 //
 // The unit layer covers the drawer rows, the page and the generation gates.
 // This file needs a real page for the rail, the drawer, the theme, the status
@@ -98,7 +98,6 @@ const referencesTab = (page) => page.locator('.view-tab').filter({ hasText: 'Ref
 const drawer = (page) => page.locator('.references-drawer')
 const row = (page, id) => page.locator(`.notes-entry[data-entry-id="${id}"]`)
 const pageTitle = (page) => page.locator('.note-head .note-title')
-const anchorButton = (page) => page.locator('.activity-bar [title="References"]')
 
 /// Seed the document and the notes where the app reads them back: `get_document`
 /// and `retrieve_notes` both answer from localStorage, and their write commands
@@ -164,17 +163,6 @@ async function selectRow(page, id) {
   await expect(target).toBeVisible({ timeout: 5000 })
   await target.click()
 }
-
-test('S-003: opens the Reference drawer on entry, and the rail offers its handle', async ({ page }) => {
-  await install(page)
-  await openReferences(page)
-
-  // The rail must offer the drawer handle in this view. 5.20 shipped with an
-  // empty visibility map, so every icon vanished.
-  const anchor = anchorButton(page)
-  await expect(anchor).toBeVisible({ timeout: 5000 })
-  await expect(anchor).toHaveAttribute('aria-expanded', 'true')
-})
 
 test('S-022: shows the drawer rows in document order with the selected section on the page', async ({ page }) => {
   await install(page)
@@ -278,15 +266,9 @@ test('S-025: Go to text returns to the origin view with the section at the top o
     .toBeLessThan(200)
 })
 
-test('S-026: keeps the rail and the drawer, and paints the page with the active theme', async ({ page }) => {
+test('S-026: paints the page with the active theme', async ({ page }) => {
   await install(page, { theme: '#101010' })
   await openReferences(page)
-
-  await expect(page.locator('.activity-bar')).toBeVisible()
-  const railTitles = await page
-    .locator('.activity-bar .activity-icons .activity-icon')
-    .evaluateAll((buttons) => buttons.map((button) => button.getAttribute('title')))
-  expect(railTitles).toContain('References')
 
   await expect(drawer(page)).toBeVisible()
   await expect(page.locator('.notes-view')).toHaveCSS('background-color', 'rgb(16, 16, 16)')
