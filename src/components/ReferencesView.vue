@@ -1,37 +1,56 @@
 <template>
   <div class="references-view" :style="surfaceStyles">
-    <!-- A reference surface shows the selected entry's page (5.19a). The
-         shell owns record, selection and derived mentions. The page renders
-         them and reports naming, definition and mention edits back up. -->
-    <ReferenceEntryView
-      v-if="shownEntry"
-      :entry="shownEntry"
-      :mentions="entryMentions"
-      :merge-targets="mergeTargets"
-      :sections="sections"
-      @save-definition="emit('save-definition', $event)"
-      @merge="emit('merge', $event)"
-      @rename="emit('rename', $event)"
-      @remove-mention="emit('remove-mention', $event)"
-      @include-section="emit('include-section', $event)"
-      @jump="forwardJump"
-    />
-    <!-- A reference surface with no selection waits for a row click, which
-         the drawer reports. It never falls back to the notes page, so the
-         two surfaces cannot be mistaken for one another. -->
-    <p v-else-if="isReferenceSurface" class="reference-page-empty">Choose an entry in the drawer.</p>
-    <!-- The outline surface keeps the shipped notes page (SPEC.md 5.20a). -->
-    <NotesView
-      v-else
-      :store="store"
-      :theme="theme"
-      :entry-id="entryId"
-      :origin-view="originView"
-      :recaps="recaps"
-      :summaries="summaries"
-      :settings="settings"
-      @jump="forwardJump"
-    />
+    <!-- The navigation lives beside the page as a panel (SPEC.md revision 3).
+         The view owns it, so the page never depends on a shell-toggled left
+         drawer opening at the right moment. -->
+    <div class="references-panel">
+      <ReferencesNavDrawer
+        :store="store"
+        :theme="theme"
+        :selected-id="entryId"
+        :surface="surface"
+        :references="references"
+        :selected-entry-id="selectedEntryId"
+        @select="emit('select', $event)"
+        @update:surface="emit('update:surface', $event)"
+        @add-entry="emit('add-entry', $event)"
+        @select-entry="emit('select-entry', $event)"
+      />
+    </div>
+    <div class="references-page">
+      <!-- A reference surface shows the selected entry's page (5.19a). The
+           shell owns record, selection and derived mentions. The page renders
+           them and reports naming, definition and mention edits back up. -->
+      <ReferenceEntryView
+        v-if="shownEntry"
+        :entry="shownEntry"
+        :mentions="entryMentions"
+        :merge-targets="mergeTargets"
+        :sections="sections"
+        @save-definition="emit('save-definition', $event)"
+        @merge="emit('merge', $event)"
+        @rename="emit('rename', $event)"
+        @remove-mention="emit('remove-mention', $event)"
+        @include-section="emit('include-section', $event)"
+        @jump="forwardJump"
+      />
+      <!-- A reference surface with no selection waits for a row click, which
+           the panel reports. It never falls back to the notes page, so the
+           two surfaces cannot be mistaken for one another. -->
+      <p v-else-if="isReferenceSurface" class="reference-page-empty">Choose an entry in the panel.</p>
+      <!-- The outline surface keeps the shipped notes page (SPEC.md 5.20a). -->
+      <NotesView
+        v-else
+        :store="store"
+        :theme="theme"
+        :entry-id="entryId"
+        :origin-view="originView"
+        :recaps="recaps"
+        :summaries="summaries"
+        :settings="settings"
+        @jump="forwardJump"
+      />
+    </div>
   </div>
 </template>
 
@@ -39,6 +58,7 @@
 import { computed } from 'vue'
 import NotesView from './NotesView.vue'
 import ReferenceEntryView from './ReferenceEntryView.vue'
+import ReferencesNavDrawer from './ReferencesNavDrawer.vue'
 
 // The References view (SPEC.md 5.20a and 5.19a). The selection lives in the
 // shell, so every interaction here is a prop or an emitted event and nothing
@@ -67,15 +87,29 @@ const props = defineProps({
   mentions: { type: Object, default: () => ({}) },
 })
 
-const emit = defineEmits(['jump', 'save-definition', 'merge', 'rename', 'remove-mention', 'include-section'])
+const emit = defineEmits([
+  'jump',
+  'save-definition',
+  'merge',
+  'rename',
+  'remove-mention',
+  'include-section',
+  'select',
+  'update:surface',
+  'add-entry',
+  'select-entry',
+])
 
-// Binds the same two theme fields NotesView.vue's surface binds, so the
-// shell and the notes page read as one surface without a colour seam.
+// Binds the same style object NotesView.vue's notesStyles binds. The bg and
+// text paint the view, and the two scoped vars carry the theme into the
+// panel chrome.
 const surfaceStyles = computed(() => {
   if (!props.theme || typeof props.theme !== 'object') return {}
   return {
     backgroundColor: props.theme.bg,
     color: props.theme.text,
+    '--note-text': props.theme.text,
+    '--note-accent': props.theme.accent,
   }
 })
 
@@ -133,6 +167,22 @@ function forwardJump(sectionId) {
 .references-view {
   flex: 1;
   min-height: 0;
+  display: flex;
+}
+
+/* The panel is a fixed-width column so the page beside it keeps a stable
+   measure. Its own scroll box keeps a long record list from pushing the page
+   taller. The theme's text and accent cascade in from the root's --note-text
+   and --note-accent custom properties over the theme surface. */
+.references-panel {
+  flex: 0 0 250px;
+  overflow-y: auto;
+  padding: 16px 12px;
+}
+
+.references-page {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
 }

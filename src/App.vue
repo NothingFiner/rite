@@ -75,27 +75,6 @@
         />
       </div>
     </div>
-    <!-- References drawer (5.20a): App.vue owns the chrome like the stats
-         drawer. ReferencesNavDrawer is the bare view. ReferencesNavDrawer.spec.js
-         pins its props and emit. Shares the .drawer / .drawer-content base
-         styles already in this file. -->
-    <div class="drawer references" :class="{ open: leftDrawerOpen && leftDrawerMode === 'references' }">
-      <div class="drawer-content">
-        <ReferencesNavDrawer
-          :store="store"
-          :theme="theme.currentTheme"
-          :settings="llmSettings"
-          :selected-id="notesEntryId"
-          :surface="referencesTab"
-          :references="store.references"
-          :selected-entry-id="referenceEntryId"
-          @select="onReferenceSelect"
-          @update:surface="onReferenceSurface"
-          @add-entry="onReferenceAdd"
-          @select-entry="onReferenceEntrySelect"
-        />
-      </div>
-    </div>
     <HistoryListDrawer
       :open="leftDrawerOpen && leftDrawerMode === 'history'"
       :history="history"
@@ -118,7 +97,7 @@
       </div>
     </div>
 
-    <div class="scroll-layer" role="main" ref="scrollLayerRef" :class="['mode-' + viewMode, { 'right-pad': rightDrawerOpen, 'left-pad': leftDrawerOpen && leftDrawerMode === 'references' }]" @click="nav.selectedNavId = null">
+    <div class="scroll-layer" role="main" ref="scrollLayerRef" :class="['mode-' + viewMode, { 'right-pad': rightDrawerOpen }]" @click="nav.selectedNavId = null">
       <div class="editor-wrapper" :class="'mode-' + viewMode">
         <HistoryView
           v-if="viewMode === 'history'"
@@ -149,6 +128,10 @@
           @rename="onReferenceRename"
           @remove-mention="onReferenceRemoveMention"
           @include-section="onReferenceIncludeSection"
+          @select="onReferenceSelect"
+          @update:surface="onReferenceSurface"
+          @add-entry="onReferenceAdd"
+          @select-entry="onReferenceEntrySelect"
         />
         <DocumentRenderer
           ref="editorRef"
@@ -275,7 +258,6 @@ import NavigationDrawer from './components/NavigationDrawer.vue'
 import GeneralOptionsDrawer from './components/GeneralOptionsDrawer.vue'
 import TextOptionsDrawer from './components/TextOptionsDrawer.vue'
 import StatsDrawer from './components/StatsDrawer.vue'
-import ReferencesNavDrawer from './components/ReferencesNavDrawer.vue'
 import HistoryListDrawer from './components/HistoryListDrawer.vue'
 import HistoryView from './components/HistoryView.vue'
 import ReferencesView from './components/ReferencesView.vue'
@@ -524,18 +506,8 @@ function toggleRightDrawer() {
 }
 
 function onActivitySelect(mode) {
-  // Inside References the panel is a persistent surface, not a toggle.
-  if (viewMode.value === 'references' && mode === 'references'
-      && leftDrawerOpen.value && leftDrawerMode.value === 'references') {
-    return
-  }
   if (leftDrawerOpen.value && leftDrawerMode.value === mode) {
     leftDrawerOpen.value = false
-    // The References view keeps its panel. Closing another drawer falls back
-    // to it because the panel is the view's only navigation.
-    if (viewMode.value === 'references' && mode !== 'references') {
-      openLeftDrawer('references')
-    }
   } else {
     openLeftDrawer(mode)
   }
@@ -592,10 +564,6 @@ function onSetMode(mode) {
         ? (editorRef.value?.getCurrentSectionId?.() || 'overview')
         : 'overview'
     anchorEntryId.value = notesEntryId.value
-    // Open the drawer with the seed in place (5.20a). The close-on-switch
-    // below permits it here, because isDrawerModeAllowedIn allows 'references'
-    // in this view.
-    openLeftDrawer('references')
     // The notes page maps summaryEntries into its recaps. Load the sidecar
     // on entry so the first render is not empty.
     summaries.refreshSummaryStatus()
@@ -977,21 +945,6 @@ watch(() => store.notes, () => store.pushNotes())
   transition: transform 0.25s ease, visibility 0s;
 }
 
-/* References drawer (5.20a): the same left-drawer geometry as stats. An
-   exclusive class keeps the chrome here App-scoped. */
-.drawer.references {
-  left: 48px;
-  transform: translateX(-100%);
-  width: 260px;
-}
-
-.drawer.references.open {
-  transform: translateX(0);
-  /* S-018: the visibility open state, same pattern as the four left drawers. */
-  visibility: visible;
-  transition: transform 0.25s ease, visibility 0s;
-}
-
 .drawer-content {
   height: 100%;
   overflow-y: auto;
@@ -1029,24 +982,15 @@ watch(() => store.notes, () => store.pushNotes())
   padding-top: 38px;
   padding-bottom: 36px;
   padding-left: 48px;
-  /* Animate both horizontal paddings so the pages slide with the drawers
-     instead of snapping when they open/close (matches the drawers' 0.25s). */
-  transition: padding-right 0.25s ease, padding-left 0.25s ease;
+  transition: padding-right 0.25s ease;
 }
 
 /* When the Assistant (right) drawer is open, pull the editor content in so the
    right edge of the text stays visible and selectable for chat context — the
-   drawer would otherwise overlay it. The left drawers intentionally overlay
-   the editor pages; only the References page shifts, via .left-pad. */
+   drawer would otherwise overlay it. The left drawers overlay the pages; no
+   view shifts for them. */
 .scroll-layer.right-pad {
   padding-right: 400px;
-}
-
-/* The References page is the only view whose content starts at the rail's
-   edge, so the open drawer would cover its controls. Pad by the drawer's full
-   308px extent (48px rail + 260px drawer). */
-.scroll-layer.left-pad {
-  padding-left: 308px;
 }
 
 .scroll-layer.mode-editor {

@@ -29,8 +29,9 @@ export const DRAWER_MODES_ALLOWED_IN_VIEW = {
   editor: ['chapters', 'general-options', 'text-options', 'stats'],
   manuscript: ['chapters', 'general-options', 'stats'],
   history: ['general-options'],
-  // 'references' offers its own drawer plus the two global ones. The document tree and text appearance do not apply there.
-  references: ['references', 'general-options', 'stats'],
+  // The view carries its own navigation panel beside the page. The document
+  // tree and text appearance do not apply there.
+  references: ['general-options', 'stats'],
 }
 
 /// True if `mode` is a left-drawer mode whose ActivityBar button should be
