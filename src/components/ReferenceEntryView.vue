@@ -1,7 +1,5 @@
 <template>
-  <div class="reference-entry-view">
-    <!-- The naming block spans both grid columns: the heading and the name
-         field head the page instead of owning the definition column. -->
+  <div class="reference-entry-view" :style="entryStyles">
     <div class="reference-naming">
       <h2 class="reference-entry-heading">{{ entryDisplayName(entry) }}</h2>
       <input
@@ -13,48 +11,45 @@
       >
       <p v-if="hasCurrentNameError" class="reference-name-error">{{ nameError }}</p>
     </div>
-    <div class="reference-definition-column">
-      <!-- Only term and place switch on this page: a character cannot move to
-           another surface (SPEC.md 5.20), so a character entry offers no toggle. -->
-      <div v-if="canSwitchKind" class="reference-kind-switch">
-        <button
-          v-for="switchable in switchableKinds"
-          :key="switchable.kind"
-          type="button"
-          class="reference-kind-toggle"
-          :data-kind="switchable.kind"
-          :aria-pressed="switchable.kind === entry.kind"
-          @click="chooseKind(switchable.kind)"
-        >{{ switchable.label }}</button>
-      </div>
-      <!-- One editing branch serves a committed and an empty definition
-           (SPEC.md revision 3, S-063). The source field renders only while an
-           edit is open, and the same .reference-definition-edit opens it
-           either way. -->
-      <template v-if="editingDefinition">
-        <!-- The draft is a local ref, so editing never mutates the entry prop.
-             openDefinitionEdit seeds it from the committed text and
-             cancelDefinitionEdit resets it, so a discarded draft cannot leak back. -->
-        <textarea
-          v-model="definitionDraft"
-          class="reference-definition-source"
-          aria-label="Definition source"
-        ></textarea>
-        <button type="button" class="reference-save" @click="saveDefinition">Save definition</button>
-        <button type="button" class="reference-edit-cancel" @click="cancelDefinitionEdit">Cancel</button>
-      </template>
-      <template v-else-if="hasDefinition">
-        <div class="reference-definition" v-html="renderedDefinition"></div>
-        <button type="button" class="reference-definition-edit" @click="openDefinitionEdit">Edit definition</button>
-      </template>
-      <template v-else>
-        <p class="reference-definition-empty">No definition yet.</p>
-        <button type="button" class="reference-definition-edit" @click="openDefinitionEdit">Edit definition</button>
-      </template>
+    <!-- Only term and place switch on this page: a character cannot move to
+         another surface (SPEC.md 5.20), so a character entry offers no toggle. -->
+    <div v-if="canSwitchKind" class="reference-kind-switch">
+      <button
+        v-for="switchable in switchableKinds"
+        :key="switchable.kind"
+        type="button"
+        class="reference-kind-toggle"
+        :data-kind="switchable.kind"
+        :aria-pressed="switchable.kind === entry.kind"
+        @click="chooseKind(switchable.kind)"
+      >{{ switchable.label }}</button>
     </div>
-    <!-- The rail exists only while it has content: chips, derived mentions,
-         a merge offer or the appears-in picker. One grid cell keeps the
-         groups from wandering. -->
+    <!-- One editing branch serves a committed and an empty definition
+         (SPEC.md revision 3, S-063). The source field renders only while an
+         edit is open, and the same .reference-definition-edit opens it
+         either way. -->
+    <template v-if="editingDefinition">
+      <!-- The draft is a local ref, so editing never mutates the entry prop.
+           openDefinitionEdit seeds it from the committed text and
+           cancelDefinitionEdit resets it, so a discarded draft cannot leak back. -->
+      <textarea
+        v-model="definitionDraft"
+        class="reference-definition-source"
+        aria-label="Definition source"
+      ></textarea>
+      <button type="button" class="reference-save" @click="saveDefinition">Save definition</button>
+      <button type="button" class="reference-edit-cancel" @click="cancelDefinitionEdit">Cancel</button>
+    </template>
+    <template v-else-if="hasDefinition">
+      <div class="reference-definition" v-html="renderedDefinition"></div>
+      <button type="button" class="reference-definition-edit" @click="openDefinitionEdit">Edit definition</button>
+    </template>
+    <template v-else>
+      <p class="reference-definition-empty">No definition yet.</p>
+      <button type="button" class="reference-definition-edit" @click="openDefinitionEdit">Edit definition</button>
+    </template>
+    <!-- The rail closes the page: chips, derived mentions, a merge offer or
+         the appears-in picker. -->
     <aside v-if="hasRail" class="reference-meta">
       <div v-if="aliases.length" class="reference-alias-row">
         <span
@@ -151,9 +146,9 @@
 
 <script setup>
 // The detail page for one reference entry (SPEC.md 5.19a). The naming block,
-// the definition surface and the chip rail are pinned. The appears-in rows and the merge
-// offer are the derived parts. Props and emits are the tests' contract, and
-// the markup is the implementation's job.
+// the definition surface and the chip rail stack in one column. The appears-in
+// rows and the merge offer are the derived parts. Props and emits are the
+// tests' contract, and the markup is the implementation's job.
 import { computed, ref, watch } from 'vue'
 import { renderMarkdown } from '../composables/useMarkdown.js'
 import { entryDisplayName } from '../composables/useReferences.js'
@@ -228,6 +223,49 @@ const mentionHeading = computed(() => (props.entry.kind === 'character' ? 'Appea
 
 // One shared renderer, so the definition matches the note preview's markdown.
 const renderedDefinition = computed(() => renderMarkdown(props.entry.definition))
+
+// Alpha bytes layered under the theme ink (S-054). 14 softens the field
+// surface, 59 keeps its border a hairline and 1f is the faint hover wash.
+const INK_ALPHAS = { fieldBg: '14', fieldBorder: '59', hoverBg: '1f' }
+
+// Normalizes the ink to #rrggbb so an alpha byte can be appended to it.
+// Preset themes ship 6-digit hex. Shorthand #rgb and rgb() cover edited ones.
+// Returns null for a colour it cannot parse, so the caller skips the derived
+// tokens instead of inventing a value.
+function normalizeInk(ink) {
+  if (typeof ink !== 'string') return null
+  const colour = ink.trim()
+  const hexMatch = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(colour)
+  if (hexMatch) {
+    const digits = hexMatch[1]
+    const expanded = digits.length === 3
+      ? [...digits].map((digit) => digit + digit).join('')
+      : digits
+    return `#${expanded.toLowerCase()}`
+  }
+  const rgbMatch = /^rgba?\(\s*(\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})\s*\)$/i.exec(colour)
+  if (!rgbMatch) return null
+  const channels = rgbMatch.slice(1, 4).map((value) => Math.min(Number(value), 255))
+  return `#${channels.map((value) => value.toString(16).padStart(2, '0')).join('')}`
+}
+
+// Publishes the paper palette for the chrome tokens that stay dark here
+// (S-053, S-054). notesStyles in NotesView.vue is the shared pattern.
+const entryStyles = computed(() => {
+  const theme = props.theme
+  if (!theme || typeof theme !== 'object') return {}
+  const styles = {
+    color: theme.text,
+    '--note-text': theme.text,
+    '--note-accent': theme.accent,
+  }
+  const ink = normalizeInk(theme.text)
+  if (!ink) return styles
+  styles['--note-field-bg'] = `${ink}${INK_ALPHAS.fieldBg}`
+  styles['--note-field-border'] = `${ink}${INK_ALPHAS.fieldBorder}`
+  styles['--note-hover-bg'] = `${ink}${INK_ALPHAS.hoverBg}`
+  return styles
+})
 
 // Only term and place swap kinds (SPEC.md 5.20). The entry's own kind renders
 // as the pressed toggle of the two.
@@ -317,17 +355,15 @@ function chooseKind(kind) {
 
 <style scoped>
 .reference-entry-view {
-  /* Two grid columns put the metadata rail beside the definition (S-009). */
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(140px, 30%);
-  gap: 10px 18px;
-  align-content: start;
+  /* S-055 pins the reading order: naming above the definition surface, the
+     metadata rail last. */
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   min-height: 100%;
 }
 
 .reference-naming {
-  /* Spans both grid columns, so the heading heads the whole page. */
-  grid-column: 1 / -1;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -344,16 +380,16 @@ function chooseKind(kind) {
   /* Single-line counterpart of .reference-definition-source, same glass chrome. */
   font: inherit;
   font-size: 14px;
-  color: var(--text-primary);
-  background: var(--glass-bg);
-  border: 1px solid var(--bg-glass-border);
+  color: var(--note-text, var(--text-primary));
+  background: var(--note-field-bg, var(--glass-bg));
+  border: 1px solid var(--note-field-border, var(--bg-glass-border));
   border-radius: var(--radius-sm);
   padding: 6px 10px;
 }
 
 .reference-name:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--note-accent, var(--accent));
 }
 
 .reference-name-error {
@@ -362,13 +398,6 @@ function chooseKind(kind) {
   line-height: 1.45;
   /* The theme has no danger token, so the accent carries the refusal. */
   color: var(--accent);
-}
-
-.reference-definition-column {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
 }
 
 .reference-kind-switch {
@@ -398,16 +427,16 @@ function chooseKind(kind) {
   font: inherit;
   font-size: 14px;
   line-height: 1.55;
-  color: var(--text-primary);
-  background: var(--glass-bg);
-  border: 1px solid var(--bg-glass-border);
+  color: var(--note-text, var(--text-primary));
+  background: var(--note-field-bg, var(--glass-bg));
+  border: 1px solid var(--note-field-border, var(--bg-glass-border));
   border-radius: var(--radius-sm);
   padding: 10px 12px;
 }
 
 .reference-definition-source:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--note-accent, var(--accent));
 }
 
 .reference-save {
@@ -436,8 +465,6 @@ function chooseKind(kind) {
 }
 
 .reference-meta {
-  /* The rail caps at 30% of the pane, so chip rows wrap instead of squeezing the prose. */
-  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -545,14 +572,22 @@ function chooseKind(kind) {
 .reference-edit-cancel:hover {
   opacity: 1;
   color: var(--text-primary);
-  background: var(--hover-bg);
+  background: var(--note-hover-bg, var(--hover-bg));
 }
 
 /* The current kind stays visibly pressed, using the hover's active look. */
 .reference-kind-toggle[aria-pressed='true'] {
   opacity: 1;
   color: var(--text-primary);
-  background: var(--hover-bg);
+  background: var(--note-hover-bg, var(--hover-bg));
+}
+
+/* The select is a field, not a ghost control: it wears the paper chrome the
+   name and definition sources use. */
+.reference-mention-add {
+  color: var(--note-text, var(--text-primary));
+  background: var(--note-field-bg, var(--glass-bg));
+  border-color: var(--note-field-border, var(--bg-glass-border));
 }
 
 .reference-merge-block {
