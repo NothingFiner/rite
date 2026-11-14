@@ -151,13 +151,13 @@ Decisions the implementer needs:
 - **Mentions are correctable in the UI** (S-033–S-035), and **adding a section back must clear its exclusion** (S-036). Without that last rule the control is a dead end: `deriveMentions` skips an excluded section before it looks at inclusions, so an exclusion outranks an inclusion for the same section and a removed mention can never come back.
 - **Aliases are editable** (S-041–S-043). The worked example needs `Essidor Agjadoff` to trigger a mention; with aliases display-only the record cannot express it. Tags and facts stay display-only in this change.
 - **`place` keeps its kind but loses its own creation button.** Glossary's single add control creates a term, and the page switches an entry between term and place (S-047). Character is not switchable — that would move the entry to another surface. The two kinds are structurally identical today; the kind survives because it is single-valued, schema-bearing, already persisted, and the only place future place-specific fields can attach. Dropping it needs a schema migration and is not this change.
-- **The References panel is permanent in the References view** (S-049–S-052). One 5.20a e2e sentence that made the rail button close the drawer is retired for the same reason as the Regenerate all test: it is protected, it contradicts these sentences, and only this stage may change it. It is the only navigation for entries: closing it leaves the view showing "Choose an entry in the drawer." with no drawer to choose from. It stays collapsible in every other view, where it is a tool drawer over the text. Closing another panel while in References must fall back to it, not to no panel.
+- **The References panel is permanent in the References view** (retired in revision 3). One 5.20a e2e sentence that made the rail button close the drawer is retired for the same reason as the Regenerate all test: it is protected, it contradicts these sentences, and only this stage may change it. It is the only navigation for entries: closing it leaves the view showing "Choose an entry in the drawer." with no drawer to choose from. It stays collapsible in every other view, where it is a tool drawer over the text. Closing another panel while in References must fall back to it, not to no panel.
 - **Regenerate all belongs to the Assistant panel** (S-045–S-046). It refreshes every section summary, which is a manuscript-wide action; it was sitting in the References drawer. Moving it supersedes the 5.20a drawer sentences that pinned the control's old home: their unit tests are removed, the per-section regenerate they also guarded stays where it was, and `SPEC-5.20-references.md` records the supersession. A coder cannot resolve this class of conflict, because the old test is protected — the spec stage has to retire it.
 - **Surface head and add control reuse existing chrome.** The connected tab group is `.view-tabs` in `Toolbar.vue`; the plus is `.add-btn` in `NavigationDrawer.vue`. Design directives, not testable — do not invent a third style.
 - **The References rail icon is out of scope.** It draws a bookmark where a library glyph belongs; that change was deferred and must not ride on this one.
 - **`VOCABULARY.md` still lacks Reference entry / Place / Glossary.** 5.19a's spec requires them in the same change. That duty was not done and carries over to this one.
 
-The rail-icon sentence was removed from the approved list when the icon work was deferred, and it has no ID here on purpose: this file is scanned for every `S-nnn` token, and an ID with no test reads as a missing test. S-049–S-051 are tagged `e2e`, not `unit`: they are `App.vue` shell behaviour, and the repository has no `App` mount test, so a unit test would require a helper that does not exist — that would be implementation, not a sentence.
+The rail-icon sentence was removed from the approved list when the icon work was deferred, and it has no ID here on purpose: this file is scanned for every `S-nnn` token, and an ID with no test reads as a missing test. The three panel-preservation sentences were tagged `e2e`, not `unit`: they are `App.vue` shell behaviour, and the repository has no `App` mount test, so a unit test would require a helper that does not exist — that would be implementation, not a sentence.
 
 One further sentence was withdrawn after S-006 was revised. It mapped an entry kind to its drawer surface, so the shell could switch the drawer after a cross-surface add. With one add control per surface, an add always creates an entry the current surface lists: nothing to switch to, and no consumer for the helper. S-038 was reworded for the same reason, because its old text ("add a term from the Characters surface") described an action the revision removed. Neither is listed with an ID, for the reason above.
 
@@ -211,10 +211,6 @@ One further sentence was withdrawn after S-006 was revised. It mapped an entry k
 | S-045 | unit | it should show Regenerate all in the Assistant panel and not in the References drawer |
 | S-046 | e2e | it should regenerate all summaries from the Assistant panel |
 | S-047 | unit | it should let the writer switch an entry between the term and place kinds on its page, and refuse any other kind change |
-| S-049 | e2e | it should keep the References panel open whenever the References view is active, and refuse to close it there |
-| S-050 | e2e | it should return to the References panel when the writer closes another panel while the References view is active |
-| S-051 | e2e | it should keep the References panel open when the writer clicks the References rail item while it is already showing |
-| S-052 | e2e | it should show the References panel on entering References and still show it after opening and closing Stats |
 
 ## Revision 3 — entry page UI and a structural References panel
 
@@ -238,7 +234,7 @@ drawer had become a panel the writer must never close.
   all three, and `ReferenceEntryView` declares `add-alias` / `remove-alias`, but
   no control emits them. A new entry showed only heading, definition and
   appears-in.
-- **The drawer was kept open by rule.** S-049–S-052 forbade closing it because
+- **The drawer was kept open by rule.** The four retired sentences forbade closing it because
   it is the only navigation for entries. A panel the view owns needs no such
   rule.
 
@@ -273,7 +269,7 @@ drawer had become a panel the writer must never close.
 - **The References rail item is removed** (S-071). The view tab is the only way
   into References. Supersedes the 5.20a sentences that required the rail handle
   in this view.
-- **Superseded tests.** S-049–S-052 are retired; their drawer-preservation
+- **Superseded tests.** The four drawer-preservation sentences are retired; their
   behaviour no longer exists. The 5.20a e2e sentence that asserted the rail
   handle and drawer (S-003 in `references-outline.spec.js`) and the two 5.20a
   ActivityBar sentences that required a References rail item are retired for the
