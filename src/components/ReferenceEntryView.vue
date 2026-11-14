@@ -27,14 +27,14 @@
           @click="chooseKind(switchable.kind)"
         >{{ switchable.label }}</button>
       </div>
-      <!-- An empty definition edits in place (S-008). A committed one edits
-           through .reference-definition-edit, which replaces the prose with the
-           source field (S-030). -->
-      <template v-if="hasDefinition && !editingDefinition">
-        <div class="reference-definition" v-html="renderedDefinition"></div>
-        <button type="button" class="reference-definition-edit" @click="openDefinitionEdit">Edit definition</button>
-      </template>
-      <template v-else-if="hasDefinition && editingDefinition">
+      <!-- One editing branch serves a committed and an empty definition
+           (SPEC.md revision 3, S-063). The source field renders only while an
+           edit is open, and the same .reference-definition-edit opens it
+           either way. -->
+      <template v-if="editingDefinition">
+        <!-- The draft is a local ref, so editing never mutates the entry prop.
+             openDefinitionEdit seeds it from the committed text and
+             cancelDefinitionEdit resets it, so a discarded draft cannot leak back. -->
         <textarea
           v-model="definitionDraft"
           class="reference-definition-source"
@@ -43,17 +43,13 @@
         <button type="button" class="reference-save" @click="saveDefinition">Save definition</button>
         <button type="button" class="reference-edit-cancel" @click="cancelDefinitionEdit">Cancel</button>
       </template>
+      <template v-else-if="hasDefinition">
+        <div class="reference-definition" v-html="renderedDefinition"></div>
+        <button type="button" class="reference-definition-edit" @click="openDefinitionEdit">Edit definition</button>
+      </template>
       <template v-else>
         <p class="reference-definition-empty">No definition yet.</p>
-        <!-- The draft is a local ref, so editing never mutates the entry prop.
-             The edit seeds from the committed text and cancel resets it, so a
-             discarded draft cannot leak back. -->
-        <textarea
-          v-model="definitionDraft"
-          class="reference-definition-source"
-          aria-label="Definition source"
-        ></textarea>
-        <button type="button" class="reference-save" @click="saveDefinition">Save definition</button>
+        <button type="button" class="reference-definition-edit" @click="openDefinitionEdit">Edit definition</button>
       </template>
     </div>
     <!-- The rail exists only while it has content: chips, derived mentions,
