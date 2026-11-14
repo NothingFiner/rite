@@ -1,10 +1,17 @@
 <template>
   <div class="reference-entry-view" :style="entryStyles">
-    <!-- Display first (SPEC.md revision 3, S-057): the heading and the Edit
-         name control stand in until editing starts. The name field exists
-         only inside an open edit. -->
+    <!-- Display first (SPEC.md revision 3, S-057). The heading stays up
+         even under an open field: an untitled entry keeps its Untitled
+         reading (S-026). -->
     <div class="reference-naming">
-      <template v-if="editingName">
+      <h2 class="reference-entry-heading">{{ entryDisplayName(entry) }}</h2>
+      <button
+        v-if="!editingName"
+        type="button"
+        class="reference-name-edit"
+        @click="openNameEdit"
+      >Edit name</button>
+      <template v-else>
         <input
           ref="nameInput"
           v-model="nameDraft"
@@ -15,10 +22,6 @@
         <button type="button" class="reference-name-save" @click="saveName">Save name</button>
         <button type="button" class="reference-name-cancel" @click="cancelNameEdit">Cancel</button>
         <p v-if="hasCurrentNameError" class="reference-name-error">{{ nameError }}</p>
-      </template>
-      <template v-else>
-        <h2 class="reference-entry-heading">{{ entryDisplayName(entry) }}</h2>
-        <button type="button" class="reference-name-edit" @click="openNameEdit">Edit name</button>
       </template>
     </div>
     <!-- Only term and place switch on this page: a character cannot move to
@@ -58,27 +61,93 @@
       <p class="reference-definition-empty">No definition yet.</p>
       <button type="button" class="reference-definition-edit" @click="openDefinitionEdit">Edit definition</button>
     </template>
-    <!-- The rail closes the page: chips, derived mentions, a merge offer or
-         the appears-in picker. -->
-    <aside v-if="hasRail" class="reference-meta">
-      <div v-if="aliases.length" class="reference-alias-row">
-        <span
-          v-for="(alias, aliasIndex) in aliases"
-          :key="aliasIndex"
-          class="reference-alias"
-        >{{ alias }}</span>
-      </div>
-      <div v-if="tags.length" class="reference-tag-row">
-        <span
-          v-for="(tag, tagIndex) in tags"
-          :key="tagIndex"
-          class="reference-tag"
-        >{{ tag }}</span>
-      </div>
-      <div v-if="facts.length" class="reference-fact-list">
-        <div v-for="(fact, factIndex) in facts" :key="factIndex" class="reference-fact">
-          <span class="reference-fact-label">{{ fact.label }}</span><span class="reference-fact-value">{{ fact.value }}</span>
+    <!-- The rail always renders: each record group holds its empty state
+         and its add row (S-064). -->
+    <aside class="reference-meta">
+      <div class="reference-group" data-group="aliases">
+        <div class="reference-rail-label">Aliases</div>
+        <div v-if="aliases.length" class="reference-alias-row">
+          <!-- The remove control sits beside the chip span, never inside
+               it: S-009 reads the span's text as the value alone. -->
+          <span
+            v-for="(alias, aliasIndex) in aliases"
+            :key="aliasIndex"
+            class="reference-chip"
+          >
+            <span class="reference-alias">{{ alias }}</span>
+            <button
+              type="button"
+              class="reference-alias-remove"
+              :data-alias="alias"
+              aria-label="Remove alias"
+              @click="emit('remove-alias', alias)"
+            >×</button>
+          </span>
         </div>
+        <p v-else class="reference-group-empty">No aliases yet.</p>
+        <input
+          v-model="aliasDraft"
+          class="reference-alias-input"
+          aria-label="New alias"
+          @keydown.enter="submitAlias"
+        >
+        <button type="button" class="reference-alias-add" @click="submitAlias">Add alias</button>
+      </div>
+      <div class="reference-group" data-group="tags">
+        <div class="reference-rail-label">Tags</div>
+        <div v-if="tags.length" class="reference-tag-row">
+          <span
+            v-for="(tag, tagIndex) in tags"
+            :key="tagIndex"
+            class="reference-chip"
+          >
+            <span class="reference-tag">{{ tag }}</span>
+            <button
+              type="button"
+              class="reference-tag-remove"
+              :data-tag="tag"
+              aria-label="Remove tag"
+              @click="emit('remove-tag', tag)"
+            >×</button>
+          </span>
+        </div>
+        <p v-else class="reference-group-empty">No tags yet.</p>
+        <input
+          v-model="tagDraft"
+          class="reference-tag-input"
+          aria-label="New tag"
+          @keydown.enter="submitTag"
+        >
+        <button type="button" class="reference-tag-add" @click="submitTag">Add tag</button>
+      </div>
+      <div class="reference-group" data-group="facts">
+        <div class="reference-rail-label">Facts</div>
+        <div v-if="facts.length" class="reference-fact-list">
+          <div v-for="(fact, factIndex) in facts" :key="factIndex" class="reference-fact">
+            <span class="reference-fact-label">{{ fact.label }}</span><span class="reference-fact-value">{{ fact.value }}</span>
+            <button
+              type="button"
+              class="reference-fact-remove"
+              :data-index="factIndex"
+              aria-label="Remove fact"
+              @click="emit('remove-fact', factIndex)"
+            >Remove</button>
+          </div>
+        </div>
+        <p v-else class="reference-group-empty">No facts yet.</p>
+        <input
+          v-model="factLabelDraft"
+          class="reference-fact-label-input"
+          aria-label="Fact label"
+          @keydown.enter="submitFact"
+        >
+        <input
+          v-model="factValueDraft"
+          class="reference-fact-value-input"
+          aria-label="Fact value"
+          @keydown.enter="submitFact"
+        >
+        <button type="button" class="reference-fact-add" @click="submitFact">Add fact</button>
       </div>
       <!-- Where the entry shows up in the manuscript, scanned at read time. The
            parent owns the record, so the rows and the picker only report a
@@ -207,9 +276,9 @@ const aliases = computed(() => props.entry.aliases || [])
 const tags = computed(() => props.entry.tags || [])
 const facts = computed(() => props.entry.facts || [])
 
-const hasMeta = computed(
-  () => aliases.value.length > 0 || tags.value.length > 0 || facts.value.length > 0,
-)
+// entryDisplayName in useReferences.js owns the untitled rule. This check
+// mirrors it, so the field opens exactly when the heading reads Untitled.
+const isUntitled = (name) => !(name || '').trim()
 
 // The picker's choices (S-034): sections the derived mentions do not show,
 // in the order the sections prop lists them.
@@ -217,16 +286,6 @@ const addableSections = computed(() => {
   const shownSectionIds = new Set(props.mentions.map((mention) => mention.sectionId))
   return props.sections.filter((section) => !shownSectionIds.has(section.id))
 })
-
-// The picker alone counts as rail content, so an entry with no scanned row
-// can still be corrected by hand (S-035).
-const hasRail = computed(
-  () =>
-    hasMeta.value ||
-    props.mentions.length > 0 ||
-    props.mergeTargets.length > 0 ||
-    addableSections.value.length > 0,
-)
 
 // A character appears in a section. A term or a place is used in one.
 const mentionHeading = computed(() => (props.entry.kind === 'character' ? 'Appears in' : 'Used in'))
@@ -292,6 +351,10 @@ const nameInput = ref(null)
 const definitionDraft = ref(props.entry.definition)
 const nameDraft = ref(props.entry.name)
 const lastCommittedName = ref(props.entry.name)
+const aliasDraft = ref('')
+const tagDraft = ref('')
+const factLabelDraft = ref('')
+const factValueDraft = ref('')
 
 // A refusal belongs to the name the last commit was issued for, and it
 // shows only beside an open field. The page hides it once the draft moves
@@ -313,23 +376,41 @@ const hasCurrentNameError = computed(
 //
 // The name edit is the exception. An accepted rename echoes the saved name
 // through this prop, and that echo returns the page to the heading (S-059).
+// The echo closes the field only when the name changed: an unrelated record
+// update must not close a field the writer did not touch.
 // A refusal instead arrives as a nameError prop with the record unchanged,
 // so an open edit keeps its draft beside the field.
 watch(
   () => props.entry,
   (entry, previous) => {
-    if (editingName.value && entry.name === lastCommittedName.value) {
+    if (
+      editingName.value &&
+      previous &&
+      entry.name !== previous.name &&
+      entry.name === lastCommittedName.value
+    ) {
       editingName.value = false
     }
-    if (previous && entry.id !== previous.id) editingName.value = false
+    const hasEntryChanged = !previous || entry.id !== previous.id
+    if (hasEntryChanged) {
+      editingName.value = false
+      aliasDraft.value = ''
+      tagDraft.value = ''
+      factLabelDraft.value = ''
+      factValueDraft.value = ''
+    }
     if (!editingName.value) {
       nameDraft.value = entry.name
       lastCommittedName.value = entry.name
     }
+    // Nothing can reference the entry until it carries a name, so an
+    // untitled record opens naming as its first act (S-062).
+    if (hasEntryChanged && isUntitled(entry.name)) openNameEdit()
     definitionDraft.value = entry.definition
     editingDefinition.value = false
     mergeOpen.value = false
   },
+  { immediate: true },
 )
 
 function openDefinitionEdit() {
@@ -348,9 +429,9 @@ function cancelDefinitionEdit() {
   definitionDraft.value = props.entry.definition
 }
 
-// Display-first naming (SPEC.md revision 3, S-057): the heading owns the
-// page until the writer asks to edit. The field reseeds from the committed
-// name, so a discarded draft never leaks back.
+// Display-first naming (SPEC.md revision 3, S-057): the field stays closed
+// until the writer asks, or the record arrives untitled (S-062). The field
+// reseeds from the committed name, so a discarded draft never leaks back.
 function openNameEdit() {
   nameDraft.value = props.entry.name
   editingName.value = true
@@ -372,6 +453,29 @@ function saveName() {
 
 function cancelNameEdit() {
   editingName.value = false
+}
+
+function submitAlias() {
+  const alias = aliasDraft.value.trim()
+  if (!alias) return
+  emit('add-alias', alias)
+  aliasDraft.value = ''
+}
+
+function submitTag() {
+  const tag = tagDraft.value.trim()
+  if (!tag) return
+  emit('add-tag', tag)
+  tagDraft.value = ''
+}
+
+function submitFact() {
+  const label = factLabelDraft.value.trim()
+  const value = factValueDraft.value.trim()
+  if (!label && !value) return
+  emit('add-fact', { label, value })
+  factLabelDraft.value = ''
+  factValueDraft.value = ''
 }
 
 // The picker is one-shot: report include-section (S-035) even when no
@@ -420,8 +524,13 @@ function chooseKind(kind) {
   color: var(--text-primary);
 }
 
-.reference-name {
-  /* Single-line counterpart of .reference-definition-source, same glass chrome. */
+.reference-name,
+.reference-alias-input,
+.reference-tag-input,
+.reference-fact-label-input,
+.reference-fact-value-input {
+  /* The page's field chrome: the name line and the small record rows share
+     the definition source's glass. */
   font: inherit;
   font-size: 14px;
   color: var(--note-text, var(--text-primary));
@@ -431,7 +540,11 @@ function chooseKind(kind) {
   padding: 6px 10px;
 }
 
-.reference-name:focus {
+.reference-name:focus,
+.reference-alias-input:focus,
+.reference-tag-input:focus,
+.reference-fact-label-input:focus,
+.reference-fact-value-input:focus {
   outline: none;
   border-color: var(--note-accent, var(--accent));
 }
@@ -535,6 +648,28 @@ function chooseKind(kind) {
   padding: 2px 8px;
 }
 
+.reference-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.reference-group {
+  /* One labelled record group. The start alignment keeps the rows
+     compact beneath their label. */
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.reference-group-empty {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  opacity: 0.6;
+}
+
 .reference-fact-list {
   display: flex;
   flex-direction: column;
@@ -543,6 +678,10 @@ function chooseKind(kind) {
 
 .reference-fact {
   /* The accent bar marks one fact record, so its label and value read as a pair. */
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-secondary);
@@ -585,12 +724,19 @@ function chooseKind(kind) {
   color: var(--text-primary);
 }
 
-/* Kind toggles, name controls, rail buttons and the definition edit share
-     one ghost chrome. The select keeps its native dropdown arrow. */
+/* Kind toggles, name controls, rail buttons, record controls and the
+     definition edit share one ghost chrome. The select keeps its native
+     dropdown arrow. */
 .reference-kind-toggle,
 .reference-name-edit,
 .reference-name-save,
 .reference-name-cancel,
+.reference-alias-add,
+.reference-alias-remove,
+.reference-tag-add,
+.reference-tag-remove,
+.reference-fact-add,
+.reference-fact-remove,
 .reference-mention-add,
 .reference-mention-go,
 .reference-mention-remove,
@@ -615,6 +761,12 @@ function chooseKind(kind) {
 .reference-name-edit:hover,
 .reference-name-save:hover,
 .reference-name-cancel:hover,
+.reference-alias-add:hover,
+.reference-alias-remove:hover,
+.reference-tag-add:hover,
+.reference-tag-remove:hover,
+.reference-fact-add:hover,
+.reference-fact-remove:hover,
 .reference-mention-add:hover,
 .reference-mention-go:hover,
 .reference-mention-remove:hover,
