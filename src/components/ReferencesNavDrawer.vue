@@ -149,7 +149,7 @@ function selectEntry(id) {
 
 <style scoped>
 /* The add options wear the same ghost chrome as the surface tabs, so the
-   drawer's action buttons read as one family on the glass. */
+   panel's actions read as one family. */
 .reference-add {
   display: flex;
   gap: 4px;
@@ -161,9 +161,10 @@ function selectEntry(id) {
   min-width: 0;
   font: inherit;
   font-size: 11px;
-  color: var(--text-secondary);
+  color: var(--note-text, var(--text-secondary));
+  opacity: 0.75;
   background: none;
-  border: 1px solid var(--bg-glass-border);
+  border: 1px solid var(--note-border, var(--bg-glass-border));
   border-radius: var(--radius-sm);
   padding: 4px 8px;
   cursor: pointer;
@@ -171,13 +172,13 @@ function selectEntry(id) {
 }
 
 .reference-add-option:hover {
-  color: var(--text-primary);
-  background: var(--hover-bg);
+  color: var(--note-text, var(--text-primary));
+  opacity: 1;
+  background: var(--note-hover-bg, var(--hover-bg));
 }
 
 /* Surface tabs reuse the add-option chrome. The selected tab takes the
-   accent family like .notes-entry.selected, so the active surface reads on
-   the dark glass drawer. */
+   accent family like .notes-entry.selected, so the active surface reads. */
 .surface-tabs {
   display: flex;
   gap: 4px;
@@ -189,9 +190,10 @@ function selectEntry(id) {
   min-width: 0;
   font: inherit;
   font-size: 11px;
-  color: var(--text-secondary);
+  color: var(--note-text, var(--text-secondary));
+  opacity: 0.75;
   background: none;
-  border: 1px solid var(--bg-glass-border);
+  border: 1px solid var(--note-border, var(--bg-glass-border));
   border-radius: var(--radius-sm);
   padding: 4px 8px;
   cursor: pointer;
@@ -199,11 +201,13 @@ function selectEntry(id) {
 }
 
 .surface-tab:hover {
-  color: var(--text-primary);
-  background: var(--hover-bg);
+  color: var(--note-text, var(--text-primary));
+  opacity: 1;
+  background: var(--note-hover-bg, var(--hover-bg));
 }
 
 .surface-tab.selected {
+  opacity: 1;
   color: var(--note-accent, var(--accent));
   background: var(--accent-bg);
   border-color: var(--accent);
@@ -221,7 +225,7 @@ function selectEntry(id) {
   font: inherit;
   font-size: 13px;
   text-align: left;
-  color: var(--text-primary);
+  color: var(--note-text, var(--text-primary));
   background: none;
   border: none;
   border-radius: var(--radius-sm);
@@ -237,12 +241,11 @@ function selectEntry(id) {
 .notes-entry.selected,
 .reference-entry:hover,
 .reference-entry.selected {
-  background: var(--hover-bg);
+  background: var(--note-hover-bg, var(--hover-bg));
 }
 
-/* The drawer is chrome, so it paints with the chrome palette. The paper theme's
-   text colour belongs to the page beside it: bound here it put dark ink on the
-   dark glass drawer and the rows vanished. */
+/* The panel sits on the paper surface. Its text follows the theme so the
+   rows stay legible. */
 .notes-entry.selected,
 .reference-entry.selected {
   background: var(--accent-bg);
@@ -264,7 +267,8 @@ function selectEntry(id) {
 .notes-empty,
 .reference-empty {
   font-size: 13px;
-  color: var(--text-secondary);
+  color: var(--note-text, var(--text-secondary));
+  opacity: 0.6;
   text-align: center;
   padding: 20px 0;
 }

@@ -113,12 +113,18 @@ const emit = defineEmits([
 // text paint the view, and the two scoped vars carry the theme into the
 // panel chrome.
 const surfaceStyles = computed(() => {
-  if (!props.theme || typeof props.theme !== 'object') return {}
+  const theme = props.theme
+  if (!theme || typeof theme !== 'object') return {}
+  // Theme text is the ink for every surface on the page. The alpha pair
+  // tints borders and hover states without a second palette.
+  const isHex = typeof theme.text === 'string' && /^#[0-9a-f]{6}$/i.test(theme.text)
   return {
-    backgroundColor: props.theme.bg,
-    color: props.theme.text,
-    '--note-text': props.theme.text,
-    '--note-accent': props.theme.accent,
+    backgroundColor: theme.bg,
+    color: theme.text,
+    '--note-text': theme.text,
+    '--note-accent': theme.accent,
+    '--note-border': isHex ? `${theme.text}33` : undefined,
+    '--note-hover-bg': isHex ? `${theme.text}11` : undefined,
   }
 })
 
@@ -187,6 +193,8 @@ function forwardJump(sectionId) {
   flex: 0 0 250px;
   overflow-y: auto;
   padding: 16px 12px;
+  /* A rule separates the navigation column from the page. */
+  border-right: 1px solid var(--note-border, var(--bg-glass-border));
 }
 
 .references-page {
