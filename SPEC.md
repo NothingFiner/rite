@@ -322,3 +322,70 @@ drawer had become a panel the writer must never close.
 | S-072 | e2e | opening References should show the panel immediately, with no drawer toggle involved |
 | S-073 | e2e | a Stats round trip while in References should leave the panel visible and unchanged |
 | S-074 | e2e | switching from References to the editor should leave no References panel in the editor layout |
+
+## Revision 4 — no history checkpoint without a delta (ROADMAP 6.8)
+
+### Context
+
+A row in the version history must mean the manuscript changed. Three paths write
+history: `save_document` (explicit save), `save_snapshot` (manual checkpoint) and
+`autosave_document`. Only autosave tests for a change. `AppState::append_history_delta`
+compares the document with `last_history_state` and returns `Ok(false)` when
+`doc_ops_between` yields no ops, so it records nothing and rewrites nothing.
+
+`AppState::append_history_snapshot` compares nothing. It pushes a full `Document`
+into the embedded history and compacts, so a save with no edit stores a duplicate
+document in the `.rite`. The cost: the file grows by a document per no-op save,
+`compact_history` evicts real history to stay under `max_snapshots`, and the
+history list fills with rows a writer cannot tell apart.
+
+**The rule.** Record a row only when the document differs from the baseline.
+`last_history_state` is the state the history was last advanced from.
+`open_document` and `save_document` set it to the loaded document, and
+`append_history_delta` advances it after journalling. It already holds the newest
+recorded state, so the comparison needs no replay of the embedded history. Compare
+against the baseline rather than against the newest snapshot: a delta run past that
+snapshot can already hold the current state, and the correct answer there is no new
+row, not a fresh snapshot.
+
+Two cases keep a record:
+
+- **Empty history.** The first save of a document has no prior state to compare
+  against, so its snapshot is the file's only restore point. That first save
+  records even when the content equals `Document::default()`, which is where
+  `AppState::new` starts the baseline.
+- **A different target path.** A Save As must write a complete document to the new
+  path. Only the history row is skipped.
+
+`save_snapshot` changes shape so the caller can tell the two outcomes apart:
+
+```rust
+pub fn save_snapshot(state: State<AppState>) -> Result<Option<String>, String>
+```
+
+`Some(timestamp)` means a row was recorded. `None` means there was nothing to
+record. No frontend caller invokes `save_snapshot` in this build, so the command can
+change shape without a frontend change. An unchanged save still clears
+`is_modified` and still reports success: the writer asked to save, and the file on
+disk already matches the document.
+
+`append_history_delta` keeps its guard unchanged. That guard is the model the two
+other paths now follow.
+
+The history table has no `unit` or `e2e` sentence in this revision. The whole
+change sits behind the Tauri commands, and the tests drive those commands through
+the mock app.
+
+### Sentences
+
+| ID | Layer | Sentence |
+|---|---|---|
+| S-075 | rust | saving a document that has never been saved should record exactly one history row, and a repeated save of that same content should leave the count at one |
+| S-076 | rust | saving a document that was just opened, with no edit since, should record no history row |
+| S-077 | rust | saving an unchanged document to the path already open should not touch the file on disk at all |
+| S-078 | rust | saving a changed document should add exactly one row, and reconstructing from that row's timestamp should return the saved content |
+| S-079 | rust | an explicit manual checkpoint of a changed document should add exactly one row and return that row's timestamp |
+| S-080 | rust | an explicit manual checkpoint with nothing new to record should write nothing and return no timestamp |
+| S-081 | rust | a save to a different path should write a complete document there, with no additional history row, even when the content is unchanged |
+| S-082 | rust | after an autosave journals a change, a save of that same state should record no history row |
+| S-083 | rust | after a manual checkpoint records a snapshot, a save of that same state should record no history row |

@@ -555,17 +555,18 @@ pub fn autosave_document<R: Runtime>(
 
 /// Manually append a full snapshot of the current document to the embedded
 /// history and persist the `.rite`. A checkpoint records progress (a
-/// browse/restore point) without a full save's semantics. Returns the snapshot's
-/// timestamp. Requires the document to have been saved at least once (a
+/// browse/restore point) without a full save's semantics. Returns the new
+/// snapshot's timestamp, or `None` when the document already matches the
+/// recorded state. Requires the document to have been saved at least once (a
 /// last_path to write to).
 #[tauri::command]
-pub fn save_snapshot(state: State<AppState>) -> Result<String, String> {
+pub fn save_snapshot(state: State<AppState>) -> Result<Option<String>, String> {
     let base_path = require_last_path(&state)?;
     let doc = state.document.lock().map_err(|e| e.to_string())?.clone();
     let timestamp = state.append_history_snapshot(&doc)?;
     let file = state.build_rite_file()?;
     history::write_rite_file(Path::new(&base_path), file)?;
-    Ok(timestamp)
+    Ok(Some(timestamp))
 }
 
 /// List every snapshot and delta in the open document's embedded history,
