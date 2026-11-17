@@ -437,6 +437,12 @@ pub fn open_document<R: Runtime>(
     (*state_notes) = rite_file.notes;
     drop(state_notes);
 
+    // Load the file's references record (SPEC 5.19a), mirroring the notes load
+    // above for legacy files without the key.
+    let mut state_references = state.references.lock().map_err(|e| e.to_string())?;
+    (*state_references) = rite_file.references;
+    drop(state_references);
+
     // Load the embedded history into the live state. set_version_history also
     // compacts, so a freshly migrated (uncapped, old sidecar) history is
     // bounded immediately.

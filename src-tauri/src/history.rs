@@ -1,8 +1,23 @@
-//! Version history, embedded in the single `.rite` file.
+//! Version history, embedded in the single `.rite` file — and, by inheritance,
+//! the `.rite` file envelope itself.
 //!
-//! A `.rite` file is a JSON object `{ document, history }` where `history` is
-//! an ordered list of records — full `Snapshot`s (a `Document` at a point in
-//! time) and `Delta`s (a `Vec<DocOp>` forward ops from the preceding state).
+//! **This module owns two things, and the name only describes one of them.**
+//! `RiteFile`, `CURRENT_RITE_SCHEMA_VERSION`, `read_rite_file`,
+//! `write_rite_file`, `migrate_rite_file` and `migrate_sidecar` are file-format
+//! code, not history code. The wrapper (`{ document, history }`) arrived with
+//! embedded history, and every later document-level section was added as a
+//! sibling field of it rather than given a module of its own: `notes` in 5.17,
+//! `references` in 5.19a. Read those items as envelope code. Extracting them to
+//! a `rite_file` module is a known, deliberately deferred cleanup; until then,
+//! a document-level section belongs here *because the file format lives here*,
+//! and for no other reason.
+//!
+//! A `.rite` file is a JSON object `{ document, history, schemaVersion, notes,
+//! references }` where `history` is an ordered list of records — full
+//! `Snapshot`s (a `Document` at a point in time) and `Delta`s (a `Vec<DocOp>`
+//! forward ops from the preceding state). `notes` and `references` sit beside
+//! `history`, not inside it: they are document-level source that never enters
+//! `Document`, so no snapshot or delta can contain them.
 //! Reconstructing a past version = take the newest snapshot at or before the
 //! target timestamp, then replay the intervening deltas forward. Every `DocOp`
 //! carries its old state, so `apply_doc_ops` validates each step and refuses a
@@ -78,9 +93,16 @@ impl HistoryRecord {
     }
 }
 
-/// The on-disk `.rite` file: the live document plus its embedded history.
-/// `history` defaults to empty so a hand-written or partially-migrated file
-/// without a history array still deserializes.
+/// The on-disk `.rite` file: the live document, its embedded history, and the
+/// document-level sections that are deliberately kept out of `Document`
+/// (`notes`, `references`).
+///
+/// Only `document` is required. Every other section is `#[serde(default)]`, so a
+/// file written by an older build deserializes and the missing section reads as
+/// its empty default — an older file has no `history` array, no `notes` key, no
+/// `references` key, and still opens. That is what makes each section additive:
+/// adding one is not a breaking format change and does not by itself need a
+/// `CURRENT_RITE_SCHEMA_VERSION` bump.
 ///
 /// `schema_version` tags the on-disk format generation the file was written
 /// with. It is stamped on every write (see `write_rite_file`) and checked on
@@ -102,6 +124,12 @@ pub struct RiteFile {
     /// and reads back as the empty record. Notes never live in `Document`.
     #[serde(default)]
     pub notes: crate::notes::Notes,
+    /// Reference entries (5.19a). Additive: an older file has no `references`
+    /// key and reads back as the empty record. Entries never live in
+    /// `Document`, so they stay out of exports, word count, search and history
+    /// snapshots.
+    #[serde(default)]
+    pub references: crate::references::References,
 }
 
 /// The `.rite` schema version this build writes and understands. A file whose
@@ -149,10 +177,10 @@ pub fn write_rite_file(path: &Path, mut file: RiteFile) -> Result<(), String> {
 }
 
 /// Parse a `.rite` file's JSON into a `RiteFile`. Tries the embedded
-/// `{ document, history }` shape first; if that fails, falls back to the
-/// pre-embedding bare-`Document` shape (a top-level `Document` with no
-/// wrapper) and wraps it with empty history. Either way the result is a
-/// self-contained `RiteFile`.
+/// `{ document, history, ... }` envelope first; if that fails, falls back to the
+/// pre-embedding bare-`Document` shape (a top-level `Document` with no wrapper)
+/// and wraps it with empty history. Either way the result is a self-contained
+/// `RiteFile`.
 ///
 /// A file whose parsed `schema_version` is *higher* than
 /// `CURRENT_RITE_SCHEMA_VERSION` is from a newer build of Rite than this one,
@@ -178,6 +206,7 @@ pub fn read_rite_file(json: &str) -> Result<RiteFile, String> {
         history: Vec::new(),
         schema_version: 0,
         notes: crate::notes::Notes::default(),
+        references: crate::references::References::default(),
     })
 }
 
@@ -513,6 +542,7 @@ mod tests {
             history: vec![snapshot(0, "hello"), delta(5, "hello", "hello world")],
             schema_version: CURRENT_RITE_SCHEMA_VERSION,
             notes: crate::notes::Notes::default(),
+            references: crate::references::References::default(),
         };
         let json = serde_json::to_string_pretty(&file).unwrap();
         let back: RiteFile = serde_json::from_str(&json).unwrap();
@@ -529,6 +559,7 @@ mod tests {
             history: vec![snapshot(0, "hello")],
             schema_version: 0,
             notes: crate::notes::Notes::default(),
+            references: crate::references::References::default(),
         };
         write_rite_file(&tmp.base(), file.clone()).unwrap();
         let json = fs::read_to_string(&tmp.base()).unwrap();
@@ -753,6 +784,7 @@ mod tests {
             history: vec![snapshot(0, "hello")],
             schema_version: version,
             notes: crate::notes::Notes::default(),
+            references: crate::references::References::default(),
         }
     }
 

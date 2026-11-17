@@ -75,23 +75,6 @@
         />
       </div>
     </div>
-    <!-- References drawer (5.20a): App.vue owns the chrome like the stats
-         drawer. ReferencesNavDrawer is the bare view. ReferencesNavDrawer.spec.js
-         pins its props and emit. Shares the .drawer / .drawer-content base
-         styles already in this file. -->
-    <div class="drawer references" :class="{ open: leftDrawerOpen && leftDrawerMode === 'references' }">
-      <div class="drawer-content">
-        <ReferencesNavDrawer
-          :store="store"
-          :theme="theme.currentTheme"
-          :settings="llmSettings"
-          :busy="summaries.summariesBusy"
-          :selected-id="notesEntryId"
-          @select="onReferenceSelect"
-          @regenerate-all="summaries.generateSummaries()"
-        />
-      </div>
-    </div>
     <HistoryListDrawer
       :open="leftDrawerOpen && leftDrawerMode === 'history'"
       :history="history"
@@ -109,11 +92,12 @@
           :roles="chatManager.roles"
           :busy="chatManager.anyBusy || summaries.summariesBusy"
           @open-settings="openGeneralOptions"
+          @regenerate-all="summaries.generateSummaries()"
         />
       </div>
     </div>
 
-    <div class="scroll-layer" role="main" ref="scrollLayerRef" :class="['mode-' + viewMode, { 'right-pad': rightDrawerOpen, 'left-pad': leftDrawerOpen && leftDrawerMode === 'references' }]" @click="nav.selectedNavId = null">
+    <div class="scroll-layer" role="main" ref="scrollLayerRef" :class="['mode-' + viewMode, { 'right-pad': rightDrawerOpen }]" @click="nav.selectedNavId = null">
       <div class="editor-wrapper" :class="'mode-' + viewMode">
         <HistoryView
           v-if="viewMode === 'history'"
@@ -129,13 +113,28 @@
           v-else-if="viewMode === 'references'"
           :store="store"
           :theme="theme.currentTheme"
-          :tab="referencesTab"
           :summaries="summaries"
           :settings="llmSettings"
           :entry-id="notesEntryId"
           :origin-view="notesOriginView"
-          @update:tab="referencesTab = $event"
+          :surface="referencesTab"
+          :references="store.references"
+          :selected-entry-id="referenceEntryId"
+          :mentions="referenceMentions"
+          :sections="referenceSections"
+          :auto-name-edit="refNameAutoEdit"
           @jump="onReferencesJump"
+          @save-definition="onReferenceDefinitionSave"
+          @merge="onReferenceMerge"
+          @rename="onReferenceRename"
+          @remove-mention="onReferenceRemoveMention"
+          @include-section="onReferenceIncludeSection"
+          @add-alias="onReferenceAddAlias"
+          @remove-alias="onReferenceRemoveAlias"
+          @select="onReferenceSelect"
+          @update:surface="onReferenceSurface"
+          @add-entry="onReferenceAdd"
+          @select-entry="onReferenceEntrySelect"
         />
         <DocumentRenderer
           ref="editorRef"
@@ -236,6 +235,12 @@ import { useFocusMode } from './composables/useFocusMode.js'
 import { useKeyboardShortcuts } from './composables/useKeyboardShortcuts.js'
 import { createMenuActions, useMenuActions } from './composables/useMenu.js'
 import { noteDraftUndo, noteEntries } from './composables/useNotes.js'
+import {
+  addEntry, mergeEntries, deriveMentions,
+  renameEntry, excludeSection, includeSection,
+  addAlias, removeAlias,
+  sectionsWithChapterIndex, mentionTitle,
+} from './composables/useReferences.js'
 import { useThesaurus } from './composables/useThesaurus.js'
 import { useNewDocument } from './composables/useNewDocument.js'
 import { useVersionHistory } from './composables/useVersionHistory.js'
@@ -257,7 +262,6 @@ import NavigationDrawer from './components/NavigationDrawer.vue'
 import GeneralOptionsDrawer from './components/GeneralOptionsDrawer.vue'
 import TextOptionsDrawer from './components/TextOptionsDrawer.vue'
 import StatsDrawer from './components/StatsDrawer.vue'
-import ReferencesNavDrawer from './components/ReferencesNavDrawer.vue'
 import HistoryListDrawer from './components/HistoryListDrawer.vue'
 import HistoryView from './components/HistoryView.vue'
 import ReferencesView from './components/ReferencesView.vue'
@@ -274,6 +278,21 @@ const { doc } = storeToRefs(store)
 // when a tab sends. A snapshot would go stale after a swap.
 const notesRef = computed(() => store.notes)
 
+// Where each reference entry appears (5.19a): scanned from the manuscript at
+// read time and never stored, so it cannot drift. Keyed by entry id. The
+// view takes the selected entry's list.
+const referenceMentions = computed(() => deriveMentions(store.references, doc.value))
+
+// The picker's stock: every section as { id, title }, so the entry page can
+// offer the ones the derived mentions do not show. Titles follow the same
+// naming rule the mention rows use (mentionTitle over the chapter walk).
+const referenceSections = computed(() =>
+  sectionsWithChapterIndex(doc.value).map(({ section, chapterIndex }) => ({
+    id: section.id,
+    title: mentionTitle(section, chapterIndex),
+  })),
+)
+
 const editorRef = ref(null)
 // The scroll container that wraps the editor/manuscript (it scrolls, not the
 // views themselves — see the .scroll-layer CSS). Used by onGoToTop to jump the
@@ -281,9 +300,17 @@ const editorRef = ref(null)
 const scrollLayerRef = ref(null)
 const viewMode = ref('editor')
 const notesEntryId = ref('overview')
-// App owns the References tab selection so it survives a view switch
-// (SPEC.md 5.20 wiring decision 2, unit S-004/S-005 contract).
+// App owns the drawer's surface selection so it survives a view switch
+// (SPEC.md 5.20 wiring decision 2, unit S-004/S-005 contract). The entry
+// selection rides beside it (SPEC.md 5.19a).
 const referencesTab = ref('outline')
+// The reference entry the page shows (5.19a). The drawer reports row clicks.
+// The shell owns the selection, the way it owns the outline row's.
+const referenceEntryId = ref('')
+// True only for an entry the shell just added, which opens an untitled
+// record's name field (S-062). Every other selection clears it, so an
+// existing untitled record displays first (S-037).
+const refNameAutoEdit = ref(false)
 // Remembered when References is entered: the view the section jump returns to
 // (SPEC.md 5.20). From History the default is the editor.
 const notesOriginView = ref('editor')
@@ -545,10 +572,6 @@ function onSetMode(mode) {
         ? (editorRef.value?.getCurrentSectionId?.() || 'overview')
         : 'overview'
     anchorEntryId.value = notesEntryId.value
-    // Open the drawer with the seed in place (5.20a). The close-on-switch
-    // below permits it here, because isDrawerModeAllowedIn allows 'references'
-    // in this view.
-    openLeftDrawer('references')
     // The notes page maps summaryEntries into its recaps. Load the sidecar
     // on entry so the first render is not empty.
     summaries.refreshSummaryStatus()
@@ -650,6 +673,119 @@ function onReferenceSelect(id) {
   notesEntryId.value = id
 }
 
+// The same selection contract for the reference surfaces (5.19a).
+function onReferenceEntrySelect(id) {
+  refNameAutoEdit.value = false
+  referenceEntryId.value = id
+}
+
+// A surface click swaps the drawer's list. Outline is the notes surface, so
+// leaving a reference surface drops the stale entry selection.
+function onReferenceSurface(surface) {
+  referencesTab.value = surface
+  refNameAutoEdit.value = false
+  if (surface !== 'characters' && surface !== 'glossary') referenceEntryId.value = ''
+}
+
+// Adding an entry selects it unnamed, so the empty definition editor opens
+// on the page (5.19a S-007). The swap reaches Rust immediately: save and
+// autosave copy the record Rust holds, so a skipped push leaves the older
+// record on disk.
+function onReferenceAdd(kind) {
+  const result = addEntry(store.references, kind, '')
+  if (result.error) {
+    store.notifyError(new Error(`name owned by "${result.error.ownerName}"`), 'Add reference')
+    return
+  }
+  store.references = result.references
+  // The flag rides the selection in the same tick, so the fresh mount opens
+  // the name field on the untitled record.
+  refNameAutoEdit.value = true
+  referenceEntryId.value = result.entry.id
+  store.pushReferences()
+}
+
+// A definition commit rewrites one entry's markdown and pushes the record.
+// A selection whose entry is gone writes nothing.
+function onReferenceDefinitionSave(definition) {
+  const entries = store.references?.entries ?? []
+  if (!entries.some((entry) => entry.id === referenceEntryId.value)) return
+  store.references = {
+    ...store.references,
+    entries: entries.map((entry) =>
+      entry.id === referenceEntryId.value ? { ...entry, definition } : entry,
+    ),
+  }
+  store.pushReferences()
+}
+
+// A merge keeps the chosen survivor: it absorbs the other entry, takes the
+// selection, and the record goes to Rust (5.19a S-014/S-015). A target not
+// present in the record changes nothing.
+function onReferenceMerge(targetId) {
+  const mergedId = referenceEntryId.value
+  const hasTarget = (store.references?.entries ?? []).some((entry) => entry.id === targetId)
+  if (!targetId || !mergedId || !hasTarget) return
+  store.references = mergeEntries(store.references, targetId, mergedId)
+  refNameAutoEdit.value = false
+  referenceEntryId.value = targetId
+  store.pushReferences()
+}
+
+// A name commit renames through the record helper, so a duplicate name is
+// refused exactly as an add is (S-028). A selection whose entry is gone
+// writes nothing, the same guard as the definition commit.
+function onReferenceRename(name) {
+  const entries = store.references?.entries ?? []
+  if (!entries.some((entry) => entry.id === referenceEntryId.value)) return
+  const result = renameEntry(store.references, referenceEntryId.value, name)
+  if (result.error) {
+    store.notifyError(new Error(`name owned by "${result.error.ownerName}"`), 'Rename reference')
+    return
+  }
+  store.references = result.references
+  store.pushReferences()
+}
+
+// Mention corrections never edit a stored list: the rows are derived, so the
+// helpers only move a section in or out of the inclusions. Same
+// dead-selection guard as the definition commit.
+function onReferenceRemoveMention(sectionId) {
+  const entries = store.references?.entries ?? []
+  if (!entries.some((entry) => entry.id === referenceEntryId.value)) return
+  store.references = excludeSection(store.references, referenceEntryId.value, sectionId)
+  store.pushReferences()
+}
+
+function onReferenceIncludeSection(sectionId) {
+  const entries = store.references?.entries ?? []
+  if (!entries.some((entry) => entry.id === referenceEntryId.value)) return
+  store.references = includeSection(store.references, referenceEntryId.value, sectionId)
+  store.pushReferences()
+}
+
+// An alias edit goes through the record helper. A refusal returns the input
+// record unchanged, so the push is skipped. Same dead-selection guard as the
+// definition commit.
+function onReferenceAddAlias(alias) {
+  const entries = store.references?.entries ?? []
+  if (!entries.some((entry) => entry.id === referenceEntryId.value)) return
+  const updated = addAlias(store.references, referenceEntryId.value, alias)
+  if (updated === store.references) return
+  store.references = updated
+  store.pushReferences()
+}
+
+// The refusal shape matches onReferenceAddAlias above.
+function onReferenceRemoveAlias(alias) {
+  const entries = store.references?.entries ?? []
+  if (!entries.some((entry) => entry.id === referenceEntryId.value)) return
+  const updated = removeAlias(store.references, referenceEntryId.value, alias)
+  if (updated === store.references) return
+  store.references = updated
+  store.pushReferences()
+}
+
 // Manuscript "Go to top" button (5.1b). The manuscript's first page is the
 // title page (front matter), which sits at the very top of the scroll-layer —
 // so going to the top is just scrolling the layer back to scrollTop 0, not
@@ -749,6 +885,7 @@ onMounted(async () => {
   document.execCommand('styleWithCSS', false, true)
   await store.loadInitialDocument()
   await store.retrieveNotes()
+  await store.retrieveReferences()
 
   autosaveTimer = setInterval(() => { store.autosaveDocument() }, AUTOSAVE_INTERVAL_MS)
   // Coarse tick so the "Saved Xm ago" label refreshes. 15s is well below the
@@ -766,6 +903,10 @@ onUnmounted(() => {
 // Opening a document installs that file's notes in Rust (loadDocument sets
 // lastPath), so lastPath is the trigger to re-read them (SPEC.md 5.17).
 watch(() => store.lastPath, () => { store.retrieveNotes() })
+
+// The references record (5.19a) re-reads on the same trigger as the notes
+// read above: an open swap installs its record in Rust.
+watch(() => store.lastPath, () => { store.retrieveReferences() })
 
 // Note edits swap the record (`useNotes.js` writeNote), so a record-level
 // watch reaches Rust with every commit. Immediate, not debounced: the record
@@ -840,21 +981,6 @@ watch(() => store.notes, () => store.pushNotes())
   transition: transform 0.25s ease, visibility 0s;
 }
 
-/* References drawer (5.20a): the same left-drawer geometry as stats. An
-   exclusive class keeps the chrome here App-scoped. */
-.drawer.references {
-  left: 48px;
-  transform: translateX(-100%);
-  width: 260px;
-}
-
-.drawer.references.open {
-  transform: translateX(0);
-  /* S-018: the visibility open state, same pattern as the four left drawers. */
-  visibility: visible;
-  transition: transform 0.25s ease, visibility 0s;
-}
-
 .drawer-content {
   height: 100%;
   overflow-y: auto;
@@ -892,24 +1018,15 @@ watch(() => store.notes, () => store.pushNotes())
   padding-top: 38px;
   padding-bottom: 36px;
   padding-left: 48px;
-  /* Animate both horizontal paddings so the pages slide with the drawers
-     instead of snapping when they open/close (matches the drawers' 0.25s). */
-  transition: padding-right 0.25s ease, padding-left 0.25s ease;
+  transition: padding-right 0.25s ease;
 }
 
 /* When the Assistant (right) drawer is open, pull the editor content in so the
    right edge of the text stays visible and selectable for chat context — the
-   drawer would otherwise overlay it. The left drawers intentionally overlay
-   the editor pages; only the References page shifts, via .left-pad. */
+   drawer would otherwise overlay it. The left drawers overlay the pages; no
+   view shifts for them. */
 .scroll-layer.right-pad {
   padding-right: 400px;
-}
-
-/* The References page is the only view whose content starts at the rail's
-   edge, so the open drawer would cover its controls. Pad by the drawer's full
-   308px extent (48px rail + 260px drawer). */
-.scroll-layer.left-pad {
-  padding-left: 308px;
 }
 
 .scroll-layer.mode-editor {
