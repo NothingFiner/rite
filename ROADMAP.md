@@ -242,6 +242,7 @@ in this phase turns out to be a feature, it belongs in Phase 5 instead.
 | 6.7 | Final accessibility + manual QA | open — 5.7 is done, so the final pass can start |
 | **6.8** | **Never record a history checkpoint that has no delta** | **open** |
 | 6.9 | Bug log (`BUGS.md`): stable `B-###` IDs, cross-referenced from commits and specs | done |
+| 6.10 | History navigation as an in-view panel, like References | open |
 
 ### 6.8 — No checkpoint without a delta
 
@@ -285,6 +286,25 @@ Lands as a Rust unit-level change in `AppState`, with the frontend only learning
 that a checkpoint may report "no change" instead of a new timestamp.
 
 ---
+
+### 6.10 — History navigation as an in-view panel
+
+5.19a revision 3 moved the References navigation out of a rail-toggled drawer
+and into the view. `ReferencesView.vue` owns a `.references-panel` beside the
+page, the panel paints with the theme's text and accent, a rule separates it
+from the page, and the References rail item is gone. The writer never has to
+find or keep a drawer open to move around the view.
+
+The History view has the same shape and the same problem. Its list lives in
+`HistoryListDrawer.vue`, opened from the rail, while `HistoryView.vue` shows
+the selected version. Apply the References precedent: render the history list
+as a panel inside `HistoryView`, theme its text and accent, separate it from
+the preview with a rule, and remove the History rail item. The entry semantics
+stay as they are — `li[role=button]`, keyboard navigation and the selected
+marker are already pinned by 5.12 and the accessibility pass.
+
+The rail icon for History draws attention to a control that should not exist
+once the panel is structural. Treat it as part of this item, not a separate one.
 
 ## Not on the roadmap
 
