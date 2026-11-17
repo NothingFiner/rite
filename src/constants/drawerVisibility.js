@@ -29,14 +29,20 @@ export const DRAWER_MODES_ALLOWED_IN_VIEW = {
   editor: ['chapters', 'general-options', 'text-options', 'stats'],
   manuscript: ['chapters', 'general-options', 'stats'],
   history: ['general-options'],
-  // 'references' offers its own drawer plus the two global ones. The document tree and text appearance do not apply there.
+  // 'references' (5.20a S-001/S-002) is the drawer mode for its own view. The
+  // rail has no References item (spec revision 3, S-071), so the map governs
+  // mode validity rather than button visibility. App.vue's close-on-switch
+  // must not close the mode inside the view it belongs to. The view carries
+  // its own navigation panel beside the page, so the document tree and text
+  // appearance do not apply there.
   references: ['references', 'general-options', 'stats'],
 }
 
-/// True if `mode` is a left-drawer mode whose ActivityBar button should be
-/// reachable in `view`. Unknown modes (e.g. 'history', which has no
-/// ActivityBar button) and unknown views resolve to false — never accidentally
-/// show a button for an unlisted combination.
+/// True if `mode` is a left-drawer mode allowed in `view`. ActivityBar filters
+/// its buttons with it, and App.vue closes a drawer only when the target view
+/// drops the mode. Unknown modes (e.g. 'history', which has no ActivityBar
+/// button) and unknown views resolve to false, so an unlisted combination
+/// never shows a button.
 export function isDrawerModeAllowedIn(mode, view) {
   const allowed = DRAWER_MODES_ALLOWED_IN_VIEW[view]
   return Array.isArray(allowed) && allowed.includes(mode)
