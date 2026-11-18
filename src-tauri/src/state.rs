@@ -220,19 +220,41 @@ impl AppState {
         *self.version_history.lock().unwrap() = records;
     }
 
-    /// Append a full snapshot of `doc` to the embedded history and compact.
-    /// Returns the snapshot's timestamp. Used by explicit save and the manual
-    /// checkpoint. No disk write — the caller serializes the whole `RiteFile`
-    /// after mutating, so no lock is held across I/O.
-    pub fn append_history_snapshot(&self, doc: &Document) -> Result<String, String> {
+    /// Append a snapshot of `doc` to the embedded history, compact, and
+    /// advance `last_history_state` to `doc`, the way `append_history_delta`
+    /// advances its baseline. Returns the snapshot's timestamp, or `None`
+    /// when `doc` matches the recorded state, because a duplicate row only
+    /// spends compaction room. An empty history records regardless, because
+    /// the first snapshot is the file's only restore point even when it
+    /// matches the default baseline. Used by explicit save and the manual
+    /// checkpoint. No disk write: the caller serializes the whole `RiteFile`
+    /// afterward, holding no lock across I/O.
+    pub fn append_history_snapshot(&self, doc: &Document) -> Result<Option<String>, String> {
+        let old = self
+            .last_history_state
+            .lock()
+            .map_err(|e| e.to_string())?
+            .clone();
+        let should_record = {
+            let version_history = self.version_history.lock().map_err(|e| e.to_string())?;
+            version_history.is_empty() || !history::doc_ops_between(&old, doc).is_empty()
+        };
+        if !should_record {
+            return Ok(None);
+        }
+
         let timestamp = history::current_timestamp();
-        let mut version_history = self.version_history.lock().map_err(|e| e.to_string())?;
-        version_history.push(HistoryRecord::Snapshot {
-            timestamp: timestamp.clone(),
-            document: doc.clone(),
-        });
-        history::compact_history(&mut version_history, self.max_snapshots);
-        Ok(timestamp)
+        {
+            let mut version_history = self.version_history.lock().map_err(|e| e.to_string())?;
+            version_history.push(HistoryRecord::Snapshot {
+                timestamp: timestamp.clone(),
+                document: doc.clone(),
+            });
+            history::compact_history(&mut version_history, self.max_snapshots);
+        }
+
+        self.set_history_baseline(doc);
+        Ok(Some(timestamp))
     }
 
     /// Journal the delta from the last history baseline to the current document

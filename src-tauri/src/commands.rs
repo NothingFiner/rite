@@ -364,22 +364,31 @@ pub fn save_document<R: Runtime>(
     state: State<AppState>,
 ) -> Result<(), String> {
     let doc = state.document.lock().map_err(|e| e.to_string())?.clone();
+    let was_modified = *state.is_modified.lock().map_err(|e| e.to_string())?;
+    let previous_path = state.last_path.lock().map_err(|e| e.to_string())?.clone();
+    let is_save_as = matches!(&previous_path, Some(known_path) if known_path != &path);
 
-    // Record a full snapshot of the saved document in the embedded history (the
-    // save baseline), then write the whole `.rite` — document + history — as a
-    // single atomic file. This replaces the old `.rite` + `.rite.history` sidecar
-    // pair, so nothing separate appears in Finder next to the document.
-    state.append_history_snapshot(&doc)?;
-    let file = state.build_rite_file()?;
-    // `write_rite_file` takes ownership and stamps the current schema version
-    // on the way to disk; `file` is not used afterward, so move it in.
-    history::write_rite_file(Path::new(&path), file)?;
+    // A Save As skips the history row: its write carries the complete document
+    // to the new path, which the row would only duplicate.
+    let recorded = if is_save_as {
+        None
+    } else {
+        state.append_history_snapshot(&doc)?
+    };
 
-    // Checkpoint the RAG vector index to its sidecar (Phase 4.7). Done BEFORE
-    // `path` is moved into `last_path` below. Best-effort: vectors are derivable
-    // (a missing sidecar just rebuilds on next open), so a sidecar write failure
-    // must NOT fail the document save that already succeeded — swallow it.
-    let _ = state.checkpoint_index_to_sidecar(&app, &path);
+    // The file is written when it has something to persist: a history row, a
+    // new path for the document, or `is_modified`. A notes or references
+    // change sets that flag without touching the manuscript, so a save with
+    // no row still lands on disk.
+    if recorded.is_some() || is_save_as || was_modified {
+        let file = state.build_rite_file()?;
+        history::write_rite_file(Path::new(&path), file)?;
+
+        // Checkpoint the RAG vector index alongside the rewrite (Phase 4.7).
+        // Best-effort per `checkpoint_index_to_sidecar`: a failed sidecar
+        // write must not fail the save that already succeeded.
+        let _ = state.checkpoint_index_to_sidecar(&app, &path);
+    }
 
     let mut last_path = state.last_path.lock().map_err(|e| e.to_string())?;
     *last_path = Some(path);
@@ -387,8 +396,8 @@ pub fn save_document<R: Runtime>(
     let mut modified = state.is_modified.lock().map_err(|e| e.to_string())?;
     *modified = false;
 
-    // The saved document is now the baseline the next autosave delta computes
-    // against (the snapshot just appended reconstructs to this same state).
+    // The saved state is the baseline the next autosave delta computes
+    // against, whether or not this save recorded a history row.
     state.set_history_baseline(&doc);
 
     Ok(())
@@ -553,19 +562,22 @@ pub fn autosave_document<R: Runtime>(
     Ok(())
 }
 
-/// Manually append a full snapshot of the current document to the embedded
-/// history and persist the `.rite`. A checkpoint records progress (a
-/// browse/restore point) without a full save's semantics. Returns the snapshot's
-/// timestamp. Requires the document to have been saved at least once (a
-/// last_path to write to).
+/// Manually record a checkpoint of the current document in the embedded
+/// history, and persist the `.rite` only when a row is recorded. A checkpoint
+/// records progress (a browse/restore point) without a full save's semantics.
+/// Returns the recorded timestamp, or `None` with no write when the document
+/// already matches the recorded state. Requires the document to have been
+/// saved at least once (a last_path to write to).
 #[tauri::command]
-pub fn save_snapshot(state: State<AppState>) -> Result<String, String> {
+pub fn save_snapshot(state: State<AppState>) -> Result<Option<String>, String> {
     let base_path = require_last_path(&state)?;
     let doc = state.document.lock().map_err(|e| e.to_string())?.clone();
-    let timestamp = state.append_history_snapshot(&doc)?;
-    let file = state.build_rite_file()?;
-    history::write_rite_file(Path::new(&base_path), file)?;
-    Ok(timestamp)
+    let recorded = state.append_history_snapshot(&doc)?;
+    if recorded.is_some() {
+        let file = state.build_rite_file()?;
+        history::write_rite_file(Path::new(&base_path), file)?;
+    }
+    Ok(recorded)
 }
 
 /// List every snapshot and delta in the open document's embedded history,
