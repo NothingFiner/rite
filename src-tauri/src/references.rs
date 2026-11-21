@@ -107,9 +107,9 @@ fn contains_word(entry: &ReferenceEntry, target: &str) -> bool {
 
 /// Every entry the chooser offers for `word` (S-105, S-106).
 ///
-/// One command, not a JS matcher: `show_word_menu` decides the item is offered
-/// with this same rule ("no router" trap 5 in SPEC.md revision 5), so the menu
-/// and the chooser can never disagree about what a word matches.
+/// One command, not a JS matcher. `show_word_menu` decides the item is
+/// offered with this same rule ("no router" trap 5 in SPEC.md revision 5).
+/// The menu and the chooser can never disagree about what a word matches.
 #[tauri::command]
 pub fn reference_matches_for_word(
     word: String,

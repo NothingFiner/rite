@@ -204,8 +204,8 @@
 
     <!-- Reference lookup chooser (SPEC.md revision 5, S-105/S-106). Mounted
          beside the thesaurus popover for the same reason: it reads the
-         context-menu capture that listener holds, and shows matches Rust
-         computed so no JS matcher can drift. -->
+         context-menu capture that listener holds. It shows matches Rust
+         computed, so no JS matcher can drift. -->
     <ReferenceLookupPopover
       :visible="referenceLookup.state.open"
       :word="referenceLookup.state.word"
@@ -724,8 +724,8 @@ function onReferenceLinkOpen(entryId) {
   referenceEntryId.value = entry.id
 }
 
-// The chooser picked a match (S-105/S-106): the same shell move a reference
-// link makes — References, the entry's surface, the entry selected. The match
+// The chooser picked a match (S-105/S-106), the same shell move a reference
+// link makes: References, the entry's surface, the entry selected. The match
 // was computed at menu time, so the record can have changed: its own kind
 // still picks the surface when the entry is gone.
 function onReferenceLookupChoose(match) {

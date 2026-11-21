@@ -252,11 +252,11 @@ export function useThesaurus() {
   }
 
   /**
-   * The takeover as the menu routes see it: the core of the captured slice —
-   * the exact value `onContextMenu` handed `show_word_menu` — with the click
-   * point, or null when nothing is captured (no takeover yet, or one `apply`
-   * already wrote). The reference chooser reads this on its menu event; it
-   * never performs a capture of its own.
+   * The takeover as the menu routes see it: the core of the captured slice,
+   * the exact value `onContextMenu` handed `show_word_menu`, plus the click
+   * point. Returns null when nothing is captured (no takeover yet, or one
+   * `apply` already wrote). The reference chooser reads this on its menu
+   * event. It never performs a capture of its own.
    */
   function currentCapture() {
     if (!captured) return null

@@ -3,7 +3,7 @@
 // The Rust side emits one window event named `menu` whose payload is the item
 // id (`new`, `open`, `save`, `save_as`, `import`, `export_plain_text`,
 // `export_markdown`, `export_docx`, `export_epub`, `undo`, `redo`, plus the
-// word menu's own routes — `thesaurus` and `look_up_reference`, documented at
+// word menu's own routes: `thesaurus` and `look_up_reference`, documented at
 // their seams (`useThesaurus.js` and `useReferenceLookup.js`).
 // This module maps those ids to the app's existing actions.
 
@@ -61,7 +61,7 @@ export function createMenuActions(deps) {
     // The word menu's lookup item opens the chooser over the same capture. One
     // lazy arrow per word-menu entry: the deps may lack either, and the
     // capture read (useThesaurus.currentCapture) is only touched when the
-    // action actually runs. No capture means no chooser — a menu event the
+    // action actually runs. No capture means no chooser. A menu event the
     // takeover never backed is a no-op.
     look_up_reference: () => {
       deps.referenceLookup.open(deps.thesaurus.currentCapture())

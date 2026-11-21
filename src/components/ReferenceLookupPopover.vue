@@ -53,8 +53,8 @@ const props = defineProps({
 
 const emit = defineEmits(['choose', 'cancel'])
 
-// The kind is lowercase from serde's camelCase ("term", "character", "place");
-// the writer reads a label, so capitalise it.
+// The kind is lowercase from serde's camelCase ("term", "character", "place").
+// The writer reads a label, so capitalise it.
 function kindLabel(kind) {
   const label = kind ?? ''
   return label.charAt(0).toUpperCase() + label.slice(1)
@@ -93,8 +93,8 @@ watch(
 )
 
 // Escape and an outside click are document-level, so they work without the
-// popover having focus. Both listeners live while the popover is visible, and
-// an emit here is never a hide: only a visible=false prop or unmount takes it
+// popover having focus. Both listeners live while the popover is visible. An
+// emit here is never a hide: only a visible=false prop or unmount takes it
 // down again.
 function onDocumentKeydown(event) {
   if (!props.visible || event.key !== 'Escape') return
@@ -108,7 +108,7 @@ function onDocumentMousedown(event) {
 }
 
 // Shrinking the window can put the popover behind an edge it cleared when it
-// opened, so it re-places itself on resize while it is on screen.
+// opened. It re-places itself on resize while it is on screen.
 function onWindowResize() {
   if (props.visible) place()
 }
@@ -136,9 +136,9 @@ onBeforeUnmount(removeDismissal)
 
 <style scoped>
 .reference-lookup {
-  /* Sits above the drawers (25) and status bar (30); below the prompt modal
+  /* Sits above the drawers (25) and status bar (30). Below the prompt modal
      (60) and the toast layer (100), on the same level as the thesaurus
-     popover — the two never open at once. */
+     popover. The two never open at once. */
   z-index: 40;
   position: fixed;
   display: flex;
