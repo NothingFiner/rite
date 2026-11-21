@@ -76,8 +76,33 @@ pub struct ReferenceMatch {
 /// Looser than link resolution and the mention scan: a lookup answers what a
 /// word could mean, so every entry the word belongs to is offered.
 pub fn entries_for_word(references: &References, word: &str) -> Vec<ReferenceMatch> {
-    let _ = (references, word);
-    Vec::new()
+    let target = word.to_lowercase();
+    references
+        .entries
+        .iter()
+        .filter(|entry| contains_word(entry, &target))
+        .map(|entry| ReferenceMatch {
+            id: entry.id.clone(),
+            name: entry.name.clone(),
+            kind: entry.kind,
+        })
+        .collect()
+}
+
+/// Whether a case-folded word equals one whole token of the name or an alias.
+/// Entry names are authored text, so the fold must go beyond what
+/// `eq_ignore_ascii_case` covers.
+fn contains_word(entry: &ReferenceEntry, target: &str) -> bool {
+    let name_hit = entry
+        .name
+        .split_whitespace()
+        .any(|token| token.to_lowercase() == target);
+    let alias_hit = entry.aliases.iter().any(|alias| {
+        alias
+            .split_whitespace()
+            .any(|token| token.to_lowercase() == target)
+    });
+    name_hit || alias_hit
 }
 
 /// Replace the open document's references record and return what is now stored.
