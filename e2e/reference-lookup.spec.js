@@ -1,23 +1,13 @@
 import { test, expect } from '@playwright/test'
+import { paragraph, referenceEntry } from './helpers/fixtures.js'
 import { emitMenu, installTauriIpc, invoked } from './helpers/tauri-ipc.js'
 
 // The reference lookup from a word in the manuscript (SPEC.md revision 5, S-105
 // and S-106).
 //
-// The word menu is native, so Playwright cannot click it — the same split the
-// thesaurus suite records: assert that the right-click asked Rust for the menu,
-// then deliver the event the menu would deliver and assert what the app does
-// with it. The menu's own contents are pinned in `src-tauri/tests`.
-
-const textStyle = { bold: false, italic: false, underline: false, fontSize: null }
-
-const paragraph = (id, text) => ({
-  id,
-  elements: [{ textRun: { content: text, textStyle } }],
-  leftIndent: null,
-  rightIndent: null,
-  firstLineIndent: null,
-})
+// Playwright cannot click a native menu. These tests assert that the right-click
+// asked Rust for the menu, then deliver that menu's event and follow what the
+// app does next. The item's own contents are pinned in `src-tauri/tests`.
 
 const seededDoc = {
   title: 'Reference Novel',
@@ -35,23 +25,10 @@ const seededDoc = {
   ],
 }
 
-const entry = (id, kind, name, overrides = {}) => ({
-  id,
-  kind,
-  name,
-  definition: '',
-  aliases: [],
-  tags: [],
-  facts: [],
-  includedSections: [],
-  excludedSections: [],
-  ...overrides,
-})
-
 const references = {
   entries: [
-    entry('e-qualen', 'character', 'Izildar Qualen'),
-    entry('e-square', 'place', 'Qualen Square'),
+    referenceEntry('e-qualen', 'character', 'Izildar Qualen'),
+    referenceEntry('e-square', 'place', 'Qualen Square'),
   ],
 }
 

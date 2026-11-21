@@ -1,44 +1,13 @@
 import { test, expect } from '@playwright/test'
+import { paragraph, referenceEntry, section } from './helpers/fixtures.js'
 import { installTauriIpc, invoked } from './helpers/tauri-ipc.js'
 
-// Reference links in notes and definitions, end to end (SPEC.md revision 5,
-// S-091, S-094, S-095, S-096).
+// End-to-end coverage for S-091, S-094, S-095 and S-096 of SPEC.md revision 5.
 //
-// A link is not navigation: it assigns the view, the surface and the selection.
-// That is `App.vue` shell state, so these sentences need a page. Each test
-// asserts the rendered link before it clicks one, so a broken link and a broken
-// harness do not look the same.
-
-const textStyle = { bold: false, italic: false, underline: false, fontSize: null }
-
-const paragraph = (id, text) => ({
-  id,
-  elements: [{ textRun: { content: text, textStyle } }],
-  leftIndent: null,
-  rightIndent: null,
-  firstLineIndent: null,
-})
-
-const section = (id, title, sectionType, paragraphs) => ({
-  id,
-  title,
-  sectionType,
-  hidden: false,
-  paragraphs,
-})
-
-const entry = (id, kind, name, overrides = {}) => ({
-  id,
-  kind,
-  name,
-  definition: '',
-  aliases: [],
-  tags: [],
-  facts: [],
-  includedSections: [],
-  excludedSections: [],
-  ...overrides,
-})
+// Clicking assigns the view, the surface and the selection, which is `App.vue`
+// shell state and therefore needs a page. No test clicks anything before
+// asserting that the rendered anchor is there, so a broken harness cannot pass
+// as a missing feature.
 
 const seededDoc = {
   title: 'Reference Novel',
@@ -55,11 +24,11 @@ const seededDoc = {
 
 const references = {
   entries: [
-    entry('e-qualen', 'character', 'Izildar Qualen'),
-    entry('e-izildar', 'character', 'Izildar', { aliases: ['Izi'] }),
-    entry('e-square', 'place', 'Qualen Square'),
-    entry('e-figure', 'character', 'Izildar Queln'),
-    entry('e-ashfall', 'term', 'Ashfall', {
+    referenceEntry('e-qualen', 'character', 'Izildar Qualen'),
+    referenceEntry('e-izildar', 'character', 'Izildar', { aliases: ['Izi'] }),
+    referenceEntry('e-square', 'place', 'Qualen Square'),
+    referenceEntry('e-figure', 'character', 'Izildar Queln'),
+    referenceEntry('e-ashfall', 'term', 'Ashfall', {
       definition: 'Named for [[Izildar Queln]], though the statue is gone.',
     }),
   ],

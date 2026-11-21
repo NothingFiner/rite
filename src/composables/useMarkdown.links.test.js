@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { renderReferenceMarkdown } from './useMarkdown.js'
 
-// Reference links in a note or a definition (SPEC.md revision 5, S-084 … S-089).
+// Rendering `[[…]]` from a note or a definition (SPEC.md revision 5, S-084 …
+// S-089).
 //
-// The record is the same one 5.19a's own tests use: a character whose full name
-// and first name collide, an alias on the shorter one, and a place that shares
-// the full name's surname. Resolution is whole-text equality, so the collision
-// is only about aliases here, not about matching a fragment of a name.
+// Equality is whole-text, against a name or an alias. So `[[Izi]]` resolves
+// through the alias, while `[[Izildar]]` never reaches the longer entry that
+// begins with the same word.
 
 const entry = (id, kind, name, aliases = []) => ({
   id,
@@ -28,9 +28,9 @@ const references = {
   ],
 }
 
-/// The anchors in rendered output, as raw tags. Every absence assertion below
-/// is paired with one of these on a link that must resolve, so a renderer that
-/// produces no anchors at all cannot pass by doing nothing.
+/// The anchors in rendered output, as raw tags. The absence tests below pair
+/// this with a link that must resolve, so a renderer producing nothing cannot
+/// pass.
 const anchors = (html) => html.match(/<a\b[^>]*>[\s\S]*?<\/a>/g) || []
 const linkedIds = (html) => anchors(html).map((tag) => (tag.match(/data-entry-id="([^"]+)"/) || [])[1])
 const linkText = (tag) => tag.replace(/<[^>]+>/g, '')

@@ -1,9 +1,9 @@
-//! The word menu's reference lookup item (SPEC.md revision 5, S-102 … S-104).
+//! The word-menu item: present for a matching word, absent otherwise, and
+//! relayed under its own id (S-102 … S-104).
 //!
-//! The menu is asserted as data, for the reason `tests/menu.rs` records: a built
-//! menu needs a `Manager` and a main thread, so the contents are the contract and
-//! the rendering is the manual QA checklist. S-103 asserts an absence, so it
-//! carries the matching case in the same test.
+//! Contents rather than rendering, for the reason `tests/menu.rs` gives: a built
+//! menu needs a `Manager` on the main thread. S-103 tests an absence, so the
+//! matching case rides beside it.
 
 use rite_lib::menu::{
     menu_event, word_menu_definition_with_reference, MenuEvent, MenuNode, SpellingState,

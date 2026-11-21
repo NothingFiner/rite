@@ -2,11 +2,11 @@ import { describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import ReferenceEntryView from './ReferenceEntryView.vue'
 
-// Reference links inside an entry's own definition (SPEC.md revision 5, S-093).
+// A definition can point at another entry (S-093 of SPEC.md revision 5).
 //
-// The definition and a note share one renderer, so a story bible can point from
-// one entry at another. Clicking that link is S-094, which needs the shell and
-// lives in the e2e suite.
+// Definitions and notes share one renderer, so a story bible gains a graph
+// without new storage. Clicking such a link is S-094, which needs the shell and
+// therefore lives in the e2e suite.
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => null) }))
 

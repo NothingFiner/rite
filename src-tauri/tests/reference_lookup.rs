@@ -1,10 +1,9 @@
-//! Reference lookup from a word in the text (SPEC.md revision 5, S-097 … S-101).
+//! Whole-word containment: `entries_for_word` offers an entry when the clicked
+//! word sits inside its name or one of its aliases (S-097 … S-101).
 //!
-//! The lookup is deliberately looser than link resolution and than the mention
-//! scan: it answers "what could this word mean", so every entry the word
-//! belongs to is offered. Each absence assertion is paired with a word that
-//! must match, because an empty result from an unimplemented scan would satisfy
-//! the negative half alone.
+//! Looser than link resolution, which needs whole-text equality, and looser than
+//! the mention scan. A negative case carries a word that must match beside it,
+//! or an unimplemented scan would pass it.
 
 use rite_lib::references::{entries_for_word, ReferenceEntry, ReferenceKind, ReferenceMatch, References};
 
@@ -22,9 +21,8 @@ fn entry(id: &str, kind: ReferenceKind, name: &str, aliases: &[&str]) -> Referen
     }
 }
 
-/// The record the rest of 5.19 is written against: a full name, the shorter
-/// name that shares its first word, an alias on the shorter one, and a place
-/// that shares the full name's surname.
+/// The record 5.19 is written against. A full name, the shorter name sharing its
+/// first word, an alias on the shorter one, and a place sharing the surname.
 fn record() -> References {
     References {
         entries: vec![

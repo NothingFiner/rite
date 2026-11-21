@@ -4,12 +4,11 @@ import { createPinia, setActivePinia } from 'pinia'
 import NotesView from './NotesView.vue'
 import { useDocumentStore } from '../stores/document.js'
 
-// Reference links on the note page (SPEC.md revision 5, S-090 and S-092).
+// The note page's link behaviour (SPEC.md revision 5, S-090 and S-092).
 //
-// S-090 is the boundary that keeps the brackets out of storage: the note record
-// is source, so rendering must not rewrite it. The anchor is asserted beside the
-// stored string, because a renderer that produces no links would satisfy the
-// storage half on its own.
+// Rendering must not touch what is stored, because the note record is source.
+// One test holds the anchor and the stored string together, so a renderer that
+// emits no anchor cannot satisfy the storage half by itself.
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => null) }))
 
