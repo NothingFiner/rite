@@ -58,9 +58,12 @@
       ></textarea>
       <!-- Reading mode renders the note when there is text and shows the
            empty state otherwise (SPEC.md 5.17). -->
+      <!-- Links come from v-html, so the container binds their clicks. The
+           handler only answers a .reference-link hit. -->
       <div
         v-else-if="noteText.trim()"
         class="note-rendered"
+        @click="openClickedReference"
         v-html="renderReferenceMarkdown(noteText, references)"
       ></div>
       <div v-else class="note-empty">No note yet.</div>
@@ -387,6 +390,14 @@ function regenerateRecap() {
 // scroll to the parent (SPEC.md 5.17).
 function jumpToSection() {
   if (selectedSectionId.value) emit('jump', selectedSectionId.value)
+}
+
+// The anchor is produced by v-html and binds no listener of its own, so the
+// container delegates the click. Only a target inside .reference-link
+// reports, and the shell resolves the payload id for the writer.
+function openClickedReference(event) {
+  const link = event.target.closest('.reference-link')
+  if (link) emit('open-reference', link.dataset.entryId)
 }
 
 // The view closing is not a discard: a dirty draft lands on the same entry,

@@ -88,6 +88,13 @@ export function entriesForSurface(references, surface) {
   return []
 }
 
+/// The surface that lists `kind`. A character belongs to characters. A term
+/// or place is glossary. Mirrors the grouping in entriesForSurface, so a
+/// link click lands on the surface the entry actually shows on.
+export function surfaceForKind(kind) {
+  return kind === 'character' ? 'characters' : 'glossary'
+}
+
 /// Append a trimmed alias to an entry and return a new record. Returns the
 /// input record unchanged for a blank alias, a missing entry, or a key an
 /// existing alias already holds. An alias is its trimmed lowercase key, the

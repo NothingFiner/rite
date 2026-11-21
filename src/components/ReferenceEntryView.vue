@@ -54,7 +54,11 @@
       <button type="button" class="reference-edit-cancel" @click="cancelDefinitionEdit">Cancel</button>
     </template>
     <template v-else-if="hasDefinition">
-      <div class="reference-definition" v-html="renderedDefinition"></div>
+      <div
+        class="reference-definition"
+        @click="openClickedReference"
+        v-html="renderedDefinition"
+      ></div>
       <button type="button" class="reference-definition-edit" @click="openDefinitionEdit">Edit definition</button>
     </template>
     <template v-else>
@@ -302,6 +306,14 @@ const mentionHeading = computed(() => (props.entry.kind === 'character' ? 'Appea
 const renderedDefinition = computed(() =>
   renderReferenceMarkdown(props.entry.definition, props.references),
 )
+
+// v-html carries the anchor, so the container delegates its clicks. The
+// delegation mirrors openClickedReference in NotesView.vue and reports the
+// payload id to the shell.
+function openClickedReference(event) {
+  const link = event.target.closest('.reference-link')
+  if (link) emit('open-reference', link.dataset.entryId)
+}
 
 // Alpha bytes layered under the theme ink (S-054). 14 softens the field
 // surface, 59 keeps its border a hairline and 1f is the faint hover wash.
