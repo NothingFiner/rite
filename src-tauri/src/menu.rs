@@ -4,7 +4,7 @@
 //! contract (which items exist, which ids this app owns) can be asserted without
 //! a runtime. [`build_menu`] is the only place that touches Tauri's menu types,
 //! and [`menu_event`] is the single authority on which ids this app owns: the
-//! File items plus undo/redo and the on-demand word menu's `thesaurus` item
+//! File items, undo/redo and every id in [`WORD_MENU_ITEM_IDS`]
 //! emit the [`MENU_EVENT_NAME`] window event, while native items (quit, hide,
 //! clipboard, window) and separators never emit — the OS or the webview handles
 //! them. The word menu's spelling items take a different route: the system
@@ -73,11 +73,12 @@ pub const MENU_EVENT_NAME: &str = "menu";
 
 /// Every id the right-click word menu owns, beside the static menu items.
 ///
-/// The thesaurus route re-emits to the frontend (the popover lives in JS); the
-/// spelling routes are handled entirely in Rust, because the system spell
-/// checker has no JS API.
-pub const WORD_MENU_ITEM_IDS: [&str; 4] = [
+/// The thesaurus and lookup routes re-emit to the frontend, whose popover and
+/// chooser receive the window event. The spelling routes run entirely in
+/// Rust, because the system spell checker has no JS API.
+pub const WORD_MENU_ITEM_IDS: [&str; 5] = [
     THESAURUS_ITEM_ID,
+    LOOK_UP_REFERENCE_ITEM_ID,
     LEARN_SPELLING_ITEM_ID,
     UNLEARN_SPELLING_ITEM_ID,
     IGNORE_SPELLING_ITEM_ID,
@@ -233,33 +234,51 @@ pub fn word_menu_definition_with_reference(
     spelling: SpellingState,
     has_reference_match: bool,
 ) -> Vec<MenuNode> {
-    let _ = has_reference_match;
-    word_menu_definition(spelling)
+    let mut nodes = word_menu_definition(spelling);
+    if has_reference_match {
+        // Index 1 keeps the lookup in the app-owned group, after the thesaurus
+        // item and before the separator that leads the native edit items.
+        nodes.insert(
+            1,
+            MenuNode::Item {
+                id: LOOK_UP_REFERENCE_ITEM_ID,
+                label: "Look Up Reference…",
+                accelerator: None,
+            },
+        );
+    }
+    nodes
 }
 
 /// Pop the word menu at the click point, in window coordinates.
 ///
 /// `x` and `y` come from the browser's `contextmenu` event, which reports
 /// viewport pixels; the webview fills the window, so they are window pixels.
+/// Tauri injects the managed state on the Rust side, so the frontend's invoke
+/// payload stays `x`, `y`, `word`.
 #[tauri::command]
 pub fn show_word_menu<R: Runtime>(
+    state: tauri::State<crate::state::AppState>,
     window: tauri::Window<R>,
     x: f64,
     y: f64,
     word: String,
 ) -> Result<(), String> {
     let checker = system_spell_check(&window);
-    let state = spelling_state(checker.as_ref(), &word);
+    let spelling = spelling_state(checker.as_ref(), &word);
+    let references = state.references.lock().map_err(|error| error.to_string())?;
+    let has_reference_match = !crate::references::entries_for_word(&references, &word).is_empty();
+    drop(references);
 
     let menu = Menu::new(&window).map_err(|error| error.to_string())?;
     // Build whatever the plain-data definition says, the same way `submenu`
     // builds the static menu, and keep the entries alive until the popup has
     // run (muda keeps owning refs to what it is given).
-    let entries = word_menu_definition(state)
+    let entries = word_menu_definition_with_reference(spelling, has_reference_match)
         .iter()
         .map(|node| node_entry(&window, node))
-        .collect::<tauri::Result<Vec<Box<dyn IsMenuItem<R>>>>>()
-        .map_err(|error| error.to_string())?;
+            .collect::<tauri::Result<Vec<Box<dyn IsMenuItem<R>>>>>()
+            .map_err(|error| error.to_string())?;
     for entry in &entries {
         menu.append(entry.as_ref()).map_err(|error| error.to_string())?;
     }
@@ -267,9 +286,10 @@ pub fn show_word_menu<R: Runtime>(
     // Spelling actions run here, never the frontend: the system spell checker
     // has no JS API. This handler fires for menu events from ANY menu (the
     // menu bar included), and each `show_word_menu` replaces the previous
-    // registration, so it matches only the spelling ids — `thesaurus` is
-    // relayed to the frontend by `run`'s app-wide handler, and native items
-    // are handled by the OS — and no-ops on everything else.
+    // registration, so it matches only the spelling ids and no-ops on
+    // everything else. The `thesaurus` and lookup ids are relayed to the
+    // frontend by `run`'s app-wide handler, and native items are handled by
+    // the OS.
     window.on_menu_event(move |_window, event| {
         let id = event.id().0.as_str();
         if matches!(
@@ -719,9 +739,9 @@ pub fn definition() -> MenuDefinition {
 /// The event for an activated menu item id, or `None` when this app does not own it.
 ///
 /// Read straight from [`definition`], so the data is the single source of
-/// truth: exactly the File items plus undo/redo own an event, as does the
-/// on-demand word menu's [`THESAURUS_ITEM_ID`]; everything else — separators,
-/// native items, unknown strings — yields `None`.
+/// truth. Exactly the File items plus undo/redo own an event, as does every id
+/// in [`WORD_MENU_ITEM_IDS`]. Separators, native items and unknown strings
+/// yield `None`.
 pub fn menu_event(menu_item_id: &str) -> Option<MenuEvent> {
     // The word menu is not in `definition` (it is built on demand, never in
     // the menu bar), so its ids are recognised here beside the static items.
