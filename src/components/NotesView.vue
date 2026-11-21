@@ -61,7 +61,7 @@
       <div
         v-else-if="noteText.trim()"
         class="note-rendered"
-        v-html="renderMarkdown(noteText)"
+        v-html="renderReferenceMarkdown(noteText, references)"
       ></div>
       <div v-else class="note-empty">No note yet.</div>
       <!-- The recap is generated context beside the writer's words, so it
@@ -115,7 +115,7 @@
 <script setup>
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { noteDraftUndo, noteEntries, readNote, writeNote } from '../composables/useNotes.js'
-import { renderMarkdown } from '../composables/useMarkdown.js'
+import { renderReferenceMarkdown } from '../composables/useMarkdown.js'
 import { llmConfigured } from '../composables/useLlmSettings.js'
 
 const props = defineProps({
@@ -139,9 +139,12 @@ const props = defineProps({
   // The raw llm-settings composable object, or null on a direct mount. The
   // generation gate reads it through `llmConfigured` (useLlmSettings.js).
   settings: { type: Object, default: null },
+  // The references record, so `[[…]]` in a note resolves against the entries
+  // this document actually has (SPEC.md revision 5).
+  references: { type: Object, default: () => ({ entries: [] }) },
 })
 
-const emit = defineEmits(['select', 'jump'])
+const emit = defineEmits(['select', 'jump', 'open-reference'])
 
 // The pane starts on the prop's entry and follows it when the parent moves it.
 const selectedEntryId = ref(props.entryId)

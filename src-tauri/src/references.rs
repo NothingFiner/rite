@@ -58,6 +58,28 @@ pub struct ReferenceFact {
     pub value: String,
 }
 
+/// One entry offered by the word menu's lookup (SPEC.md S-097 … S-101).
+///
+/// The name and the kind are what tell two entries sharing a word apart in the
+/// chooser, so a match is more than an id.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReferenceMatch {
+    pub id: String,
+    pub name: String,
+    pub kind: ReferenceKind,
+}
+
+/// Every entry whose name or an alias contains `word` as a whole word, ignoring
+/// case (S-097).
+///
+/// Looser than link resolution and the mention scan: a lookup answers what a
+/// word could mean, so every entry the word belongs to is offered.
+pub fn entries_for_word(references: &References, word: &str) -> Vec<ReferenceMatch> {
+    let _ = (references, word);
+    Vec::new()
+}
+
 /// Replace the open document's references record and return what is now stored.
 /// Marks the document modified. The autosave path picks the record up through
 /// `build_rite_file` rather than writing the file itself.

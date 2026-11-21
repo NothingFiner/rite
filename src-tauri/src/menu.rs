@@ -99,6 +99,12 @@ pub const LEARN_SPELLING_ITEM_ID: &str = "learn_spelling";
 pub const UNLEARN_SPELLING_ITEM_ID: &str = "unlearn_spelling";
 pub const IGNORE_SPELLING_ITEM_ID: &str = "ignore_spelling";
 
+/// The id of the reference lookup item on the right-click word menu.
+///
+/// App-owned like [`THESAURUS_ITEM_ID`]: the chooser it opens lives in JS, and
+/// the item is built only for a word that matches an entry.
+pub const LOOK_UP_REFERENCE_ITEM_ID: &str = "look_up_reference";
+
 /// What the spell checker knows about the word under the pointer.
 ///
 /// Plain data: the word menu is a function of this and nothing else, so every
@@ -215,6 +221,20 @@ pub fn word_menu_definition(spelling: SpellingState) -> Vec<MenuNode> {
         }
     }
     nodes
+}
+
+/// The word menu with the reference lookup offered when the clicked word names
+/// an entry (S-102, S-103).
+///
+/// Kept beside [`word_menu_definition`] rather than folded into it. The tests
+/// that pin the spelling-and-thesaurus shape call that function, and its
+/// contract is a word with no entries.
+pub fn word_menu_definition_with_reference(
+    spelling: SpellingState,
+    has_reference_match: bool,
+) -> Vec<MenuNode> {
+    let _ = has_reference_match;
+    word_menu_definition(spelling)
 }
 
 /// Pop the word menu at the click point, in window coordinates.

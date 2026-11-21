@@ -389,3 +389,153 @@ the mock app.
 | S-081 | rust | a save to a different path should write a complete document there, with no additional history row, even when the content is unchanged |
 | S-082 | rust | after an autosave journals a change, a save of that same state should record no history row |
 | S-083 | rust | after a manual checkpoint records a snapshot, a save of that same state should record no history row |
+
+
+## Revision 5 — reference links in notes, and lookup from the word menu (ROADMAP 5.19b, 5.19d)
+
+### Context
+
+Two features over one record: a `[[Name]]` link inside a note, and a lookup from
+a word in the text. They are deliberately different in what they store, and that
+difference is the whole design.
+
+**A note link stores nothing new.** The brackets live inside the note string,
+which is already source (`Notes` in `notes.rs`). There is no new field, no
+`.rite` change and no migration. Notes are structurally outside `Document`, so
+brackets in a note cannot reach the word count, search, exports, version
+history or the history diff — nothing has to be excluded, because nothing sees
+them.
+
+**The lookup stores nothing at all.** It is a way to reach an entry from the
+manuscript; it writes no text, marks no word and changes no `Paragraph`.
+
+**Why the manuscript stays clean.** `Paragraph` is `elements: Vec<Element>`, and
+each element is `text_run.content` plus `textStyle`. `paragraphToHTML` escapes
+every character. There is no markdown and no link type on that path, and this
+revision adds none: `[[Name]]` typed into the manuscript stays literal
+characters and is counted, searched and exported as text. S-107 pins that.
+
+**No router.** `viewMode` (`App.vue`), `referencesTab` and `referenceEntryId` are
+refs; a link is code that assigns them. There is no browser history, so a link
+has no return path — a writer gets back with the view tabs. Accepted, not fixed
+in this revision.
+
+**The word menu is native and its payload is fixed.** `useThesaurus.test.js`
+(protected) asserts `invoke('show_word_menu', { x, y, word })` by deep equality,
+and `menu.rs` states the split: "Rust decides what the menu holds; the
+frontend's whole job is to hand it the right word". So the match is computed in
+**Rust**, where `state.references` already lives, and the frontend asks Rust for
+the list through a `reference_matches_for_word` command. Do not add a field to
+that payload, and do not write a second matcher in JavaScript — two
+implementations of one rule drift, and when they disagree the menu offers a
+lookup with an empty list.
+
+### Two matching rules, on purpose
+
+They answer different questions and must not be merged.
+
+| Rule | Where | Test |
+|---|---|---|
+| **Link resolution**: the whole bracketed text equals an entry's name or one of its aliases, ignoring case | resolving `[[…]]` in a note or a definition | `equals` |
+| **Word lookup**: the clicked word occurs as a whole word inside an entry's name or one of its aliases, ignoring case | the word menu | `contains a word` |
+
+So `[[Izildar]]` resolves only to an entry literally named or aliased
+`Izildar`, while a right-click on `Qualen` offers both `Izildar Qualen` and
+`Qualen Square`. The first is attribution — the app decided the entry is meant.
+The second is a question — the writer asked what a word might be. 5.19a's
+mention scan (whole names, longest first) is a third rule and is untouched.
+
+### Layers moved from the approved draft
+
+Eight sentences changed layer. Both changes are structural, not preference:
+
+- **S-097 … S-101: unit → rust.** The matcher must run where the menu can reach
+  it, and the menu is built in Rust from `state.references`. A JS matcher would
+  duplicate the rule, and the protected `show_word_menu` payload cannot carry the
+  result of a JS match.
+- **S-091, S-094, S-105: unit → e2e.** Each sentence ends in "open the References
+  view … with that entry selected", which is `App.vue` shell state. There is no
+  test harness that mounts `App`, and building one is a fixture that fakes the
+  whole application — a setup error waiting to look like a red test. This follows
+  revision 2, which put the References panel sentences in e2e for the same
+  reason.
+
+### DOM contract added by this revision
+
+| Selector | Meaning |
+|---|---|
+| `.reference-link[data-entry-id]` | a resolved `[[…]]` link, inside `.note-rendered` or `.reference-definition`. Text is exactly what the writer typed between the brackets |
+| `.reference-lookup` | the chooser the Look Up Reference item opens |
+| `.reference-lookup-item[data-entry-id]` | one matching entry in the chooser, showing its name and kind |
+
+Without the last two rows a test that looks for the chooser cannot tell a
+missing feature from an unstated contract.
+
+### Tests that assert an absence carry a positive control
+
+S-087, S-088, S-089, S-101, S-103, S-096 and S-107 each assert that something
+does **not** happen. A do-nothing stub satisfies those for free, so each test
+holds a positive control in the same test: a resolvable link that is a link, or
+a word that does produce the item, or the same name linking in a note while it
+does not link in the manuscript. Do not delete a control to make a test simpler —
+the control is what makes the absence mean something.
+
+### Traps
+
+1. **Do not put links in the manuscript.** No anchor, no `data-entry-id`, no
+   markdown parse on `paragraphToHTML`. S-107 fails if the note renderer is
+   reused there.
+2. **Do not resolve by prefix or substring.** `[[Izi]]` resolves through an
+   alias, not because `Izi` starts `Izildar`.
+3. **Do not rewrite note text.** A rename leaves `[[Old Name]]` literal; there is
+   no pass that edits the writer's notes.
+4. **Do not store the resolution.** The entry a link points at is computed at
+   render time from the current record; nothing is written down.
+5. **Do not put the entry list in the native menu.** Labels are `&'static str`
+   and the list is dynamic, so the menu carries one static item and the chooser
+   is HTML — the same split the thesaurus already uses (native item, then
+   `.thesaurus-popover`).
+6. **The item is offered only when there is a match.** A menu item that opens an
+   empty chooser is worse than no item.
+
+### Sentences
+
+| ID | Layer | Sentence |
+|---|---|---|
+| S-084 | unit | it should turn `[[Name]]` in a note into a link to the entry whose name or alias equals Name, ignoring case |
+| S-085 | unit | it should display a link as exactly the text between the brackets, not the entry's canonical name |
+| S-086 | unit | it should resolve `[[Izi]]` to the entry that owns `Izi` as an alias and display it as `Izi` |
+| S-087 | unit | it should leave `[[Name]]` as literal text, brackets included, when no entry has that name or alias |
+| S-088 | unit | it should leave `[[Old Name]]` as literal text after the entry it named is renamed, since resolution matches the current name and aliases only |
+| S-089 | unit | it should leave escaped or unclosed brackets as literal text, and not throw |
+| S-090 | unit | it should render a note containing links without letting the link markup into the raw note text that is stored |
+| S-091 | e2e | it should open the References view on the entry's own surface with that entry selected when a link in a note is clicked |
+| S-092 | unit | it should keep resolving links in the story overview, a section note and the orphaned draft alike |
+| S-093 | unit | it should render `[[Name]]` in an entry's definition as a link to the matching entry, on the same terms as a note |
+| S-094 | e2e | it should select the linked entry and switch to that entry's surface when a link in a definition is clicked, including when the two entries sit on different surfaces |
+| S-095 | e2e | it should show a note link as its name, and open the linked entry's page when it is clicked |
+| S-096 | e2e | it should not change the manuscript, the word count or the manuscript view when a note holds a link |
+| S-097 | rust | it should find every entry whose name or alias contains the clicked word as a whole word, ignoring case |
+| S-098 | rust | it should return both `Izildar Qualen` and `Qualen Square` for the word `Qualen` |
+| S-099 | rust | it should return the entry for `Izi` when `Izi` is one of its aliases |
+| S-100 | rust | it should report each match with its entry's name and kind, so two entries sharing a word are distinguishable |
+| S-101 | rust | it should find no match for a word that only resembles a name, such as a word containing the name as a fragment |
+| S-102 | rust | it should offer a Look Up Reference item in the word menu when the clicked word matches at least one entry |
+| S-103 | rust | it should omit the Look Up Reference item when the clicked word matches no entry |
+| S-104 | rust | it should relay the Look Up Reference item to the frontend as a menu event under its own id, leaving thesaurus and spelling routes unchanged |
+| S-105 | e2e | it should open the References view on the chosen entry's surface with that entry selected when a match is chosen |
+| S-106 | e2e | it should offer the reference lookup on a name in the manuscript and open the chosen entry's page |
+| S-107 | unit | it should treat `[[Name]]` typed in the manuscript as ordinary text, with no link and no change to the paragraph's stored content |
+
+### Out of scope
+
+- Rewriting existing `[[old]]` links when an entry is renamed. A rename leaves
+  them literal, and a bulk rewrite is a separate item.
+- Any link target stored in `Document`, or any markdown in the editor.
+- A note link counting as a mention. Mentions stay derived from manuscript
+  paragraphs; a link is the writer pointing at the record.
+- `[[Name|display]]` syntax. The bracketed text *is* the display text, so the
+  writer chooses it by choosing which name or alias to type.
+- Back navigation from a link. There is no history stack to push onto.
+- The lookup restricted to the manuscript. It follows the word menu, wherever
+  the menu appears.
