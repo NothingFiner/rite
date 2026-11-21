@@ -43,7 +43,7 @@ use commands::{
     retrieve_notes, save_document, save_snapshot, search_document, set_section_hidden,
     split_paragraph, sync_document, undo, update_notes,
 };
-use references::{retrieve_references, update_references};
+use references::{reference_matches_for_word, retrieve_references, update_references};
 use export_docx::export_docx;
 use export_epub::export_epub;
 use export_text::export_text;
@@ -191,6 +191,7 @@ pub fn run() {
             update_notes,
             retrieve_references,
             update_references,
+            reference_matches_for_word,
             sync_document,
             undo,
             redo,

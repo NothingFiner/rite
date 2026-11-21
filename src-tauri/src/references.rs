@@ -105,6 +105,20 @@ fn contains_word(entry: &ReferenceEntry, target: &str) -> bool {
     name_hit || alias_hit
 }
 
+/// Every entry the chooser offers for `word` (S-105, S-106).
+///
+/// One command, not a JS matcher: `show_word_menu` decides the item is offered
+/// with this same rule ("no router" trap 5 in SPEC.md revision 5), so the menu
+/// and the chooser can never disagree about what a word matches.
+#[tauri::command]
+pub fn reference_matches_for_word(
+    word: String,
+    state: tauri::State<AppState>,
+) -> Result<Vec<ReferenceMatch>, String> {
+    let references = state.references.lock().map_err(|e| e.to_string())?;
+    Ok(entries_for_word(&references, &word))
+}
+
 /// Replace the open document's references record and return what is now stored.
 /// Marks the document modified. The autosave path picks the record up through
 /// `build_rite_file` rather than writing the file itself.
