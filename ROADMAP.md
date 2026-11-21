@@ -1,6 +1,6 @@
 # Rite — Roadmap
 
-Status as of **2026-11-10**. Phase 5's most recent shipped item is **5.20** (References view, #40, #42, #43, #44); 5.16 and 5.19 remain open, and Phase 6 is release polish. This line names no commit or `development` hash on purpose: it was stale three times in one day, because a hash in a file goes out of date on the next merge.
+Status as of **2026-11-18**. Phase 5's most recent shipped item is **5.19a** (the reference-entry record, #48, #49); 5.16 and the rest of 5.19 remain open. Phase 6 is release polish, and its newest shipped item is **6.8** (#50). This line names no commit or `development` hash on purpose: it was stale three times in one day, because a hash in a file goes out of date on the next merge.
 
 Tauri v1 → v2 migration landed as PR #15 — a prerequisite for 5.11's context menu, not a roadmap item of its own.
 
@@ -38,7 +38,7 @@ The last feature phase. When this is done, Rite is feature-complete for a first 
 | **5.16** | **Word cloud of frequently used words, excluding articles and pronouns** | **open — idea, not scoped** |
 | 5.17 | Notes view: story overview and per-section notes | done (#32) |
 | 5.18 | Tab characters + fixed 0.5-inch tab stops, with a Tab-set first-line indent | done (#22) |
-| **5.19** | **`[[…]]` links, characters in chapters, and custom words with where they are used** | **open — own data model; deferred by 5.17's spec** |
+| **5.19** | **`[[…]]` links, characters in chapters, and custom words with where they are used** | **partly — 5.19a (the entry record) shipped (#48, #49); 5.19b and 5.19c open** |
 | 5.20 | References view: a drawer listing the manuscript and a page per selection, with the generated recap beside the note (was 5.17) | done (#40, #42, #43, #44) |
 
 **Renumbered 2026-11-07.** The Notes view shipped under the ID **5.17** — its spec,
@@ -78,11 +78,18 @@ S-009 pass their unit tests because the tests call the helpers directly, and
 nothing in the app did. They are **B-001** and **B-002** in `BUGS.md`; the wiring
 is specced in #38.
 
-### 5.19 — `[[…]]` links, characters in chapters, custom words (open)
+### 5.19 — `[[…]]` links, characters in chapters, custom words (partly done)
 
 Deferred by 5.17's spec because it needs its own data model rather than an
 extension of the notes record: inline `[[…]]` links, a cast of characters attached
 to chapters, and a custom-word list that records where each word is used.
+
+**5.19a shipped** (#48, #49) as the data model this item was waiting for: one flat
+record whose `kind` is term, character or place, stored in the `.rite` beside
+`Notes`, with a detail page for its definition, aliases, tags, facts and derived
+appears-in mentions, and a merge control. The Characters and Glossary surfaces in
+the References drawer read that record. `[[…]]` links in notes and the spellcheck
+vocabulary sync stay open as 5.19b and 5.19c.
 
 ### 5.15 — Restored word menu (done, #17)
 
@@ -241,13 +248,13 @@ in this phase turns out to be a feature, it belongs in Phase 5 instead.
 | 6.5 | Release / build packaging (icons, signing, notarization, updater) | partly — `identifier: com.rite.app` set |
 | 6.6 | Manuscript view unification (use the 5.6 composables) | open |
 | 6.7 | Final accessibility + manual QA | open — 5.7 is done, so the final pass can start |
-| **6.8** | **Never record a history checkpoint that has no delta** | **open** |
+| 6.8 | Never record a history checkpoint that has no delta | done (#50) |
 | 6.9 | Bug log (`BUGS.md`): stable `B-###` IDs, cross-referenced from commits and specs | done |
 | 6.10 | History navigation as an in-view panel, like References | open |
 
 ### 6.8 — No checkpoint without a delta
 
-A version in the history must mean the manuscript *changed*. Today it does not:
+A version in the history must mean the manuscript *changed*. Until #50 it did not:
 `state.rs::append_history_snapshot` pushes a full `Snapshot` and compacts without
 comparing anything, and it is the path behind both explicit save
 (`commands.rs::save_document`) and the manual checkpoint
@@ -285,6 +292,29 @@ Interacts with 5.12 (change navigation) and 6.2 (history flow redesign: change
 counts, compare-then-restore) — both assume a row in the list is a real change.
 Lands as a Rust unit-level change in `AppState`, with the frontend only learning
 that a checkpoint may report "no change" instead of a new timestamp.
+
+**Shipped in #50** as a Rust change, with no frontend file touched. All three write
+paths now compare against `last_history_state` before they record. That baseline is
+the key: `open_document` sets it from the loaded document, `append_history_delta`
+advances it after journaling, and `append_history_snapshot` now advances it after it
+appends, so the comparison needs no replay of the embedded history.
+`append_history_snapshot` returns `Option<String>` — the new row's timestamp, or
+`None` with no row — and `save_snapshot` propagates it and writes the `.rite` only
+when a row was recorded, which changed its type to
+`Result<Option<String>, String>`. Nothing in the frontend calls that command, so the
+signature change reaches no caller. `save_document` tells a Save As from an ordinary
+save by comparing the target path with `last_path`: a Save As writes the whole file
+and skips the history row, and either way a save with nothing to write still clears
+`is_modified` and sets `last_path`.
+
+One derived sidecar moved with it: `checkpoint_index_to_sidecar` now runs only on a
+save that writes, so a `reembed_document` pass after a no-op save waits for the
+next write. The index is derived and `open_document` rebuilds a missing sidecar, so
+nothing is lost. The nine tests in `src-tauri/tests/history_checkpoints.rs`
+(S-075–S-083, one per sentence) drive the commands and read the history back from
+disk, so stale in-memory state cannot satisfy an assertion. Compaction under
+`max_snapshots`, autosave after a Save As, and the frontend's handling of a "no
+change" answer are not covered by those tests.
 
 ---
 
