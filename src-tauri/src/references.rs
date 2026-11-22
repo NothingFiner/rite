@@ -30,6 +30,20 @@ pub enum ReferenceKind {
     Place,
 }
 
+impl ReferenceKind {
+    /// The word the word menu prints beside an entry's name.
+    ///
+    /// Two entries can share the clicked word, so the label needs the kind to
+    /// tell them apart (S-109).
+    pub fn label(self) -> &'static str {
+        match self {
+            ReferenceKind::Term => "Term",
+            ReferenceKind::Character => "Character",
+            ReferenceKind::Place => "Place",
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ReferenceEntry {
@@ -103,20 +117,6 @@ fn contains_word(entry: &ReferenceEntry, target: &str) -> bool {
             .any(|token| token.to_lowercase() == target)
     });
     name_hit || alias_hit
-}
-
-/// Every entry the chooser offers for `word` (S-105, S-106).
-///
-/// One command, not a JS matcher. `show_word_menu` decides the item is
-/// offered with this same rule ("no router" trap 5 in SPEC.md revision 5).
-/// The menu and the chooser can never disagree about what a word matches.
-#[tauri::command]
-pub fn reference_matches_for_word(
-    word: String,
-    state: tauri::State<AppState>,
-) -> Result<Vec<ReferenceMatch>, String> {
-    let references = state.references.lock().map_err(|e| e.to_string())?;
-    Ok(entries_for_word(&references, &word))
 }
 
 /// Replace the open document's references record and return what is now stored.

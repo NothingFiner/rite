@@ -89,6 +89,9 @@ fn label(node: &MenuNode) -> String {
         MenuNode::Separator => "---".to_string(),
         MenuNode::Item { label, .. } => (*label).to_string(),
         MenuNode::Native { label, .. } => (*label).to_string(),
+        // Popup-time nodes never appear in the static menu these tests read.
+        MenuNode::LookupItem { label, .. } => label.clone(),
+        MenuNode::Submenu { label, .. } => (*label).to_string(),
     }
 }
 
@@ -288,6 +291,16 @@ fn s_006_every_item_carries_an_id_and_a_label_and_separators_only_divide_groups(
                     !label.trim().is_empty(),
                     "an app-owned item needs a label: {node:?}"
                 );
+            }
+            MenuNode::LookupItem { id, label } => {
+                assert!(!id.is_empty(), "a lookup item needs an id: {node:?}");
+                assert!(
+                    !label.trim().is_empty(),
+                    "a lookup item needs a label: {node:?}"
+                );
+            }
+            MenuNode::Submenu { label, .. } => {
+                assert!(!label.trim().is_empty(), "a submenu needs a label: {node:?}");
             }
             MenuNode::Native { label, .. } => {
                 assert!(

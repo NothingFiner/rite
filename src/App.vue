@@ -202,22 +202,6 @@
       @cancel="thesaurus.close"
     />
 
-    <!-- Reference lookup chooser (SPEC.md revision 5, S-105/S-106). Mounted
-         beside the thesaurus popover for the same reason: it reads the
-         context-menu capture that listener holds. It shows matches Rust
-         computed, so no JS matcher can drift. -->
-    <ReferenceLookupPopover
-      :visible="referenceLookup.state.open"
-      :word="referenceLookup.state.word"
-      :matches="referenceLookup.state.matches"
-      :loading="referenceLookup.state.loading"
-      :error="referenceLookup.state.error"
-      :x="referenceLookup.state.x"
-      :y="referenceLookup.state.y"
-      @choose="onReferenceLookupChoose"
-      @cancel="referenceLookup.close"
-    />
-
     <!-- Toast notifications overlay. Mounted once at the root so it sits above
          every drawer, panel, and the status bar. -->
     <Toaster />
@@ -260,7 +244,6 @@ import {
   surfaceForKind,
 } from './composables/useReferences.js'
 import { useThesaurus } from './composables/useThesaurus.js'
-import { useReferenceLookup } from './composables/useReferenceLookup.js'
 import { useNewDocument } from './composables/useNewDocument.js'
 import { useVersionHistory } from './composables/useVersionHistory.js'
 import { useLlmSettings } from './composables/useLlmSettings.js'
@@ -289,7 +272,6 @@ import LlmPanel from './components/LlmPanel.vue'
 import Toaster from './components/Toaster.vue'
 import PromptModal from './components/PromptModal.vue'
 import ThesaurusPopover from './components/ThesaurusPopover.vue'
-import ReferenceLookupPopover from './components/ReferenceLookupPopover.vue'
 
 const store = useDocumentStore()
 const { doc } = storeToRefs(store)
@@ -406,13 +388,12 @@ const newDocument = reactive(useNewDocument({ fileIO, store }))
 // whose payload is the item id and this map runs the matching action. Called
 // in setup so the `listen` registration lands during app load.
 // Thesaurus (5.11): the document-level contextmenu listener decides whether a
-// right-click belongs to the app; if it does, Rust pops the one-item word menu
-// and its activation arrives through the same `menu` event as every other item.
+// right-click belongs to the app; if it does, Rust pops the word menu and its
+// activation arrives through the same `menu` event as every other item.
 const thesaurus = reactive(useThesaurus())
-// The word menu's second route (SPEC.md revision 5, S-105/S-106): opens the
-// reference chooser over the capture `thesaurus` holds. Placed beside it in
-// the menu deps, the same lazy shape.
-const referenceLookup = reactive(useReferenceLookup())
+// The word menu's lookup route (SPEC.md revision 6). Its id names the entry,
+// so opening one is the shell move a reference link already makes.
+const referenceLookup = { openEntry: onReferenceLinkOpen }
 const menuActions = createMenuActions({
   store,
   fileIO,
@@ -722,20 +703,6 @@ function onReferenceLinkOpen(entryId) {
   referencesTab.value = surfaceForKind(entry.kind)
   refNameAutoEdit.value = false
   referenceEntryId.value = entry.id
-}
-
-// The chooser picked a match (S-105/S-106), the same shell move a reference
-// link makes: References, the entry's surface, the entry selected. The match
-// was computed at menu time, so the record can have changed: its own kind
-// still picks the surface when the entry is gone.
-function onReferenceLookupChoose(match) {
-  if (!match) return
-  const entry = (store.references?.entries ?? []).find((item) => item.id === match.id)
-  viewMode.value = 'references'
-  referencesTab.value = surfaceForKind(entry?.kind ?? match.kind)
-  refNameAutoEdit.value = false
-  referenceEntryId.value = match.id
-  referenceLookup.close()
 }
 
 // Adding an entry selects it unnamed, so the empty definition editor opens

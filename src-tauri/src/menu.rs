@@ -2,13 +2,13 @@
 //!
 //! Why the menu is defined as data: the definition is a plain-data seam, so the
 //! contract (which items exist, which ids this app owns) can be asserted without
-//! a runtime. [`build_menu`] is the only place that touches Tauri's menu types,
-//! and [`menu_event`] is the single authority on which ids this app owns: the
-//! File items, undo/redo and every id in [`WORD_MENU_ITEM_IDS`]
-//! emit the [`MENU_EVENT_NAME`] window event, while native items (quit, hide,
-//! clipboard, window) and separators never emit — the OS or the webview handles
-//! them. The word menu's spelling items take a different route: the system
-//! spell checker has no JS API, so [`show_word_menu`] handles them in Rust.
+//! a runtime. [`build_menu`] is the only place that touches Tauri's menu types.
+//! [`menu_event`] owns the fixed ids. The File items, undo/redo and everything
+//! in [`WORD_MENU_ITEM_IDS`] emit the [`MENU_EVENT_NAME`] window event.
+//! [`lookup_entry_id`] owns the lookup prefix, whose ids name their entry.
+//! Native items (quit, hide, clipboard, window) and separators never emit.
+//! The word menu's spelling items take a different route: the system spell
+//! checker has no JS API, so [`show_word_menu`] handles them in Rust.
 //!
 //! Tauri v2 needs a `Manager` to create any menu object (v1 menu types were
 //! plain structs), so `build_menu` and `app_menu` take one and return a
@@ -20,7 +20,10 @@ use tauri::menu::{
 };
 use tauri::{Manager, Runtime};
 
-/// One node of a menu: a separator, an app-owned item, or a native item.
+use crate::references::ReferenceMatch;
+
+/// One node of a menu: a separator, an app-owned item, a native item, or a
+/// popup-time item inside a submenu.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MenuNode {
     /// A non-interactive separator.
@@ -35,6 +38,16 @@ pub enum MenuNode {
     Native {
         label: &'static str,
         item: NativeItem,
+    },
+    /// An app-owned item whose id and label are computed at popup time.
+    ///
+    /// The reference lookup offers one per matching entry, so neither is known
+    /// when the static definition is written.
+    LookupItem { id: String, label: String },
+    /// A submenu under a fixed label, holding popup-time items.
+    Submenu {
+        label: &'static str,
+        items: Vec<MenuNode>,
     },
 }
 
@@ -71,14 +84,14 @@ pub struct MenuEvent {
 /// The window event name the frontend listens for.
 pub const MENU_EVENT_NAME: &str = "menu";
 
-/// Every id the right-click word menu owns, beside the static menu items.
+/// Every fixed id the right-click word menu owns.
 ///
-/// The thesaurus and lookup routes re-emit to the frontend, whose popover and
-/// chooser receive the window event. The spelling routes run entirely in
-/// Rust, because the system spell checker has no JS API.
-pub const WORD_MENU_ITEM_IDS: [&str; 5] = [
+/// The thesaurus route re-emits to the frontend, whose popover receives the
+/// window event. The spelling routes run entirely in Rust, because the system
+/// spell checker has no JS API. Lookup ids are not fixed: each names its entry
+/// and [`lookup_entry_id`] recognises them.
+pub const WORD_MENU_ITEM_IDS: [&str; 4] = [
     THESAURUS_ITEM_ID,
-    LOOK_UP_REFERENCE_ITEM_ID,
     LEARN_SPELLING_ITEM_ID,
     UNLEARN_SPELLING_ITEM_ID,
     IGNORE_SPELLING_ITEM_ID,
@@ -100,11 +113,30 @@ pub const LEARN_SPELLING_ITEM_ID: &str = "learn_spelling";
 pub const UNLEARN_SPELLING_ITEM_ID: &str = "unlearn_spelling";
 pub const IGNORE_SPELLING_ITEM_ID: &str = "ignore_spelling";
 
-/// The id of the reference lookup item on the right-click word menu.
+/// The id prefix every reference lookup item carries.
 ///
-/// App-owned like [`THESAURUS_ITEM_ID`]: the chooser it opens lives in JS, and
-/// the item is built only for a word that matches an entry.
+/// App-owned like [`THESAURUS_ITEM_ID`], but not a fixed id: the submenu holds
+/// one item per matching entry, and each id names the entry it opens. The
+/// chooser is gone, so activation needs no lookup (S-110).
 pub const LOOK_UP_REFERENCE_ITEM_ID: &str = "look_up_reference";
+
+/// The id of the submenu that groups the matching entries.
+pub const REFERENCE_SUBMENU_LABEL: &str = "References";
+
+/// The menu item id for `entry_id`: the route, then the entry.
+pub fn lookup_item_id(entry_id: &str) -> String {
+    format!("{LOOK_UP_REFERENCE_ITEM_ID}:{entry_id}")
+}
+
+/// The entry a lookup item id names, or `None` for anything else.
+///
+/// A bare prefix names no entry, so it is not a route. `menu_event` returns
+/// `None` for lookup ids on purpose: they have no fixed id to match.
+pub fn lookup_entry_id(id: &str) -> Option<&str> {
+    let rest = id.strip_prefix(LOOK_UP_REFERENCE_ITEM_ID)?;
+    let entry_id = rest.strip_prefix(':')?;
+    (!entry_id.is_empty()).then_some(entry_id)
+}
 
 /// What the spell checker knows about the word under the pointer.
 ///
@@ -224,30 +256,37 @@ pub fn word_menu_definition(spelling: SpellingState) -> Vec<MenuNode> {
     nodes
 }
 
-/// The word menu with the reference lookup offered when the clicked word names
-/// an entry (S-102, S-103).
+/// The word menu with the matching entries under a `References` submenu
+/// (S-102, S-103, S-108 … S-110).
 ///
 /// Kept beside [`word_menu_definition`] rather than folded into it. The tests
 /// that pin the spelling-and-thesaurus shape call that function, and its
 /// contract is a word with no entries.
 pub fn word_menu_definition_with_reference(
     spelling: SpellingState,
-    has_reference_match: bool,
+    matches: &[ReferenceMatch],
 ) -> Vec<MenuNode> {
     let mut nodes = word_menu_definition(spelling);
-    if has_reference_match {
-        // Index 1 keeps the lookup in the app-owned group, after the thesaurus
+    if !matches.is_empty() {
+        // Index 1 keeps the submenu in the app-owned group, after the thesaurus
         // item and before the separator that leads the native edit items.
-        nodes.insert(
-            1,
-            MenuNode::Item {
-                id: LOOK_UP_REFERENCE_ITEM_ID,
-                label: "Look Up Reference…",
-                accelerator: None,
-            },
-        );
+        nodes.insert(1, reference_submenu(matches));
     }
     nodes
+}
+
+/// One submenu however many entries match, so the popup keeps its height.
+fn reference_submenu(matches: &[ReferenceMatch]) -> MenuNode {
+    MenuNode::Submenu {
+        label: REFERENCE_SUBMENU_LABEL,
+        items: matches
+            .iter()
+            .map(|matched| MenuNode::LookupItem {
+                id: lookup_item_id(&matched.id),
+                label: format!("{} ({})", matched.name, matched.kind.label()),
+            })
+            .collect(),
+    }
 }
 
 /// Pop the word menu at the click point, in window coordinates.
@@ -266,15 +305,16 @@ pub fn show_word_menu<R: Runtime>(
 ) -> Result<(), String> {
     let checker = system_spell_check(&window);
     let spelling = spelling_state(checker.as_ref(), &word);
-    let references = state.references.lock().map_err(|error| error.to_string())?;
-    let has_reference_match = !crate::references::entries_for_word(&references, &word).is_empty();
-    drop(references);
+    let matches = {
+        let references = state.references.lock().map_err(|error| error.to_string())?;
+        crate::references::entries_for_word(&references, &word)
+    };
 
     let menu = Menu::new(&window).map_err(|error| error.to_string())?;
     // Build whatever the plain-data definition says, the same way `submenu`
     // builds the static menu, and keep the entries alive until the popup has
     // run (muda keeps owning refs to what it is given).
-    let entries = word_menu_definition_with_reference(spelling, has_reference_match)
+    let entries = word_menu_definition_with_reference(spelling, &matches)
         .iter()
         .map(|node| node_entry(&window, node))
             .collect::<tauri::Result<Vec<Box<dyn IsMenuItem<R>>>>>()
@@ -820,6 +860,18 @@ fn node_entry<R: Runtime, M: Manager<R>>(
             accelerator,
         } => Box::new(MenuItem::with_id(manager, *id, *label, true, *accelerator)?),
         MenuNode::Native { item, .. } => native_item(manager, *item)?,
+        MenuNode::LookupItem { id, label } => Box::new(MenuItem::with_id(
+            manager,
+            id.as_str(),
+            label.as_str(),
+            true,
+            None::<&str>,
+        )?),
+        // A nested submenu builds through the same path as the menu bar's.
+        MenuNode::Submenu { label, items } => {
+            let built = submenu(manager, label, items)?;
+            Box::new(built)
+        }
     })
 }
 

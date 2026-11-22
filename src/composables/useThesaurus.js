@@ -154,9 +154,8 @@ export function placePopover({
  *
  * Returns `{ state, openCurrent, apply, close }`; see SPEC.md for the field
  * list. `openCurrent` runs on the `thesaurus` menu event, `apply` writes the
- * replacement into the sheet and closes, `close` only closes. `currentCapture`
- * reports the takeover to the word menu's other route, `look_up_reference`
- * (see useReferenceLookup.js).
+ * replacement into the sheet and closes, `close` only closes. The reference
+ * lookup needs nothing from here: its menu id names the entry it opens.
  */
 export function useThesaurus() {
   const state = reactive({
@@ -251,19 +250,6 @@ export function useThesaurus() {
       })
   }
 
-  /**
-   * The takeover as the menu routes see it: the core of the captured slice,
-   * the exact value `onContextMenu` handed `show_word_menu`, plus the click
-   * point. Returns null when nothing is captured (no takeover yet, or one
-   * `apply` already wrote). The reference chooser reads this on its menu
-   * event. It never performs a capture of its own.
-   */
-  function currentCapture() {
-    if (!captured) return null
-    const clicked = captured.node.textContent.slice(captured.start, captured.end)
-    return { word: splitAffixes(clicked).core, x: state.x, y: state.y }
-  }
-
   function apply(replacement) {
     // Nothing taken over: nothing to write into, and close never writes.
     if (!captured) return
@@ -303,5 +289,5 @@ export function useThesaurus() {
     document.removeEventListener('contextmenu', onContextMenu, true)
   })
 
-  return { state, openCurrent, apply, close, currentCapture }
+  return { state, openCurrent, apply, close }
 }

@@ -1,12 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import { renderReferenceMarkdown } from './useMarkdown.js'
 
-// Rendering `[[…]]` from a note or a definition (SPEC.md revision 5, S-084 …
+// `[[…]]` rendering from a note or a definition (SPEC.md revision 5, S-084 …
 // S-089).
 //
-// Equality is whole-text, against a name or an alias. So `[[Izi]]` resolves
-// through the alias, while `[[Izildar]]` never reaches the longer entry that
-// begins with the same word.
+// So `[[Izi]]` resolves through the alias, while `[[Izildar]]` never reaches
+// the longer entry that begins with the same word.
 
 const entry = (id, kind, name, aliases = []) => ({
   id,

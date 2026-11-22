@@ -539,3 +539,109 @@ the control is what makes the absence mean something.
 - Back navigation from a link. There is no history stack to push onto.
 - The lookup restricted to the manuscript. It follows the word menu, wherever
   the menu appears.
+
+
+## Revision 6 — the lookup list lives in the native menu (ROADMAP 5.19d)
+
+Supersedes trap 5 and the `.reference-lookup` rows of revision 5. Everything
+else in revision 5 stands.
+
+### Context
+
+Revision 5 offered one static menu item and showed the matches in an HTML
+popover fed by a second IPC call. That split was justified by two things that
+turn out to be wrong:
+
+- **`&'static str` is our seam, not Tauri's.** `MenuItem::with_id` takes
+  `I: Into<MenuId>` and `T: AsRef<str>`, so an owned id and an owned label are
+  supported. Only `MenuNode::Item` insists on `&'static str`, because the
+  static menu is assertable plain data with no runtime.
+- **The match list never needed to reach JavaScript.** `show_word_menu` already
+  computes it in Rust. Round-tripping it through a command, a reactive store and
+  a positioned popover added a second matcher call, a second window, and a
+  second place to position after a menu had just dismissed.
+
+So the menu carries the entries. One click instead of two, and nothing is
+looked up a second time.
+
+### Shape
+
+The word menu grows one node when the clicked word matches:
+
+```
+Thesaurus…
+References ▸   Izildar Qualen (Character)
+               Qualen Square (Place)
+──────────
+Cut / Copy / Paste / Select All
+[…spelling section when flagged]
+```
+
+- The node is a submenu labelled `References`, inserted directly after the
+  Thesaurus item. One node however many entries match, so the popup does not
+  grow a row per match and the edit items stay where the writer expects them.
+- Each item's label is `Name (Kind)`: `Term`, `Character` or `Place`. A bare
+  name cannot distinguish two entries the word belongs to.
+- Each item's id is `look_up_reference:<entry id>`. The id names its entry, so
+  activating it needs no lookup: `lookup_item_id` builds it and
+  `lookup_entry_id` parses it back.
+- Matches keep the record's order, so the same click yields the same menu.
+
+### Routing
+
+`menu_event` stays the authority for ids with a fixed route. A lookup id is not
+one of those: `menu_event("look_up_reference:e-queln")` is `None` and
+`lookup_entry_id` recognises it instead. The app-wide handler in `lib.rs` emits
+the id verbatim when either says the app owns it, so the frontend still receives
+one `menu` window event whose payload is the id.
+
+`runMenuAction` parses the prefix before the id map runs, and passes the entry
+id to the `look_up_reference` action. That action calls `openEntry`, which is
+the same shell move a reference link makes (S-091): References, the entry's
+surface, the entry selected. A prefix with no entry behind it is not an action.
+
+### Deleted by this revision
+
+| Removed | Why |
+|---|---|
+| `ReferenceLookupPopover.vue` | the entries are in the menu, so there is no list to draw |
+| `useReferenceLookup.js` | no state, no invoke, no positioning |
+| `reference_matches_for_word` command | Rust computes the list where it builds the menu |
+| `useThesaurus.currentCapture` | only the chooser read the capture; the menu does not need it |
+
+`.reference-lookup` and `.reference-lookup-item` leave the DOM contract; a test
+that finds one is finding leftover code.
+
+### Sentences
+
+S-102 … S-106 keep their ids and are restated below; their revision 5 wording
+described the popover. S-107 and below are unchanged.
+
+| ID | Layer | Sentence |
+|---|---|---|
+| S-102 | rust | it should offer a `References` submenu in the word menu when the clicked word matches at least one entry |
+| S-103 | rust | it should omit that submenu when the clicked word matches no entry |
+| S-104 | rust | it should relay a lookup id to the frontend under that same id, leaving the thesaurus and spelling routes unchanged |
+| S-105 | e2e | it should open the References view on the chosen entry's surface with that entry selected when a menu item naming it is chosen |
+| S-106 | e2e | it should offer the reference lookup on a name in the manuscript and open the chosen entry's page |
+| S-108 | rust | it should group the matching entries under one submenu node, so the popup does not gain a row per match |
+| S-109 | rust | it should label each submenu item with its entry's name and kind, so two entries sharing the word are distinguishable |
+| S-110 | rust | it should give each submenu item an id that names the entry it opens, and parse that id back to the same entry |
+| S-111 | unit | it should open the entry a lookup id names, and treat an id that names no entry as not an action |
+| S-112 | e2e | it should open the entry straight from the menu item, with no chooser between the menu and the entry |
+
+### Traps
+
+1. **Do not keep a popover as a fallback.** Two ways to choose a match is two
+   behaviours to test and one to leave stale.
+2. **Do not invent a second matcher for the labels.** The submenu is built from
+   `entries_for_word`'s output, the same call that decides whether the submenu
+   exists at all.
+3. **Do not widen `MenuNode::Item`.** Its `&'static str` fields are what make the
+   static menu assertable. The dynamic nodes are their own variants.
+4. **Do not route a lookup id through `menu_event`.** It returns `None` on
+   purpose: one id, one recogniser, and `lookup_entry_id` owns the prefix.
+5. **Do not let a prefix with no entry behind it act.** `look_up_reference:` is
+   not an entry id.
+6. **Do not reorder the word menu.** Thesaurus, then `References`, then the
+   separator and the native edit items.

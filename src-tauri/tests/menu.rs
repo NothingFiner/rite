@@ -25,6 +25,10 @@ fn labels(nodes: &[MenuNode]) -> Vec<&'static str> {
             MenuNode::Separator => SEP,
             MenuNode::Item { label, .. } => label,
             MenuNode::Native { label, .. } => label,
+            // The static menu holds no popup-time nodes. Naming them keeps a
+            // stray one visible in the comparison instead of panicking.
+            MenuNode::LookupItem { .. } => "lookup",
+            MenuNode::Submenu { .. } => "submenu",
         })
         .collect()
 }
@@ -175,6 +179,8 @@ fn s_006_should_build_file_edit_and_window_submenus_matching_the_data() {
             MenuNode::Separator => "separator",
             MenuNode::Item { .. } => "item",
             MenuNode::Native { .. } => "native",
+            MenuNode::LookupItem { .. } => "lookup",
+            MenuNode::Submenu { .. } => "submenu",
         })
         .collect();
 
@@ -252,6 +258,9 @@ fn s_009_should_not_emit_an_event_for_a_separator() {
                 MenuNode::Separator => separators += 1,
                 MenuNode::Item { id, .. } => assert_ne!(*id, "separator"),
                 MenuNode::Native { .. } => {}
+                // Every lookup id carries the entry after its prefix colon.
+                MenuNode::LookupItem { id, .. } => assert!(id.contains(':')),
+                MenuNode::Submenu { .. } => {}
             }
         }
     }
