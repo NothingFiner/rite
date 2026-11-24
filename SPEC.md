@@ -734,3 +734,56 @@ offender before it ships.
   glass, and the entry page's padding rhythm. Those are the design-system pass
   (queue items 3–6); this revision only guarantees that whatever a page draws
   is drawn in the writer's colours.
+
+
+## Revision 8 — one owner per chrome colour
+
+### Context
+
+The chrome colours had three homes: `:root` in `src/style.css` (the first
+paint), the `ui*` computeds in `useTheme.js` (the runtime values), and 39
+`var(--token, #hex)` fallbacks restated inside components. Two of those copies
+had already drifted:
+
+| Where | Declared | What actually painted |
+|---|---|---|
+| `--text-secondary` | `#a0a0b0` (opaque) in the stylesheet | `#a0a0b099` (60%) at runtime |
+| `.glass` fallback | `rgba(255, 255, 255, 0.04)` | `rgba(20, 20, 25, 0.78)` |
+
+Both are the same failure as revision 7's: a second copy of a colour that no
+one reads until the first one is missing, and then reads wrong.
+
+### The rule
+
+One colour, one owner.
+
+- `src/constants/palette.js` publishes `CHROME_PALETTE` and `CHROME_BASE`, the
+  colours the chrome paints outside the editor.
+- `style.css` declares them for the first paint and takes the runtime values as
+  authoritative; the stylesheet's `--text-secondary` now matches.
+- `useTheme.js` reads the constants instead of restating them. Inside the
+  editor it still derives from `currentTheme`, which is the point of that mode.
+- Components name a token with no colour fallback. A neutral fallback
+  (`currentColor`, `transparent`) stays allowed: it fails visibly, never with a
+  different colour.
+
+This is groundwork for the design pass, not a visual change. The only pixels
+that move are the first paint of `--text-secondary` and any element that was
+painting `.glass` before the token loaded.
+
+### Sentences
+
+| ID | Layer | Sentence |
+|---|---|---|
+| S-117 | unit | it should declare the chrome colours identically in the stylesheet and in the runtime palette |
+| S-118 | unit | it should restate no colour as a `var()` fallback anywhere in the app's source |
+| S-119 | unit | it should publish the chrome palette outside the editor and the writer's theme inside it |
+
+### Traps
+
+1. **Do not add a colour fallback "for safety".** The safe fallback is the
+   token; a colour copy is what drifts.
+2. **Do not move a theme value into `:root`.** That block is the dark chrome
+   before mount, not the editor's paper.
+3. **Do not delete `CHROME_BASE`.** `--bg-base`, `--bg-editor` and `--bg-glass`
+   are stylesheet-only, and `--bg-base` is what the scroll layer stands on.

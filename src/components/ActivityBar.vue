@@ -196,10 +196,10 @@ defineExpose({ focusItem })
   bottom: 36px;
   width: 48px;
   z-index: 30;
-  background: var(--glass-bg, rgba(20, 20, 25, 0.78));
+  background: var(--glass-bg);
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border-right: 1px solid var(--bg-glass-border, rgba(255, 255, 255, 0.1));
+  border-right: 1px solid var(--bg-glass-border);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -218,7 +218,7 @@ defineExpose({ focusItem })
   border-radius: 6px;
   border: none;
   background: transparent;
-  color: var(--text-secondary, #a0a0b0);
+  color: var(--text-secondary);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -228,12 +228,12 @@ defineExpose({ focusItem })
 }
 
 .activity-icon:hover {
-  background: var(--hover-bg-strong, rgba(255, 255, 255, 0.12));
-  color: var(--text-primary, #f0f0f5);
+  background: var(--hover-bg-strong);
+  color: var(--text-primary);
 }
 
 .activity-icon.active {
-  color: var(--text-primary, #f0f0f5);
+  color: var(--text-primary);
 }
 
 .activity-icon.active::before {
@@ -244,14 +244,14 @@ defineExpose({ focusItem })
   transform: translateY(-50%);
   width: 2px;
   height: 20px;
-  background: var(--accent, #4f8ef7);
+  background: var(--accent);
   border-radius: 0 2px 2px 0;
 }
 
 .activity-divider {
   width: 28px;
   height: 1px;
-  background: var(--bg-glass-border, rgba(255, 255, 255, 0.1));
+  background: var(--bg-glass-border);
   margin: 8px 0;
 }
 
@@ -262,19 +262,19 @@ defineExpose({ focusItem })
 }
 
 .format-btn {
-  border: 1px solid var(--bg-glass-border, rgba(255, 255, 255, 0.1));
-  background: var(--input-bg, rgba(255, 255, 255, 0.06));
+  border: 1px solid var(--bg-glass-border);
+  background: var(--input-bg);
 }
 
 .format-btn:hover {
-  background: var(--hover-bg, rgba(255, 255, 255, 0.1));
-  border-color: var(--bg-glass-border, rgba(255, 255, 255, 0.15));
+  background: var(--hover-bg);
+  border-color: var(--bg-glass-border);
 }
 
 .format-btn.active {
-  background: var(--accent-bg, rgba(79, 142, 247, 0.2));
-  border-color: var(--accent, #4f8ef7);
-  color: var(--text-primary, #f0f0f5);
+  background: var(--accent-bg);
+  border-color: var(--accent);
+  color: var(--text-primary);
 }
 
 .format-btn.active::before {
