@@ -1,9 +1,8 @@
-// Whether the caret is in the editor (SPEC.md revision 9, S-125).
+// The caret signal behind the format toggles (SPEC.md S-125).
 //
-// The three format buttons are disabled when it is not, so useFormat has to
-// publish that signal. It also has to follow focus both ways: moving to a rail
-// button changes no selection, so watching selectionchange alone would leave
-// the buttons live over an editor nobody is typing in.
+// Three buttons must know whether there is anything to format. The hard case is
+// a focus move that leaves the selection alone, which arrives as no
+// selectionchange at all.
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'

@@ -895,3 +895,108 @@ would still pass a class-presence test, so the stylesheet has its own guard.
 - Stats staying visible in History, which needs a definition of the document
   text a history session shows.
 - The entry page's padding rhythm.
+
+## Revision 10 — the control ink resolves where the theme is published
+
+### Context
+
+Revision 9 put the control aliases in `:root`:
+
+```css
+:root { --control-text: var(--text-secondary); ... }
+```
+
+`App.vue` publishes the theme tokens on `.app-container`, not on the document
+root. A `var()` inside a custom property is substituted on the element that
+declares it, so `--control-text` froze to the root's dark-chrome value and every
+control inherited that frozen value. The editor view then drew chrome near-white
+on its own light glass.
+
+| Measured on the editor view | Value |
+|---|---|
+| `--text-secondary` on `.app-container` | `#51535999` (Mist ink) |
+| `--control-text` reaching the rail | `#a0a0b099` (chrome) |
+| Rail icon colour | `rgba(160, 160, 176, 0.6)` |
+| Format button hairline | `rgba(255, 255, 255, 0.1)` |
+| Contrast of the painted icon on the rail | **1.38:1** |
+
+Before revision 9 those buttons named `var(--text-secondary)` directly, so they
+resolved on `.app-container` and took the theme. The indirection is correct. Its
+placement was not.
+
+Correcting the placement alone lands on the theme's 60% secondary, which is
+**2.44:1** on Mist. A control is an affordance, not prose: it takes the primary
+ink and clears 4.5:1 on the page. Muted ink stays for prose and for chips.
+
+### The rule
+
+1. A token that aliases another is declared on the element that publishes the
+   aliased token. Never at the root while its source lives lower down.
+2. A control's ink is the primary ink of its surface: `--text-primary` on the
+   chrome, the theme's ink on a painted page.
+3. A chip is a label, so it keeps the muted ink. That is the difference between
+   the two kinds, and it is the only one.
+
+### Sentences
+
+| ID | Layer | Sentence |
+|---|---|---|
+| S-132 | unit | it should declare a token that aliases another where the aliased token is published, not at the document root |
+| S-133 | unit | it should publish a control's ink as the theme's full ink on a painted page, keeping muted ink for prose and chips |
+| S-134 | e2e | it should paint the rail and format controls in the writer's ink on the editor view, never the chrome white |
+| S-135 | e2e | it should clear 3:1 between every unselected control and the surface behind it |
+| S-136 | e2e | it should make the expanded add options emerge from the circle with no gap and in the circle's own fill |
+| S-137 | e2e | it should keep a chosen control's ink when the pointer is over it |
+| S-138 | unit | it should publish the writer's paper as the floor under the chrome in the editor view, and the dark base everywhere else |
+
+### Traps
+
+1. **Do not put the alias back in `:root` "so it exists early".** A frozen wrong
+   value is worse than a missing one: it paints confidently and cannot inherit.
+2. **Do not reach for `--text-secondary` to fix faintness.** That is the muted
+   prose colour. Controls take the primary ink.
+3. **Do not test the class and call the colour done.** Revision 9's tests all
+   passed while this shipped. The observable is the computed colour.
+4. **Do not sample a control mid-transition.** Every kind transitions its colour
+   over 120ms, so a measurement taken right after a click reads a blend of the
+   two states and reports a colour no token ever held.
+5. **Do not tuck the add options under the circle with a negative `z-index`.**
+   The circle is painted over the options, not the other way round, so the fill
+   must be the circle's own and the options must sit behind it.
+
+### Open item: the toolbar is glass over the app base
+
+Fixing the ink exposed a surface problem underneath it. The top bar paints
+`--glass-bg`, which is the theme's paper at 78%. Behind it is the app base, not
+the paper, so in the editor and manuscript views the bar resolves to a mid grey
+around `rgb(160, 157, 160)`:
+
+| Pair on that bar | Contrast |
+|---|---|
+| theme ink `#515359` on `rgb(160, 157, 160)` | 2.53:1 |
+| theme accent `#B5651D` on its own 25% wash | 1.42:1 |
+| white on the theme accent | 4.34:1 |
+
+S-138 fixes it: the app container's own floor is the writer's paper in the
+editor view, so the glass is tinted by paper instead of greyed by the near-black
+base. Every glass surface in that view — rail, top bar, drawers — lightens with
+it, and every other view keeps the dark base.
+
+Two chosen-state pairs still sit under the floor, and both are design decisions
+rather than defects to sweep up here:
+
+| Pair | Contrast |
+|---|---|
+| accent ink on its own 25% wash (the chosen segment) | 2.29:1 |
+| accent ink on the paper-light rail (the chosen rail item) | 2.93:1 |
+| primary ink on that same wash | 4.05:1 |
+
+The last row is the cheap way out: keep the accent wash and the accent edge,
+paint the chosen label in the primary ink. The alternative is a filled accent
+segment with an on-primary label, which needs a per-theme choice of that label
+(white on Mist's accent is 4.34:1, the paper on it only 2.93:1). S-135 therefore
+guards the resting state, which is the state that regressed, and leaves the
+chosen state to a decision.
+
+S-137 is separate from this and already fixed: a chosen control used to repaint
+its ink as plain text as soon as the pointer crossed it.

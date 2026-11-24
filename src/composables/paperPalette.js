@@ -150,7 +150,9 @@ export function paperPalette(theme) {
   // The control layer (revision 9). A page reuses the control classes, so it
   // republishes their names here. Without this a page control would resolve to
   // the dark chrome tokens on light paper.
-  styles['--control-text'] = muted ?? theme.text
+  // SPEC.md S-133. The 60% secondary is for prose. An action reads at the ink
+  // the writer chose, and the chip name stays faint two lines down.
+  styles['--control-text'] = theme.text
   styles['--control-text-hover'] = theme.text
   styles['--control-text-active'] = theme.accent
   styles['--control-border-hover'] = theme.accent

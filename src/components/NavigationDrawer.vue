@@ -750,7 +750,11 @@ watch(sections, () => {
   gap: 0;
 }
 
+/* The circle is painted over the options, so the join has no seam: the first
+   option runs underneath it and emerges from its silhouette (S-136). */
 .add-btn {
+  position: relative;
+  z-index: 1;
   width: 32px;
   height: 32px;
   border-radius: 50%;
@@ -779,13 +783,14 @@ watch(sections, () => {
   transform: scale(1.05);
 }
 
-/* The two options grow out of the circle: one 32px row, joined to it, the far
-   end rounded. Same height as the button they came from (SPEC.md S-129). */
+/* The two options grow out of the circle: one 32px row, running under it, the
+   far end rounded. Same height as the button they came from (S-129, S-136). */
 .add-options {
   display: flex;
   gap: 0;
   flex: 1;
   min-width: 0;
+  margin-left: -20px;
 }
 
 .add-confirm {
@@ -799,6 +804,12 @@ watch(sections, () => {
 
 .add-control .add-confirm {
   border-radius: 0;
+  /* The circle covers the first 20px of the row, so the label starts clear. */
+  padding-left: 28px;
+}
+
+.add-control .add-confirm + .add-confirm {
+  padding-left: 8px;
 }
 
 .add-control .add-confirm:last-child {

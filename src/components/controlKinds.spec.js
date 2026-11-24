@@ -126,8 +126,8 @@ describe('bordered controls', () => {
       expect(button.classes()).toContain('control-bordered')
     }
 
-    // Each row is its own set: exactly one option in it is the chosen one, and
-    // it is the pressed bordered state rather than a private colour.
+    // One chosen option per row, and it is the pressed state rather than a
+    // colour of the component's own.
     const rows = wrapper.findAll('.zoom-row')
     expect(rows.length).toBeGreaterThanOrEqual(2)
     for (const row of rows) {

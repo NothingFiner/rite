@@ -1,6 +1,6 @@
 import { ref, computed } from 'vue'
 import { THEMES } from '../constants/themes.js'
-import { CHROME_PALETTE } from '../constants/palette.js'
+import { CHROME_BASE, CHROME_PALETTE } from '../constants/palette.js'
 
 function hexToRgba(hex, alpha) {
   const r = parseInt(hex.slice(1, 3), 16)
@@ -143,6 +143,12 @@ export function useTheme(viewModeRef) {
   const uiHoverBgStrong = computed(() => chrome('--hover-bg-strong') ?? currentTheme.value.text + '22')
   const uiInputBg = computed(() => chrome('--input-bg') ?? currentTheme.value.text + '22')
   const uiPopupBg = computed(() => chrome('--popup-bg') ?? currentTheme.value.bg)
+  // The floor the chrome's glass sits on (SPEC.md revision 10, S-138). Under
+  // the editor that floor is the paper, which keeps a 78% glass from resolving
+  // to grey. Every other view keeps the dark base.
+  const uiBase = computed(() => (
+    viewModeRef.value === 'editor' ? currentTheme.value.bg : CHROME_BASE['--bg-base']
+  ))
 
   function loadPrefs() {
     try {
@@ -230,6 +236,7 @@ export function useTheme(viewModeRef) {
     uiHoverBgStrong,
     uiInputBg,
     uiPopupBg,
+    uiBase,
     loadPrefs,
     savePrefs,
     selectTheme,

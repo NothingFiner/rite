@@ -1,8 +1,8 @@
-// The control block in src/style.css (SPEC.md revision 9, S-121 and S-122).
+// The stylesheet's own guard (SPEC.md S-121 and S-122).
 //
-// Every other unit test here reads a class name off a mounted component, which
-// cannot see what the stylesheet does with it. A control rule that hardcoded a
-// colour would pass all of them. These two read the stylesheet text itself.
+// A class name on a mounted component says nothing about the CSS behind it. A
+// rule that hardcoded a colour would pass every component test. Both cases
+// here read src/style.css as text.
 
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -13,11 +13,11 @@ const stylesheet = readFileSync(join(process.cwd(), 'src', 'style.css'), 'utf8')
 /// The controls section: from its header comment to the end of the file.
 const controls = stylesheet.slice(stylesheet.indexOf('/* ---------- Controls ----------'))
 
-/// The :root block, which declares the first paint of every token.
-const rootBlock = /:root\s*\{([\s\S]*?)\n\}/.exec(stylesheet)?.[1] ?? ''
-
+/// Every custom property the stylesheet declares, wherever it is declared.
+/// The control aliases sit on .app-container, because a var() resolves where
+/// its property is declared (SPEC.md revision 10, S-132).
 const declaredNames = new Set(
-  [...rootBlock.matchAll(/^\s*(--[a-z0-9-]+)\s*:/gm)].map((match) => match[1]),
+  [...stylesheet.matchAll(/^\s*(--[a-z0-9-]+)\s*:/gm)].map((match) => match[1]),
 )
 
 const varNames = (text) => [...text.matchAll(/var\((--[a-z0-9-]+)\s*\)/g)].map((match) => match[1])

@@ -1,14 +1,12 @@
-// The control layer on a painted page (SPEC.md revision 9, S-120).
+// What a themed page hands a control (SPEC.md S-120 and S-133).
 //
-// A control rule in style.css reads only --control-* and --chip-*. On the dark
-// chrome those come from :root. On a page painted with the writer's theme they
-// have to come from the theme, or a bordered button on the References page
-// would paint near-white chrome again. This file checks the second half: the
-// names are published, and every one of them is the writer's colour.
+// The rules in style.css read nothing but --control-* and --chip-*. A themed
+// page publishes that set itself. This file checks the publication: every name
+// arrives, in the theme's colours, with ink strong enough to read.
 
 import { describe, expect, it } from 'vitest'
 import { THEMES } from '../constants/themes.js'
-import { paperPalette } from './paperPalette.js'
+import { contrastRatio, paperPalette, TEXT_CONTRAST_FLOOR } from './paperPalette.js'
 
 const CONTROL_TOKENS = [
   '--control-text',
@@ -63,5 +61,28 @@ describe('paperPalette control tokens', () => {
     const midnight = paperPalette(THEMES.find((theme) => theme.name === 'Midnight'))
     expect(mist['--control-bg']).not.toBe(midnight['--control-bg'])
     expect(mist['--control-text-active']).not.toBe(midnight['--control-text-active'])
+  })
+
+  // Revision 10, S-133. With the alias placed correctly the ink lands on the
+  // theme's 60% secondary, which is 2.44:1 on Mist. A control is an affordance,
+  // so it takes the full ink. Muted ink is for prose and for chips.
+  it('S-133: publishes the full ink for a control and muted ink for chips', () => {
+    for (const theme of THEMES) {
+      const palette = paperPalette(theme)
+
+      expect(palette['--control-text'], theme.name).toBe(theme.text)
+      expect(contrastRatio(palette['--control-text'], theme.bg), theme.name)
+        .toBeGreaterThanOrEqual(TEXT_CONTRAST_FLOOR)
+
+      // A chip is a label rather than an action, so its name is the faint one.
+      expect(palette['--chip-text'], theme.name).toBe(palette['--note-text-muted'])
+    }
+
+    // Positive control: muted ink really is the fainter of the two, so the
+    // assertions above are not reading one value written twice.
+    const mist = paperPalette(THEMES[0])
+    expect(mist['--chip-text']).not.toBe(mist['--control-text'])
+    expect(contrastRatio(mist['--chip-text'], THEMES[0].bg))
+      .toBeLessThan(contrastRatio(mist['--control-text'], THEMES[0].bg))
   })
 })

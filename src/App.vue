@@ -13,6 +13,7 @@
       '--hover-bg-strong': theme.uiHoverBgStrong,
       '--input-bg': theme.uiInputBg,
       '--popup-bg': theme.uiPopupBg,
+      '--bg-base': theme.uiBase,
       '--editor-font': format.editorFont,
     }"
   >

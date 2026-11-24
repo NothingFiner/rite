@@ -20,11 +20,21 @@
   --radius-pill: 9999px;
   --shadow-glass: 0 4px 30px rgba(0, 0, 0, 0.3);
 
-  /* The control layer (SPEC.md revision 9). Here is where the chrome values
-     live. A page painted with the writer's theme republishes these same names
-     from paperPalette.js, so one rule set serves both surfaces. The indirection
-     through the tokens above keeps a runtime palette swap flowing in. */
-  --control-text: var(--text-secondary);
+  --control-on-primary: #ffffff;
+}
+
+/* The control names are aliases, and a var() inside a custom property is
+   substituted on the element that declares the property. App.vue binds the
+   chrome tokens on .app-container, so the aliases belong on that element too.
+   At the root they froze to the dark-chrome values, and every control painted
+   near-white on the editor's paper (SPEC.md revision 10).
+   A themed page publishes its own set closer to the paint, from
+   paperPalette.js, so these rules serve both surfaces. */
+.app-container {
+  /* The floor under every glass surface. useTheme publishes the writer's paper
+     here in the editor view (S-138). */
+  background: var(--bg-base);
+  --control-text: var(--text-primary);
   --control-text-hover: var(--text-primary);
   --control-text-active: var(--accent);
   --control-bg: var(--input-bg);
@@ -33,7 +43,6 @@
   --control-hover-bg: var(--hover-bg-strong);
   --control-active-bg: var(--accent-bg);
   --control-active-border: var(--accent);
-  --control-on-primary: #ffffff;
   --chip-bg: var(--bg-glass);
   --chip-text: var(--text-secondary);
   --chip-border: transparent;
@@ -239,6 +248,15 @@ body.pointer-last :is(a, button, input, select, textarea, [role="button"], [tabi
   cursor: not-allowed;
 }
 
+/* A chosen control stays chosen under the pointer (S-137): hover deepens the
+   surface, never the ink. Without this a hovering pointer repaints the accent
+   as plain text and the control reads as unselected. */
+.control-borderless.active:hover,
+.control-borderless[aria-pressed='true']:hover {
+  color: var(--control-text-active);
+  background: var(--control-active-bg);
+}
+
 .control-bordered {
   min-height: 32px;
   padding: 0 10px;
@@ -272,6 +290,13 @@ body.pointer-last :is(a, button, input, select, textarea, [role="button"], [tabi
 
 /* The same control in a dense row: 20px tall, no side padding. A size, not a
    colour, so a row badge and a drawer button cannot drift apart. */
+.control-bordered.active:hover:not(:disabled),
+.control-bordered[aria-pressed='true']:hover:not(:disabled) {
+  border-color: var(--control-active-border);
+  background: var(--control-active-bg);
+  color: var(--control-text-active);
+}
+
 .control-bordered.control-sm {
   min-height: 20px;
   padding: 0 4px;
@@ -337,6 +362,12 @@ body.pointer-last :is(a, button, input, select, textarea, [role="button"], [tabi
 .control-segmented > .control-segment:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+.control-segmented > .control-segment.active:hover,
+.control-segmented > .control-segment[aria-selected='true']:hover {
+  color: var(--control-text-active);
+  background: var(--control-active-bg);
 }
 
 .control-chip {
