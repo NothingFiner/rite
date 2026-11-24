@@ -645,3 +645,92 @@ described the popover. S-107 and below are unchanged.
    not an entry id.
 6. **Do not reorder the word menu.** Thesaurus, then `References`, then the
    separator and the native edit items.
+
+
+## Revision 7 — theme-painted pages own their colours (palette bug in 5.19a)
+
+### Context
+
+The References pages paint themselves with the writer's editor theme
+(`App.vue` passes `theme.currentTheme`), but a dozen rules fell back to the
+chrome tokens. Those tokens are not neutral: `useTheme.js` answers `#f0f0f5`
+for text and `rgba(20, 20, 25, 0.78)` for surfaces whenever `viewMode` is not
+`editor`. So the entry page drew near-white text on light paper:
+
+| Preset paper | Theme ink | Chrome text `#f0f0f5` |
+|---|---|---|
+| Cream `#FFFFE3` | 4.50:1 | **1.12:1** |
+| Sky `#DBE1F1` | 8.35:1 | **1.15:1** |
+| Mist `#D8D3D6` (the default) | 5.20:1 | **1.30:1** |
+| Midnight `#030027` | 8.75:1 | 17.89:1 |
+
+The default theme is Mist, so a fresh install shipped the failure.
+
+**The chrome palette is correct where it is used.** The rail, drawers and
+popovers sit on the dark app base. `useTheme.js` is not changed by this
+revision and its pinned values stay. What changes is that a theme-painted page
+may no longer name a chrome token at all.
+
+### The palette
+
+`src/composables/paperPalette.js` is the single owner. It takes
+`{ bg, text, accent }` and returns the custom properties a page spreads onto
+its root:
+
+| Token | Derived from |
+|---|---|
+| `--note-text` | `theme.text` |
+| `--note-text-muted` | `theme.text`, alpha raised until it clears 4.5:1 on `theme.bg` |
+| `--note-accent` | `theme.accent` |
+| `--note-accent-bg` | `theme.accent` at 25% |
+| `--note-border`, `--note-field-border` | `theme.text` + `59` |
+| `--note-field-bg` | `theme.text` + `14` |
+| `--note-hover-bg` | `theme.text` + `1f` |
+
+Muted ink is searched upward from 60% in 2% steps, so hierarchy costs nothing
+in legibility. A preset whose own ink is exactly at the floor (Cream, 4.50:1)
+gets its ink back for the muted token: nothing fainter clears 4.5:1 there, and
+hierarchy on that theme has to come from size and weight instead.
+
+`ReferencesView.vue`, `ReferenceEntryView.vue`, `ReferencesNavDrawer.vue` and
+`NotesView.vue` each spread `paperPalette(theme)` and read only `--note-*`. The
+fallbacks that remain are neutral (`currentColor`, `transparent`,
+`var(--note-text)`), never a chrome colour, so a missing token cannot silently
+become dark chrome again. `ReferencesView` and `NotesView` keep painting
+`backgroundColor: theme.bg`; the entry page inherits the paper.
+
+### Why a source guard, not just a contrast test
+
+A contrast test cannot see a rule that resolves to a readable value on the
+themes it tries. The bug was a rule, not a value, so the recurrence is a rule
+too: a new page rule copies a nearby one. S-115 reads the four style blocks and
+fails on any chrome token, which is the only check that catches the *next*
+offender before it ships.
+
+### Sentences
+
+| ID | Layer | Sentence |
+|---|---|---|
+| S-113 | unit | it should derive every page colour from the writer's theme, so no page token comes from the dark chrome palette |
+| S-114 | unit | it should keep every preset theme's page text and muted text at or above the 4.5:1 AA floor on its own paper |
+| S-115 | unit | it should fail when a theme-painted page's style block names a chrome colour token |
+| S-116 | e2e | it should paint the entry page's definition in the theme ink on the default light theme |
+
+### Traps
+
+1. **Do not darken the chrome palette to make a page readable.** It is correct
+   on the dark app base and its values are pinned by `useTheme.test.js`.
+2. **Do not add a fallback to a chrome token.** A neutral fallback fails
+   visibly; a chrome fallback fails invisibly, which is how this shipped.
+3. **Do not fix the contrast by changing a preset.** The presets are the
+   writer's paper; the page adapts to them.
+4. **Do not give the page its own copy of the derivation.** Four partial owners
+   is what produced four slightly different palettes.
+
+### Out of scope
+
+- The four button kinds, bordered-set unification, chips vs buttons, segmented
+  controls, navigable rows, the accordion, disabled format buttons, theme-tinted
+  glass, and the entry page's padding rhythm. Those are the design-system pass
+  (queue items 3–6); this revision only guarantees that whatever a page draws
+  is drawn in the writer's colours.

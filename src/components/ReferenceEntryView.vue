@@ -235,6 +235,7 @@
 import { computed, ref, watch, nextTick } from 'vue'
 import { renderReferenceMarkdown } from '../composables/useMarkdown.js'
 import { entryDisplayName } from '../composables/useReferences.js'
+import { paperPalette } from '../composables/paperPalette.js'
 
 const props = defineProps({
   entry: { type: Object, required: true },
@@ -315,48 +316,9 @@ function openClickedReference(event) {
   if (link) emit('open-reference', link.dataset.entryId)
 }
 
-// Alpha bytes layered under the theme ink (S-054). 14 softens the field
-// surface, 59 keeps its border a hairline and 1f is the faint hover wash.
-const INK_ALPHAS = { fieldBg: '14', fieldBorder: '59', hoverBg: '1f' }
-
-// Normalizes the ink to #rrggbb so an alpha byte can be appended to it.
-// Preset themes ship 6-digit hex. Shorthand #rgb and rgb() cover edited ones.
-// Returns null for a colour it cannot parse, so the caller skips the derived
-// tokens instead of inventing a value.
-function normalizeInk(ink) {
-  if (typeof ink !== 'string') return null
-  const colour = ink.trim()
-  const hexMatch = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(colour)
-  if (hexMatch) {
-    const digits = hexMatch[1]
-    const expanded = digits.length === 3
-      ? [...digits].map((digit) => digit + digit).join('')
-      : digits
-    return `#${expanded.toLowerCase()}`
-  }
-  const rgbMatch = /^rgba?\(\s*(\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})\s*\)$/i.exec(colour)
-  if (!rgbMatch) return null
-  const channels = rgbMatch.slice(1, 4).map((value) => Math.min(Number(value), 255))
-  return `#${channels.map((value) => value.toString(16).padStart(2, '0')).join('')}`
-}
-
-// Publishes the paper palette for the chrome tokens that stay dark here
-// (S-053, S-054). notesStyles in NotesView.vue is the shared pattern.
-const entryStyles = computed(() => {
-  const theme = props.theme
-  if (!theme || typeof theme !== 'object') return {}
-  const styles = {
-    color: theme.text,
-    '--note-text': theme.text,
-    '--note-accent': theme.accent,
-  }
-  const ink = normalizeInk(theme.text)
-  if (!ink) return styles
-  styles['--note-field-bg'] = `${ink}${INK_ALPHAS.fieldBg}`
-  styles['--note-field-border'] = `${ink}${INK_ALPHAS.fieldBorder}`
-  styles['--note-hover-bg'] = `${ink}${INK_ALPHAS.hoverBg}`
-  return styles
-})
+// The page reads only the palette its root publishes (SPEC.md revision 7).
+// No rule here can reach a chrome token the theme does not own.
+const entryStyles = computed(() => paperPalette(props.theme))
 
 // Only term and place swap kinds (SPEC.md 5.20). The entry's own kind renders
 // as the pressed toggle of the two.
@@ -545,7 +507,7 @@ function chooseKind(kind) {
   line-height: 1.35;
   /* The heading sits on the paper surface, so it wears the theme ink that
      entryStyles publishes (S-053). */
-  color: var(--note-text, var(--text-primary));
+  color: var(--note-text);
 }
 
 .reference-name,
@@ -557,9 +519,9 @@ function chooseKind(kind) {
      the definition source's glass. */
   font: inherit;
   font-size: 14px;
-  color: var(--note-text, var(--text-primary));
-  background: var(--note-field-bg, var(--glass-bg));
-  border: 1px solid var(--note-field-border, var(--bg-glass-border));
+  color: var(--note-text);
+  background: var(--note-field-bg, transparent);
+  border: 1px solid var(--note-border, currentColor);
   border-radius: var(--radius-sm);
   padding: 6px 10px;
 }
@@ -570,7 +532,7 @@ function chooseKind(kind) {
 .reference-fact-label-input:focus,
 .reference-fact-value-input:focus {
   outline: none;
-  border-color: var(--note-accent, var(--accent));
+  border-color: var(--note-accent, currentColor);
 }
 
 .reference-name-error {
@@ -578,7 +540,7 @@ function chooseKind(kind) {
   font-size: 12px;
   line-height: 1.45;
   /* The theme has no danger token, so the accent carries the refusal. */
-  color: var(--accent);
+  color: var(--note-accent, currentColor);
 }
 
 .reference-kind-switch {
@@ -590,13 +552,13 @@ function chooseKind(kind) {
   /* Rendered markdown prose from useMarkdown.js, same tone as the note. */
   font-size: 14px;
   line-height: 1.55;
-  color: var(--text-primary);
+  color: var(--note-text);
 }
 
 .reference-definition-empty {
   margin: 0;
   font-size: 13px;
-  color: var(--text-secondary);
+  color: var(--note-text-muted, var(--note-text));
   opacity: 0.6;
 }
 
@@ -608,26 +570,26 @@ function chooseKind(kind) {
   font: inherit;
   font-size: 14px;
   line-height: 1.55;
-  color: var(--note-text, var(--text-primary));
-  background: var(--note-field-bg, var(--glass-bg));
-  border: 1px solid var(--note-field-border, var(--bg-glass-border));
+  color: var(--note-text);
+  background: var(--note-field-bg, transparent);
+  border: 1px solid var(--note-border, currentColor);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
 }
 
 .reference-definition-source:focus {
   outline: none;
-  border-color: var(--note-accent, var(--accent));
+  border-color: var(--note-accent, currentColor);
 }
 
 .reference-save {
   align-self: flex-start;
   font: inherit;
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--note-text-muted, var(--note-text));
   opacity: 0.75;
   background: none;
-  border: 1px solid var(--bg-glass-border);
+  border: 1px solid var(--note-border, currentColor);
   border-radius: var(--radius-sm);
   padding: 4px 10px;
   cursor: pointer;
@@ -635,7 +597,7 @@ function chooseKind(kind) {
 
 .reference-save:hover {
   opacity: 1;
-  color: var(--text-primary);
+  color: var(--note-text);
 }
 
 /* The flex column stretches buttons across the column, so the edit and
@@ -665,9 +627,9 @@ function chooseKind(kind) {
 .reference-tag {
   font-size: 12px;
   line-height: 1.4;
-  color: var(--text-secondary);
-  background: var(--glass-bg);
-  border: 1px solid var(--bg-glass-border);
+  color: var(--note-text-muted, var(--note-text));
+  background: var(--note-field-bg, transparent);
+  border: 1px solid var(--note-border, currentColor);
   border-radius: var(--radius-sm);
   padding: 2px 8px;
 }
@@ -690,7 +652,7 @@ function chooseKind(kind) {
 .reference-group-empty {
   margin: 0;
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--note-text-muted, var(--note-text));
   opacity: 0.6;
 }
 
@@ -708,18 +670,18 @@ function chooseKind(kind) {
   gap: 6px;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--text-secondary);
-  border-left: 2px solid var(--accent);
+  color: var(--note-text-muted, var(--note-text));
+  border-left: 2px solid var(--note-accent, currentColor);
   padding-left: 8px;
 }
 
 .reference-fact-value {
-  color: var(--text-primary);
+  color: var(--note-text);
 }
 
 .reference-rail-label {
   font-size: 12px;
-  color: var(--text-secondary);
+  color: var(--note-text-muted, var(--note-text));
 }
 
 .reference-mentions {
@@ -745,7 +707,7 @@ function chooseKind(kind) {
   text-overflow: ellipsis;
   font-size: 12px;
   line-height: 1.4;
-  color: var(--text-primary);
+  color: var(--note-text);
 }
 
 /* Kind toggles, name controls, rail buttons, record controls and the
@@ -771,10 +733,10 @@ function chooseKind(kind) {
 .reference-edit-cancel {
   font: inherit;
   font-size: 11px;
-  color: var(--text-secondary);
+  color: var(--note-text-muted, var(--note-text));
   opacity: 0.75;
   background: none;
-  border: 1px solid var(--bg-glass-border);
+  border: 1px solid var(--note-border, currentColor);
   border-radius: var(--radius-sm);
   padding: 3px 8px;
   cursor: pointer;
@@ -800,23 +762,23 @@ function chooseKind(kind) {
 .reference-definition-edit:hover,
 .reference-edit-cancel:hover {
   opacity: 1;
-  color: var(--text-primary);
-  background: var(--note-hover-bg, var(--hover-bg));
+  color: var(--note-text);
+  background: var(--note-hover-bg, transparent);
 }
 
 /* The current kind stays visibly pressed, using the hover's active look. */
 .reference-kind-toggle[aria-pressed='true'] {
   opacity: 1;
-  color: var(--text-primary);
-  background: var(--note-hover-bg, var(--hover-bg));
+  color: var(--note-text);
+  background: var(--note-hover-bg, transparent);
 }
 
 /* The select is a field, not a ghost control: it wears the paper chrome the
    name and definition sources use. */
 .reference-mention-add {
-  color: var(--note-text, var(--text-primary));
-  background: var(--note-field-bg, var(--glass-bg));
-  border-color: var(--note-field-border, var(--bg-glass-border));
+  color: var(--note-text);
+  background: var(--note-field-bg, transparent);
+  border-color: var(--note-border, currentColor);
 }
 
 .reference-merge-block {

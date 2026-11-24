@@ -161,10 +161,10 @@ function selectEntry(id) {
   min-width: 0;
   font: inherit;
   font-size: 11px;
-  color: var(--note-text, var(--text-secondary));
+  color: var(--note-text-muted, var(--note-text));
   opacity: 0.75;
   background: none;
-  border: 1px solid var(--note-border, var(--bg-glass-border));
+  border: 1px solid var(--note-border, currentColor);
   border-radius: var(--radius-sm);
   padding: 4px 8px;
   cursor: pointer;
@@ -172,9 +172,9 @@ function selectEntry(id) {
 }
 
 .reference-add-option:hover {
-  color: var(--note-text, var(--text-primary));
+  color: var(--note-text);
   opacity: 1;
-  background: var(--note-hover-bg, var(--hover-bg));
+  background: var(--note-hover-bg, transparent);
 }
 
 /* Surface tabs reuse the add-option chrome. The selected tab takes the
@@ -190,10 +190,10 @@ function selectEntry(id) {
   min-width: 0;
   font: inherit;
   font-size: 11px;
-  color: var(--note-text, var(--text-secondary));
+  color: var(--note-text-muted, var(--note-text));
   opacity: 0.75;
   background: none;
-  border: 1px solid var(--note-border, var(--bg-glass-border));
+  border: 1px solid var(--note-border, currentColor);
   border-radius: var(--radius-sm);
   padding: 4px 8px;
   cursor: pointer;
@@ -201,17 +201,17 @@ function selectEntry(id) {
 }
 
 .surface-tab:hover {
-  color: var(--note-text, var(--text-primary));
+  color: var(--note-text);
   opacity: 1;
-  background: var(--note-hover-bg, var(--hover-bg));
+  background: var(--note-hover-bg, transparent);
 }
 
 .surface-tab.selected {
   opacity: 1;
-  color: var(--note-accent, var(--accent));
-  background: var(--accent-bg);
-  border-color: var(--accent);
-  box-shadow: inset 2px 0 0 var(--accent);
+  color: var(--note-accent, currentColor);
+  background: var(--note-accent-bg, transparent);
+  border-color: var(--note-accent, currentColor);
+  box-shadow: inset 2px 0 0 var(--note-accent, currentColor);
 }
 
 /* The reference rows keep the outline rows' chrome, selected highlight included. */
@@ -225,7 +225,7 @@ function selectEntry(id) {
   font: inherit;
   font-size: 13px;
   text-align: left;
-  color: var(--note-text, var(--text-primary));
+  color: var(--note-text);
   background: none;
   border: none;
   border-radius: var(--radius-sm);
@@ -241,16 +241,16 @@ function selectEntry(id) {
 .notes-entry.selected,
 .reference-entry:hover,
 .reference-entry.selected {
-  background: var(--note-hover-bg, var(--hover-bg));
+  background: var(--note-hover-bg, transparent);
 }
 
 /* The panel sits on the paper surface. Its text follows the theme so the
    rows stay legible. */
 .notes-entry.selected,
 .reference-entry.selected {
-  background: var(--accent-bg);
-  box-shadow: inset 2px 0 0 var(--accent);
-  color: var(--note-accent, var(--accent));
+  background: var(--note-accent-bg, transparent);
+  box-shadow: inset 2px 0 0 var(--note-accent, currentColor);
+  color: var(--note-accent, currentColor);
 }
 
 .notes-entry.is-chapter {
@@ -267,7 +267,7 @@ function selectEntry(id) {
 .notes-empty,
 .reference-empty {
   font-size: 13px;
-  color: var(--note-text, var(--text-secondary));
+  color: var(--note-text-muted, var(--note-text));
   opacity: 0.6;
   text-align: center;
   padding: 20px 0;
