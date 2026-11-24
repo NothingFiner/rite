@@ -67,6 +67,7 @@ import { computed } from 'vue'
 import NotesView from './NotesView.vue'
 import ReferenceEntryView from './ReferenceEntryView.vue'
 import ReferencesNavDrawer from './ReferencesNavDrawer.vue'
+import { paperPalette } from '../composables/paperPalette.js'
 
 // The References view (SPEC.md 5.20a and 5.19a). The selection lives in the
 // shell, so every interaction here is a prop or an emitted event and nothing
@@ -116,23 +117,12 @@ const emit = defineEmits([
   'open-reference',
 ])
 
-// Binds the same style object NotesView.vue's notesStyles binds. The bg and
-// text paint the view, and the two scoped vars carry the theme into the
-// panel chrome.
+// The page paints itself with the theme's paper and spreads the palette
+// every rule inside reads (SPEC.md revision 7). panel and page inherit it.
 const surfaceStyles = computed(() => {
   const theme = props.theme
   if (!theme || typeof theme !== 'object') return {}
-  // Theme text is the ink for every surface on the page. The alpha pair
-  // tints borders and hover states without a second palette.
-  const isHex = typeof theme.text === 'string' && /^#[0-9a-f]{6}$/i.test(theme.text)
-  return {
-    backgroundColor: theme.bg,
-    color: theme.text,
-    '--note-text': theme.text,
-    '--note-accent': theme.accent,
-    '--note-border': isHex ? `${theme.text}33` : undefined,
-    '--note-hover-bg': isHex ? `${theme.text}11` : undefined,
-  }
+  return { ...paperPalette(theme), backgroundColor: theme.bg }
 })
 
 // NotesView.vue owns the recaps shape. The summaries store holds an entry
@@ -201,7 +191,7 @@ function forwardJump(sectionId) {
   overflow-y: auto;
   padding: 16px 12px;
   /* A rule separates the navigation column from the page. */
-  border-right: 1px solid var(--note-border, var(--bg-glass-border));
+  border-right: 1px solid var(--note-border, currentColor);
 }
 
 .references-page {
@@ -215,7 +205,7 @@ function forwardJump(sectionId) {
   margin: 0;
   padding: 20px 12px;
   font-size: 13px;
-  color: var(--text-secondary);
+  color: var(--note-text-muted, var(--note-text));
   opacity: 0.6;
   text-align: center;
 }

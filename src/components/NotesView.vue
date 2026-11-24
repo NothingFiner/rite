@@ -120,6 +120,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { noteDraftUndo, noteEntries, readNote, writeNote } from '../composables/useNotes.js'
 import { renderReferenceMarkdown } from '../composables/useMarkdown.js'
 import { llmConfigured } from '../composables/useLlmSettings.js'
+import { paperPalette } from '../composables/paperPalette.js'
 
 const props = defineProps({
   // The document store. NotesView reads `store.doc` and `store.notes`. A
@@ -279,12 +280,7 @@ const showRecapGate = computed(() => {
 const notesStyles = computed(() => {
   const theme = props.theme
   if (!theme || typeof theme !== 'object') return {}
-  return {
-    backgroundColor: theme.bg,
-    color: theme.text,
-    '--note-text': theme.text,
-    '--note-accent': theme.accent,
-  }
+  return { ...paperPalette(theme), backgroundColor: theme.bg }
 })
 
 // One draft at a time, owned by the entry selected when it opened. Reading
@@ -440,14 +436,14 @@ onBeforeUnmount(() => {
   /* The pane paints the paper theme's background, so its text follows the
      paper palette. The chrome greys are mixed for the dark glass drawers and
      all but vanish on cream. */
-  color: var(--note-text, var(--text-secondary));
+  color: var(--note-text-muted, var(--note-text));
   opacity: 0.7;
 }
 
 .note-title {
   font-size: 15px;
   font-weight: 700;
-  color: var(--note-text, var(--text-primary));
+  color: var(--note-text);
 }
 
 .note-edit,
@@ -463,7 +459,7 @@ onBeforeUnmount(() => {
   font: inherit;
   font-size: 12px;
   line-height: 1;
-  color: var(--note-text, var(--text-secondary));
+  color: var(--note-text-muted, var(--note-text));
   opacity: 0.75;
   background: none;
   border: none;
@@ -480,9 +476,9 @@ onBeforeUnmount(() => {
 .note-insert-recap:hover,
 .note-generate:hover,
 .note-regenerate:hover {
-  color: var(--note-text, var(--text-primary));
+  color: var(--note-text);
   opacity: 1;
-  background: var(--hover-bg);
+  background: var(--note-hover-bg, transparent);
 }
 
 .note-edit-divider {
@@ -492,7 +488,7 @@ onBeforeUnmount(() => {
   width: 1px;
   height: 14px;
   align-self: center;
-  background: var(--bg-glass-border);
+  background: var(--note-border, currentColor);
 }
 
 .note-source {
@@ -503,9 +499,9 @@ onBeforeUnmount(() => {
   font: inherit;
   font-size: 14px;
   line-height: 1.55;
-  color: var(--text-primary);
-  background: var(--glass-bg);
-  border: 1px solid var(--bg-glass-border);
+  color: var(--note-text);
+  background: var(--note-field-bg, transparent);
+  border: 1px solid var(--note-border, currentColor);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
   box-sizing: border-box;
@@ -514,12 +510,12 @@ onBeforeUnmount(() => {
 .note-rendered {
   font-size: 14px;
   line-height: 1.55;
-  color: var(--note-text, var(--text-primary));
+  color: var(--note-text);
 }
 
 .note-empty {
   font-size: 13px;
-  color: var(--note-text, var(--text-secondary));
+  color: var(--note-text-muted, var(--note-text));
   opacity: 0.6;
 }
 
@@ -529,9 +525,9 @@ onBeforeUnmount(() => {
   margin-top: 12px;
   font-size: 14px;
   line-height: 1.55;
-  color: var(--text-secondary);
-  background: var(--glass-bg);
-  border: 1px solid var(--bg-glass-border);
+  color: var(--note-text-muted, var(--note-text));
+  background: var(--note-field-bg, transparent);
+  border: 1px solid var(--note-border, currentColor);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
 }
@@ -558,7 +554,7 @@ onBeforeUnmount(() => {
 .note-recap-empty {
   margin-top: 12px;
   font-size: 13px;
-  color: var(--text-secondary);
+  color: var(--note-text-muted, var(--note-text));
 }
 
 .note-recap-empty p {
@@ -567,7 +563,7 @@ onBeforeUnmount(() => {
 
 /* Only the span is the pointer. The sentence around it stays plain prose. */
 .note-options-link {
-  color: var(--note-accent, var(--accent));
+  color: var(--note-accent, currentColor);
 }
 
 /* The badge states the recap drift in the label's own quiet uppercase. */
