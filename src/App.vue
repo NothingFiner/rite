@@ -7,6 +7,7 @@
       '--accent': theme.uiAccent,
       '--accent-bg': theme.uiAccentBg,
       '--accent-hover': theme.uiAccentHover,
+      '--accent-active': theme.uiAccentActive,
       '--bg-glass-border': theme.uiGlassBorder,
       '--glass-bg': theme.uiGlassBg,
       '--hover-bg': theme.uiHoverBg,

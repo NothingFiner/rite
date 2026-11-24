@@ -1,9 +1,8 @@
 // Where a token alias is declared (SPEC.md revision 10, S-132).
 //
 // Revision 9 declared the control aliases in :root while App.vue publishes the
-// chrome tokens on .app-container. A var() inside a custom property resolves on
-// the element that declares it, so the aliases froze to the root's dark-chrome
-// values and every control painted chrome white on the editor's light glass.
+// chrome tokens on .app-container. Substitution happens where a custom property
+// is declared, so the aliases froze to the root's dark-chrome values.
 //
 // This is a source guard because the failure is a placement, not a value: no
 // computed value on the root is wrong. Only the pairing of "which element

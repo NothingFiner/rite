@@ -783,6 +783,14 @@ watch(sections, () => {
   transform: scale(1.05);
 }
 
+/* An open circle is its own control, not the head of the row. It is held down,
+   so it paints the active step, and the floor colour cuts it out of the options
+   it overlaps (SPEC.md S-139, S-140). */
+.add-control.expanded .add-btn {
+  background: var(--accent-active);
+  box-shadow: 0 0 0 2px var(--bg-base);
+}
+
 /* The two options grow out of the circle: one 32px row, running under it, the
    far end rounded. Same height as the button they came from (S-129, S-136). */
 .add-options {

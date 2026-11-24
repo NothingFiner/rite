@@ -1,10 +1,8 @@
 // The floor under the chrome (SPEC.md revision 10, S-138).
 //
-// The rail and the top bar paint a translucent glass. What sits behind that
-// glass decides what the glass looks like: over the near-black app base the
-// editor's paper at 78% resolves to a mid grey, and no ink in the theme clears
-// 3:1 on it. Publishing the paper as the floor in the editor view makes the
-// same glass read as light glass over paper.
+// The rail and the top bar paint a translucent glass, and the floor decides how
+// that glass lands. Over the near-black app base, paper at 78% resolves to a
+// mid grey with no legible ink. S-138 puts the paper underneath it.
 
 import { describe, expect, it } from 'vitest'
 import { ref } from 'vue'
@@ -22,8 +20,8 @@ describe('the chrome base', () => {
       expect(view.uiBase.value, viewMode).not.toBe(view.currentTheme.value.bg)
     }
 
-    // Positive control: the editor's floor is a colour of its own, so the
-    // assertions above are not reading one constant four times.
+    // Positive control: the editor publishes its own floor, which no other view
+    // shares.
     expect(editor.uiBase.value).not.toBe(CHROME_BASE['--bg-base'])
   })
 })

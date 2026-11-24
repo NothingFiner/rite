@@ -15,6 +15,7 @@ export const CHROME_PALETTE = Object.freeze({
   '--accent': '#4f8ef7',
   '--accent-bg': 'rgba(79, 142, 247, 0.25)',
   '--accent-hover': '#3a7de0',
+  '--accent-active': '#2f6bc4',
   '--glass-bg': 'rgba(20, 20, 25, 0.78)',
   '--bg-glass-border': 'rgba(255, 255, 255, 0.1)',
   '--hover-bg': 'rgba(255, 255, 255, 0.06)',

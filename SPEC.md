@@ -937,6 +937,35 @@ ink and clears 4.5:1 on the page. Muted ink stays for prose and for chips.
 3. A chip is a label, so it keeps the muted ink. That is the difference between
    the two kinds, and it is the only one.
 
+### The open circle is its own control
+
+An open circle is not merely pointed at; it is held down. It therefore takes
+its own active step — `accentActive`, 0.6 of the accent — one step past the
+hover at 0.75. Reusing `accent-hover` made an open circle look exactly like a
+pointer crossing a closed one, which is two states wearing one paint.
+
+The token is derived from the chosen accent the way `accentHover` is, so a
+custom accent gets it without an entry per theme, and the chrome palette
+publishes its own value outside the editor. It is declared on `.app-container`
+with the other chrome tokens and republished on the same element at runtime.
+
+S-140 cuts the circle out of the row with a 2px ring of `--bg-base`, the floor
+under the chrome that S-138 publishes. The ring is exact in the editor view,
+where the drawer paints the theme paper at 78% over a floor of the same paper,
+and within 1.07:1 of the composited chrome surface everywhere else.
+
+The ring's contrast against the option fill is the measure of the cut:
+
+| Theme | `--bg-base` | `--accent` | Contrast |
+|---|---|---|---|
+| Sky | `#DBE1F1` | `#A68A3C` | 2.54:1 |
+| Mist | `#D8D3D6` | `#B5651D` | 2.93:1 |
+| Midnight | `#030027` | `#C4A87C` | 8.94:1 |
+
+S-141 asks for 2.5:1 rather than S-135's 3:1. A surface-coloured ring cannot
+reach 3:1 on Sky or Mist; a higher bar needs the filled option row to become a
+bordered one, which is a different design.
+
 ### Sentences
 
 | ID | Layer | Sentence |
@@ -945,9 +974,12 @@ ink and clears 4.5:1 on the page. Muted ink stays for prose and for chips.
 | S-133 | unit | it should publish a control's ink as the theme's full ink on a painted page, keeping muted ink for prose and chips |
 | S-134 | e2e | it should paint the rail and format controls in the writer's ink on the editor view, never the chrome white |
 | S-135 | e2e | it should clear 3:1 between every unselected control and the surface behind it |
-| S-136 | e2e | it should make the expanded add options emerge from the circle with no gap and in the circle's own fill |
+| S-136 | e2e | it should tuck both options' left edge under the circle, with no gap and behind it in paint order |
 | S-137 | e2e | it should keep a chosen control's ink when the pointer is over it |
 | S-138 | unit | it should publish the writer's paper as the floor under the chrome in the editor view, and the dark base everywhere else |
+| S-139 | e2e | it should paint the open circle in the accent's active colour, a step past the hover, for as long as its options are open |
+| S-140 | e2e | it should ring the open circle in the floor colour, at least 2px wide, and not while the circle is closed |
+| S-141 | e2e | it should clear 2.5:1 between the ring and the option fill it cuts the circle out of |
 
 ### Traps
 
@@ -961,8 +993,9 @@ ink and clears 4.5:1 on the page. Muted ink stays for prose and for chips.
    over 120ms, so a measurement taken right after a click reads a blend of the
    two states and reports a colour no token ever held.
 5. **Do not tuck the add options under the circle with a negative `z-index`.**
-   The circle is painted over the options, not the other way round, so the fill
-   must be the circle's own and the options must sit behind it.
+   The circle is painted over the options, not the other way round, so the
+   separation has to be the circle's own (`box-shadow` ring, S-140), not a panel
+   drawn behind it and not a gap the layout opens.
 
 ### Open item: the toolbar is glass over the app base
 

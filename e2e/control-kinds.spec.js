@@ -90,6 +90,16 @@ function toRgb(value) {
   return `rgb(${parseInt(digits.slice(0, 2), 16)}, ${parseInt(digits.slice(2, 4), 16)}, ${parseInt(digits.slice(4, 6), 16)})`
 }
 
+/// The ring is a spread `box-shadow`, and the computed value lists offset-x,
+/// offset-y, blur and spread in that order. A circle with no ring reports
+/// "none", which has no colour and no spread.
+function ringOf(shadow) {
+  const colour = shadow.match(/rgba?\([^)]+\)/)?.[0] ?? null
+  const lengths = [...shadow.matchAll(/(-?\d+(?:\.\d+)?)px/g)]
+    .map((match) => Math.abs(Number(match[1])))
+  return { colour, spread: lengths[3] ?? 0 }
+}
+
 test('S-130: paints only the chosen segment in the accent', async ({ page }) => {
   await openApp(page)
 
@@ -260,7 +270,7 @@ test('S-135: clears 3:1 between every control and the surface behind it', async 
   }
 })
 
-test('S-136: the add options emerge from the circle in its own fill', async ({ page }) => {
+test('S-136: tucks both options’ left edge under the circle, with no gap', async ({ page }) => {
   await openApp(page)
 
   await page.click('button[title="Sections"]')
@@ -272,17 +282,8 @@ test('S-136: the add options emerge from the circle in its own fill', async ({ p
   const cluster = () =>
     page.evaluate(() => {
       const read = (node) => {
-        const box = node.getBoundingClientRect()
-        const style = getComputedStyle(node)
-        return {
-          left: box.left,
-          right: box.right,
-          height: box.height,
-          fill: style.backgroundColor,
-          border: style.borderTopColor,
-          position: style.position,
-          zIndex: style.zIndex,
-        }
+        const { left, right, top, height } = node.getBoundingClientRect()
+        return { left, right, top, height }
       }
       return {
         circle: read(document.querySelector('.drawer.left.open .add-btn')),
@@ -297,25 +298,27 @@ test('S-136: the add options emerge from the circle in its own fill', async ({ p
       const boxes = await cluster()
       return boxes.options.length === 2
         && boxes.options[0].left < boxes.circle.right - 8
-        // The fill transitions from transparent on mount, so the settled
-        // colour is what the join is judged on.
-        && boxes.options.every((option) => option.fill === boxes.circle.fill)
     }, { timeout: 3000 })
     .toBe(true)
 
   const boxes = await cluster()
 
-  // One fill: the options wear the circle's colour, so the join cannot read as
-  // a seam or as a panel sitting behind it.
-  for (const option of boxes.options) {
-    expect(option.fill).toBe(boxes.circle.fill)
-    expect(option.border).toBe(boxes.circle.fill)
-  }
-
   // Emerging, not parked: the first option starts under the circle and is
   // covered by it, so its left edge sits inside the circle's own silhouette.
   expect(boxes.options[0].left).toBeLessThan(boxes.circle.left + boxes.circle.height / 2)
   expect(boxes.options[1].left).toBeGreaterThanOrEqual(boxes.options[0].right - 1)
+
+  // Behind it, not merely beside it: a hit inside the overlap lands on the
+  // circle, so the option cannot show through the part it covers.
+  const covered = await page.evaluate(() => {
+    const circle = document.querySelector('.drawer.left.open .add-btn')
+    const option = document.querySelector('.drawer.left.open .add-confirm')
+    const circleBox = circle.getBoundingClientRect()
+    const optionBox = option.getBoundingClientRect()
+    const x = (Math.max(circleBox.left, optionBox.left) + Math.min(circleBox.right, optionBox.right)) / 2
+    return document.elementFromPoint(x, circleBox.top + circleBox.height / 2)?.closest('button') === circle
+  })
+  expect(covered).toBe(true)
 })
 
 test('S-137: keeps a chosen control’s ink when the pointer is over it', async ({ page }) => {
@@ -349,4 +352,119 @@ test('S-137: keeps a chosen control’s ink when the pointer is over it', async 
   const railResting = await colourOf(activeRail)
   await page.locator(activeRail).hover()
   await expect.poll(() => colourOf(activeRail), { timeout: 3000 }).toBe(railResting)
+})
+
+test('S-139: paints the open circle in the accent’s active step, not the hover', async ({ page }) => {
+  await openApp(page)
+
+  await page.click('button[title="Sections"]')
+  await expect(page.locator('.drawer.left.open .add-btn')).toBeVisible({ timeout: 5000 })
+
+  // One read for the fill and the three accent steps. A view that is still
+  // settling then cannot compare a fresh fill against a stale token.
+  const paints = () =>
+    page.evaluate(() => {
+      const style = (selector) => getComputedStyle(document.querySelector(selector))
+      const tokens = style('.app-container')
+      return {
+        fill: style('.drawer.left.open .add-btn').backgroundColor,
+        accent: tokens.getPropertyValue('--accent').trim(),
+        hover: tokens.getPropertyValue('--accent-hover').trim(),
+        active: tokens.getPropertyValue('--accent-active').trim(),
+      }
+    })
+  const circleIs = (token) =>
+    paints().then((paint) => paint.fill === toRgb(paint[token]))
+
+  await page.click('.drawer.left.open .add-btn')
+  // Park the pointer, so what is read is the open state and not a hover.
+  await page.mouse.move(0, 0)
+  await expect.poll(() => circleIs('active'), { timeout: 3000 }).toBe(true)
+
+  // An open circle is held down, not pointed at. The two states must not share
+  // a paint, or the open state is invisible until the pointer leaves.
+  const open = await paints()
+  expect(open.active).not.toBe(open.hover)
+  expect(open.fill).not.toBe(toRgb(open.hover))
+
+  // Positive control: closing the options gives the resting accent back, so the
+  // assertion above is not reading one colour that never changes.
+  await page.click('.drawer.left.open .add-btn')
+  await page.mouse.move(0, 0)
+  await expect.poll(() => circleIs('accent'), { timeout: 3000 }).toBe(true)
+})
+
+test('S-140: rings the open circle in the floor colour, and not while it is closed', async ({ page }) => {
+  await openApp(page)
+
+  await page.click('button[title="Sections"]')
+  await expect(page.locator('.drawer.left.open .add-btn')).toBeVisible({ timeout: 5000 })
+
+  const ring = () =>
+    page.evaluate(() =>
+      getComputedStyle(document.querySelector('.drawer.left.open .add-btn')).boxShadow,
+    ).then(ringOf)
+  // The app settles into the editor view after mount. That moves the floor from
+  // the dark base to the writer's paper, so both sides are read together.
+  const ringMatchesFloor = async () => {
+    const [ringPaint, floor] = await Promise.all([
+      ring(),
+      page.evaluate(() =>
+        getComputedStyle(document.querySelector('.app-container')).getPropertyValue('--bg-base').trim(),
+      ),
+    ])
+    return ringPaint.colour === toRgb(floor)
+  }
+
+  // Closed: nothing to separate, so a spread here would be a shadow the circle
+  // wears in both states and the ring below would prove nothing.
+  await page.mouse.move(0, 0)
+  expect((await ring()).colour).toBeNull()
+
+  await page.click('.drawer.left.open .add-btn')
+  await page.mouse.move(0, 0)
+  await expect.poll(ringMatchesFloor, { timeout: 3000 }).toBe(true)
+  expect((await ring()).spread).toBeGreaterThanOrEqual(2)
+
+  // Closing takes it away again, so the ring reports the open state.
+  await page.click('.drawer.left.open .add-btn')
+  await page.mouse.move(0, 0)
+  await expect.poll(async () => (await ring()).colour, { timeout: 3000 }).toBeNull()
+})
+
+test('S-141: clears 2.5:1 between the ring and the option fill it cuts out', async ({ page }) => {
+  await openApp(page)
+
+  await page.click('button[title="Sections"]')
+  await expect(page.locator('.drawer.left.open .add-btn')).toBeVisible({ timeout: 5000 })
+  await page.click('.drawer.left.open .add-btn')
+  await expect(page.locator('.drawer.left.open .add-confirm').first()).toBeVisible()
+  await page.mouse.move(0, 0)
+
+  const paints = () =>
+    page.evaluate(() => {
+      const style = (selector) => getComputedStyle(document.querySelector(selector))
+      return {
+        shadow: style('.drawer.left.open .add-btn').boxShadow,
+        option: style('.drawer.left.open .add-confirm').backgroundColor,
+        accent: style('.app-container').getPropertyValue('--accent').trim(),
+      }
+    })
+
+  // The option fades up from transparent, and transparent black would read as a
+  // huge contrast against the paper ring. The settled fill is what is measured.
+  await expect
+    .poll(async () => {
+      const paint = await paints()
+      return paint.option === toRgb(paint.accent)
+    }, { timeout: 3000 })
+    .toBe(true)
+
+  const { shadow, option } = await paints()
+  const ringColour = ringOf(shadow).colour
+  expect(ringColour).not.toBeNull()
+
+  // Sky's paper on its gold is the closest pair at 2.54:1. The floor is
+  // therefore 2.5, not the 3:1 that S-135 sets for a control against a surface.
+  expect(contrastRatio(ringColour, option)).toBeGreaterThanOrEqual(2.5)
 })
