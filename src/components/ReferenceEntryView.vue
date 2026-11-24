@@ -8,7 +8,7 @@
       <button
         v-if="!editingName"
         type="button"
-        class="reference-name-edit"
+        class="reference-name-edit control-borderless"
         @click="openNameEdit"
       >Edit name</button>
       <template v-else>
@@ -19,19 +19,19 @@
           aria-label="Entry name"
           @keydown.enter="saveName"
         >
-        <button type="button" class="reference-name-save" @click="saveName">Save name</button>
-        <button type="button" class="reference-name-cancel" @click="cancelNameEdit">Cancel</button>
+        <button type="button" class="reference-name-save control-bordered" @click="saveName">Save name</button>
+        <button type="button" class="reference-name-cancel control-bordered" @click="cancelNameEdit">Cancel</button>
         <p v-if="hasCurrentNameError" class="reference-name-error">{{ nameError }}</p>
       </template>
     </div>
     <!-- Only term and place switch on this page: a character cannot move to
          another surface (SPEC.md 5.20), so a character entry offers no toggle. -->
-    <div v-if="canSwitchKind" class="reference-kind-switch">
+    <div v-if="canSwitchKind" class="reference-kind-switch control-segmented">
       <button
         v-for="switchable in switchableKinds"
         :key="switchable.kind"
         type="button"
-        class="reference-kind-toggle"
+        class="reference-kind-toggle control-segment"
         :data-kind="switchable.kind"
         :aria-pressed="switchable.kind === entry.kind"
         @click="chooseKind(switchable.kind)"
@@ -50,8 +50,8 @@
         class="reference-definition-source"
         aria-label="Definition source"
       ></textarea>
-      <button type="button" class="reference-save" @click="saveDefinition">Save definition</button>
-      <button type="button" class="reference-edit-cancel" @click="cancelDefinitionEdit">Cancel</button>
+      <button type="button" class="reference-save control-bordered" @click="saveDefinition">Save definition</button>
+      <button type="button" class="reference-edit-cancel control-bordered" @click="cancelDefinitionEdit">Cancel</button>
     </template>
     <template v-else-if="hasDefinition">
       <div
@@ -59,11 +59,11 @@
         @click="openClickedReference"
         v-html="renderedDefinition"
       ></div>
-      <button type="button" class="reference-definition-edit" @click="openDefinitionEdit">Edit definition</button>
+      <button type="button" class="reference-definition-edit control-borderless" @click="openDefinitionEdit">Edit definition</button>
     </template>
     <template v-else>
       <p class="reference-definition-empty">No definition yet.</p>
-      <button type="button" class="reference-definition-edit" @click="openDefinitionEdit">Edit definition</button>
+      <button type="button" class="reference-definition-edit control-borderless" @click="openDefinitionEdit">Edit definition</button>
     </template>
     <!-- The rail always renders: each record group holds its empty state
          and its add row (S-064). -->
@@ -78,7 +78,7 @@
             :key="aliasIndex"
             class="reference-chip"
           >
-            <span class="reference-alias">{{ alias }}</span>
+            <span class="reference-alias control-chip">{{ alias }}</span>
             <button
               type="button"
               class="reference-alias-remove"
@@ -95,7 +95,7 @@
           aria-label="New alias"
           @keydown.enter="submitAlias"
         >
-        <button type="button" class="reference-alias-add" @click="submitAlias">Add alias</button>
+        <button type="button" class="reference-alias-add control-bordered" @click="submitAlias">Add alias</button>
       </div>
       <div class="reference-group" data-group="tags">
         <div class="reference-rail-label">Tags</div>
@@ -105,7 +105,7 @@
             :key="tagIndex"
             class="reference-chip"
           >
-            <span class="reference-tag">{{ tag }}</span>
+            <span class="reference-tag control-chip">{{ tag }}</span>
             <button
               type="button"
               class="reference-tag-remove"
@@ -122,7 +122,7 @@
           aria-label="New tag"
           @keydown.enter="submitTag"
         >
-        <button type="button" class="reference-tag-add" @click="submitTag">Add tag</button>
+        <button type="button" class="reference-tag-add control-bordered" @click="submitTag">Add tag</button>
       </div>
       <div class="reference-group" data-group="facts">
         <div class="reference-rail-label">Facts</div>
@@ -131,7 +131,7 @@
             <span class="reference-fact-label">{{ fact.label }}</span><span class="reference-fact-value">{{ fact.value }}</span>
             <button
               type="button"
-              class="reference-fact-remove"
+              class="reference-fact-remove control-borderless"
               :data-index="factIndex"
               aria-label="Remove fact"
               @click="emit('remove-fact', factIndex)"
@@ -151,7 +151,7 @@
           aria-label="Fact value"
           @keydown.enter="submitFact"
         >
-        <button type="button" class="reference-fact-add" @click="submitFact">Add fact</button>
+        <button type="button" class="reference-fact-add control-bordered" @click="submitFact">Add fact</button>
       </div>
       <!-- Where the entry shows up in the manuscript, scanned at read time. The
            parent owns the record, so the rows and the picker only report a
@@ -167,14 +167,14 @@
           <span class="reference-mention-title">{{ mention.title }}</span>
           <button
             type="button"
-            class="reference-mention-go"
+            class="reference-mention-go control-borderless"
             title="Go to section"
             aria-label="Go to section"
             @click="emit('jump', mention.sectionId)"
           >Go to section</button>
           <button
             type="button"
-            class="reference-mention-remove"
+            class="reference-mention-remove control-borderless"
             title="Remove from section"
             aria-label="Remove from section"
             @click="emit('remove-mention', mention.sectionId)"
@@ -204,7 +204,7 @@
         <button
           v-if="!mergeOpen"
           type="button"
-          class="reference-merge"
+          class="reference-merge control-bordered"
           @click="mergeOpen = true"
         >Merge…</button>
         <template v-else>
@@ -218,7 +218,7 @@
           >{{ entryDisplayName(target) }}</button>
           <button
             type="button"
-            class="reference-merge-cancel"
+            class="reference-merge-cancel control-bordered"
             @click="mergeOpen = false"
           >Cancel</button>
         </template>
@@ -543,9 +543,11 @@ function chooseKind(kind) {
   color: var(--note-accent, currentColor);
 }
 
+/* The term/place switch is one segmented control. The track and the selected
+   segment come from .control-segmented and .control-segment. */
 .reference-kind-switch {
   display: flex;
-  gap: 6px;
+  align-self: flex-start;
 }
 
 .reference-definition {
@@ -582,22 +584,10 @@ function chooseKind(kind) {
   border-color: var(--note-accent, currentColor);
 }
 
+/* Pinned under the field it saves, so it never stretches across the column. */
 .reference-save {
   align-self: flex-start;
-  font: inherit;
-  font-size: 12px;
-  color: var(--note-text-muted, var(--note-text));
-  opacity: 0.75;
-  background: none;
-  border: 1px solid var(--note-border, currentColor);
-  border-radius: var(--radius-sm);
-  padding: 4px 10px;
-  cursor: pointer;
-}
-
-.reference-save:hover {
-  opacity: 1;
-  color: var(--note-text);
+  min-height: 28px;
 }
 
 /* The flex column stretches buttons across the column, so the edit and
@@ -623,15 +613,11 @@ function chooseKind(kind) {
   gap: 6px;
 }
 
+/* Aliases and tags are labels, not actions: pill, tinted, no border
+   (SPEC.md revision 9). The shape comes from .control-chip. */
 .reference-alias,
 .reference-tag {
   font-size: 12px;
-  line-height: 1.4;
-  color: var(--note-text-muted, var(--note-text));
-  background: var(--note-field-bg, transparent);
-  border: 1px solid var(--note-border, currentColor);
-  border-radius: var(--radius-sm);
-  padding: 2px 8px;
 }
 
 .reference-chip {
@@ -710,32 +696,15 @@ function chooseKind(kind) {
   color: var(--note-text);
 }
 
-/* Kind toggles, name controls, rail buttons, record controls and the
-     definition edit share one ghost chrome. The select keeps its native
-     dropdown arrow. */
-.reference-kind-toggle,
-.reference-name-edit,
-.reference-name-save,
-.reference-name-cancel,
-.reference-alias-add,
-.reference-alias-remove,
-.reference-tag-add,
-.reference-tag-remove,
-.reference-fact-add,
-.reference-fact-remove,
+/* The two selects keep their native dropdown arrow and the paper's field
+     chrome; every other record control is a .control-* button. */
 .reference-mention-add,
-.reference-mention-go,
-.reference-mention-remove,
-.reference-merge,
-.reference-merge-target,
-.reference-merge-cancel,
-.reference-definition-edit,
-.reference-edit-cancel {
+.reference-merge-target {
   font: inherit;
   font-size: 11px;
   color: var(--note-text-muted, var(--note-text));
   opacity: 0.75;
-  background: none;
+  background: var(--note-field-bg, transparent);
   border: 1px solid var(--note-border, currentColor);
   border-radius: var(--radius-sm);
   padding: 3px 8px;
@@ -743,42 +712,30 @@ function chooseKind(kind) {
   white-space: nowrap;
 }
 
-.reference-kind-toggle:hover,
-.reference-name-edit:hover,
-.reference-name-save:hover,
-.reference-name-cancel:hover,
-.reference-alias-add:hover,
+.reference-alias-remove,
+.reference-tag-remove {
+  font: inherit;
+  font-size: 11px;
+  color: var(--note-text-muted, var(--note-text));
+  opacity: 0.75;
+  background: none;
+  border: 1px solid var(--note-border, currentColor);
+  border-radius: var(--radius-sm);
+  padding: 0 6px;
+  cursor: pointer;
+}
+
 .reference-alias-remove:hover,
-.reference-tag-add:hover,
-.reference-tag-remove:hover,
-.reference-fact-add:hover,
-.reference-fact-remove:hover,
+.reference-tag-remove:hover {
+  opacity: 1;
+  color: var(--note-text);
+  background: var(--note-hover-bg, transparent);
+}
+
 .reference-mention-add:hover,
-.reference-mention-go:hover,
-.reference-mention-remove:hover,
-.reference-merge:hover,
-.reference-merge-target:hover,
-.reference-merge-cancel:hover,
-.reference-definition-edit:hover,
-.reference-edit-cancel:hover {
+.reference-merge-target:hover {
   opacity: 1;
   color: var(--note-text);
-  background: var(--note-hover-bg, transparent);
-}
-
-/* The current kind stays visibly pressed, using the hover's active look. */
-.reference-kind-toggle[aria-pressed='true'] {
-  opacity: 1;
-  color: var(--note-text);
-  background: var(--note-hover-bg, transparent);
-}
-
-/* The select is a field, not a ghost control: it wears the paper chrome the
-   name and definition sources use. */
-.reference-mention-add {
-  color: var(--note-text);
-  background: var(--note-field-bg, transparent);
-  border-color: var(--note-border, currentColor);
 }
 
 .reference-merge-block {

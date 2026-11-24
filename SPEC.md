@@ -787,3 +787,111 @@ painting `.glass` before the token loaded.
    before mount, not the editor's paper.
 3. **Do not delete `CHROME_BASE`.** `--bg-base`, `--bg-editor` and `--bg-glass`
    are stylesheet-only, and `--bg-base` is what the scroll layer stands on.
+
+## Revision 9 — the control layer
+
+### Context
+
+The design inventory found 51 flat components and no shared layer under them.
+The same kind of action was drawn five ways: the rail icon, the toolbar tab,
+the zoom button, the assistant's Send and the reference add option. Radii, font
+sizes and hover states differed by a pixel or two, and each file owned its own
+copy of the colour.
+
+Revision 8 gave every chrome colour one owner. This revision gives the controls
+one owner too: four kinds, one geometry each, every colour read from a token.
+The four kinds and where each one is right:
+
+| Kind | Where it is right | Shipped examples |
+|---|---|---|
+| borderless | an action on a surface, icon or word | rail icons, Edit name, Edit definition |
+| bordered | a standing action that needs a field edge | zoom buttons, Send, Clear, New term, Save |
+| chip | a label, never an action | aliases, tags |
+| segmented | one choice out of a set | view tabs, reference surfaces, term/place |
+
+### One rule set, two surfaces
+
+The rules live in `src/style.css` and name only `--control-*` and `--chip-*`.
+`:root` maps those names onto the chrome tokens, so the rail and the drawers
+keep the look they had.
+
+A page painted with the writer's theme republishes the same names from
+`paperPalette.js`. That is what the indirection buys: a bordered control on the
+References page takes the writer's ink and accent, and can never reach the
+near-white chrome that caused revision 7's bug. `--control-on-primary` is the
+one token that flips meaning: white on a chrome accent fill, the paper colour on
+a page's.
+
+### Geometry
+
+| Kind | Height | Radius | Padding |
+|---|---|---|---|
+| borderless | 32px | `--radius-sm` | none |
+| bordered | 32px | `--radius-sm` | 0 10px |
+| bordered, small (`.control-sm`) | 20px | `--radius-sm` | 0 4px |
+| chip | content | `--radius-pill` | 2px 10px |
+| segmented segment | 26px | square inside the track | 0 10px |
+
+The small bordered size exists for the two row badges in the navigation drawer.
+A 32px badge would set the row height and pull the outline apart.
+
+A segment is 26px because it only ever sits in the 38px top bar or a drawer
+head. The track draws the outer border and the outer rounding. Each segment
+draws one right hairline and none on the last, so no edge is drawn twice.
+
+### What counts as observable
+
+jsdom cannot resolve a scoped `<style>` block, so a unit test can only see the
+class a component publishes. That is enough for adoption: the class is the
+contract, and the colour it resolves to is the stylesheet's job. The two
+computed-style questions (is the active segment the accent, is the page control
+the theme ink) belong to the e2e layer, where a real browser answers them.
+
+S-121 and S-122 read `src/style.css` directly. A control that hardcodes a colour
+would still pass a class-presence test, so the stylesheet has its own guard.
+
+### Sentences
+
+| ID | Layer | Sentence |
+|---|---|---|
+| S-120 | unit | it should publish the control tokens from the page's theme, so a control on a painted page takes the writer's ink and accent |
+| S-121 | unit | it should take every control colour from a control or chip token, and declare each of those names before use |
+| S-122 | unit | it should declare each of the four control kinds once, with the segmented kind's track and segment as two rules |
+| S-123 | unit | it should draw the four views and the three reference surfaces as one segmented control each, keeping the toolbar's arrow-key navigation |
+| S-124 | unit | it should make each rail button a borderless control, with the pressed one marked active and no bar drawn beside it |
+| S-125 | unit | it should report whether the caret is in the editor and follow it as focus moves in and out |
+| S-126 | unit | it should disable the three format buttons exactly when the caret is not in the editor |
+| S-127 | unit | it should draw the standing drawer and panel actions as bordered controls, with Send as the one primary |
+| S-128 | unit | it should draw aliases and tags as chips, never as bordered buttons |
+| S-129 | e2e | it should open the two add options at the circle's height, joined to it |
+| S-130 | e2e | it should paint only the chosen segment in the accent, on the toolbar and in the reference panel |
+| S-131 | e2e | it should paint a control on the References page in the theme ink, not the chrome white |
+
+### Traps
+
+1. **Do not put a colour in a control rule.** The kind is a shape and a state;
+   the surface supplies the colour through the tokens. A literal here is what
+   revision 7 and revision 8 both had to undo.
+2. **Do not give a page its own control classes.** The four kinds in
+   `style.css` are the whole set. A page that needs different chrome needs a
+   token, not a rule.
+3. **Do not drop a class an existing test selects.** The kinds are added beside
+   the existing hooks (`.view-tab`, `.zoom-btn`, `.surface-tab`), so the 18
+   spec files that select them keep working.
+4. **Do not read `aria-pressed` and `.active` as two states.** Both mean
+   pressed, and the segmented kind also reads `aria-selected`, because a tab is
+   selected rather than pressed.
+5. **Do not make the row badges 32px.** `.control-sm` exists because the
+   outline row is 28px tall; a full-size badge would set the row height.
+
+### Out of scope
+
+- The accordion in General Options (exclusive open, first open, height
+  animation, hover on the trigger, and the chapter preview that reads as an
+  input field).
+- One navigable row primitive for the outline, the reference panel and the
+  notes list.
+- Theme-tinted glass on the non-manuscript menus, and which surfaces stay dark.
+- Stats staying visible in History, which needs a definition of the document
+  text a history session shows.
+- The entry page's padding rhythm.

@@ -42,7 +42,7 @@
     <div v-if="canRegenerateAll" class="llm-regenerate-row">
       <button
         type="button"
-        class="regenerate-all"
+        class="regenerate-all control-bordered"
         :disabled="busy"
         @click="emit('regenerate-all')"
       >{{ busy ? 'Regenerating…' : 'Regenerate all' }}</button>
@@ -69,7 +69,7 @@
       <div v-if="chat.messages.length === 0" class="llm-empty">
         <template v-if="!settings.settings.model">
           <p class="llm-empty-text">Configure the AI assistant in General Options → AI Assistant.</p>
-          <button class="llm-empty-btn" @click="$emit('openSettings')">Open General Options</button>
+          <button class="llm-empty-btn control-bordered is-primary" @click="$emit('openSettings')">Open General Options</button>
         </template>
         <template v-else-if="!chat.selectedRoleName">
           <p class="llm-empty-text">Pick a role above, then type a question. Type / for built-in commands.</p>
@@ -141,10 +141,10 @@
         @keydown.enter.exact.prevent="onSend"
         :disabled="busy"
       ></textarea>
-      <button v-if="!busy" class="llm-send-btn" :disabled="!chat.input.trim()" @click="onSend">
+      <button v-if="!busy" class="llm-send-btn control-bordered is-primary" :disabled="!chat.input.trim()" @click="onSend">
         Send
       </button>
-      <button v-else class="llm-send-btn llm-stop-btn" @click="manager.stopActive">
+      <button v-else class="llm-send-btn llm-stop-btn control-bordered" @click="manager.stopActive">
         Stop
       </button>
     </div>
@@ -210,7 +210,7 @@
     <p v-if="chat.retrievalError" class="llm-retrieval-error">{{ chat.retrievalError }}</p>
     <div class="llm-clear-row">
        <button
-          class="llm-clear-btn"
+          class="llm-clear-btn control-bordered"
           :disabled="busy"
           :aria-expanded="clearOpen"
           aria-controls="clearConfirm"
@@ -220,7 +220,7 @@
         </button>
       <transition name="slide-fade">
         <button
-          class="llm-clear-btn"
+          class="llm-clear-btn control-bordered"
           :disabled="busy"
           v-show="clearOpen"
           @click="chat.clear"
@@ -624,25 +624,9 @@ watch(
   gap: 6px;
 }
 
+/* The clear row shares its width between the button and its confirmation. */
 .llm-clear-btn {
   flex: 1 1 auto;
-  padding: 6px 10px;
-  border-radius: 6px;
-  border: 1px solid var(--bg-glass-border);
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.llm-clear-btn:hover:not(:disabled) {
-  color: var(--text-primary);
-  border-color: var(--accent);
-}
-
-.llm-clear-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
 }
 
 /* Whole-manuscript regeneration (S-045): ghost chrome like the clear row, so
@@ -652,25 +636,10 @@ watch(
   justify-content: flex-end;
 }
 
+/* Geometry only: the ghost chrome is .control-bordered. */
 .regenerate-all {
-  font: inherit;
+  min-height: 28px;
   font-size: 11px;
-  color: var(--text-secondary);
-  background: none;
-  border: 1px solid var(--bg-glass-border);
-  border-radius: var(--radius-sm);
-  padding: 4px 8px;
-  cursor: pointer;
-}
-
-.regenerate-all:hover:not(:disabled) {
-  color: var(--text-primary);
-  background: var(--hover-bg);
-}
-
-.regenerate-all:disabled {
-  opacity: 0.5;
-  cursor: default;
 }
 
 /* Message list — scrolls independently within the drawer. */
@@ -702,19 +671,9 @@ watch(
   margin: 0;
 }
 
+/* An empty transcript offers one way out, sized to its own label. */
 .llm-empty-btn {
-  padding: 6px 12px;
-  border-radius: 6px;
-  border: 1px solid var(--accent);
-  background: var(--accent-bg);
-  color: var(--accent);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.llm-empty-btn:hover {
-  background: var(--accent-hover);
-  color: var(--text-primary);
+  padding: 0 12px;
 }
 
 .llm-message {
@@ -894,35 +853,19 @@ watch(
   white-space: nowrap;
 }
 
+/* Send keeps its own width and height. The primary fill and its label ink
+   arrive from the control class. */
 .llm-send-btn {
   flex: 0 0 auto;
-  padding: 8px 14px;
-  border-radius: 6px;
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
+  padding: 0 14px;
+  height: 32px;
 }
 
-.llm-send-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
-.llm-send-btn:hover:not(:disabled) {
-  background: var(--accent-hover);
-}
-
+/* Stop is the same control mid-flight, in the danger colour. */
 .llm-stop-btn {
   background: transparent;
   border-color: #e55;
   color: #e55;
-}
-
-.llm-stop-btn:hover {
-  background: rgba(238, 85, 85, 0.12);
 }
 
 .slide-fade-enter-active,

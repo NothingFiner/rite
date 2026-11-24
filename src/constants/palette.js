@@ -21,6 +21,9 @@ export const CHROME_PALETTE = Object.freeze({
   '--hover-bg-strong': 'rgba(255, 255, 255, 0.12)',
   '--input-bg': 'rgba(0, 0, 0, 0.25)',
   '--popup-bg': '#0f0f11',
+  // The ink that sits on an accent fill: a primary control's label. A
+  // theme-painted page republishes it as the paper colour instead (revision 9).
+  '--control-on-primary': '#ffffff',
 })
 
 /** The base the chrome sits on, declared in the stylesheet only. */

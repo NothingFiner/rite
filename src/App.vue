@@ -28,6 +28,7 @@
       :drawer-open="leftDrawerOpen"
       :view-mode="viewMode"
       :formats="format.formats"
+      :cursor-active="format.cursorActive"
       @select="onActivitySelect"
       @toggle-format="format.toggleFormat($event)"
     />

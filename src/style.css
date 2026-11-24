@@ -17,7 +17,26 @@
   --popup-bg: #0f0f11;
   --radius-sm: 8px;
   --radius-md: 14px;
+  --radius-pill: 9999px;
   --shadow-glass: 0 4px 30px rgba(0, 0, 0, 0.3);
+
+  /* The control layer (SPEC.md revision 9). Here is where the chrome values
+     live. A page painted with the writer's theme republishes these same names
+     from paperPalette.js, so one rule set serves both surfaces. The indirection
+     through the tokens above keeps a runtime palette swap flowing in. */
+  --control-text: var(--text-secondary);
+  --control-text-hover: var(--text-primary);
+  --control-text-active: var(--accent);
+  --control-bg: var(--input-bg);
+  --control-border: var(--bg-glass-border);
+  --control-border-hover: var(--accent);
+  --control-hover-bg: var(--hover-bg-strong);
+  --control-active-bg: var(--accent-bg);
+  --control-active-border: var(--accent);
+  --control-on-primary: #ffffff;
+  --chip-bg: var(--bg-glass);
+  --chip-text: var(--text-secondary);
+  --chip-border: transparent;
 }
 
 * {
@@ -176,4 +195,160 @@ body.pointer-last :is(a, button, input, select, textarea, [role="button"], [tabi
     animation-delay: 0s !important;
     animation-iteration-count: 1 !important;
   }
+}
+
+/* ---------- Controls ----------
+   Four kinds, one geometry each (SPEC.md revision 9):
+
+   .control-borderless  an icon or text action on a surface; hover paints a
+                        wash, the pressed state takes the accent.
+   .control-bordered    a standing action: field chrome, no fill at rest.
+   .control-chip        a label, not an action: pill, tinted, never bordered.
+   .control-segmented   a set of mutually exclusive options sharing one track.
+
+   A bordered control is 32px tall with 10px side padding. A segment is 26px
+   tall, because it only appears inside a 38px top bar or a drawer head. Both
+   take --radius-sm and a 120ms transition. A new control copies a class, not
+   a colour. A theme-painted page republishes the --control-* names from
+   paperPalette.js, so these rules serve the chrome and the paper alike. */
+
+.control-borderless {
+  min-height: 32px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--control-text);
+  font: inherit;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.control-borderless:hover:not(:disabled) {
+  background: var(--control-hover-bg);
+  color: var(--control-text-hover);
+}
+
+.control-borderless.active,
+.control-borderless[aria-pressed='true'] {
+  color: var(--control-text-active);
+  background: var(--control-active-bg);
+}
+
+.control-borderless:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.control-bordered {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-sm);
+  background: var(--control-bg);
+  color: var(--control-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.control-bordered:hover:not(:disabled) {
+  border-color: var(--control-border-hover);
+  color: var(--control-text-hover);
+}
+
+.control-bordered.active,
+.control-bordered[aria-pressed='true'] {
+  border-color: var(--control-active-border);
+  background: var(--control-active-bg);
+  color: var(--control-text-active);
+  font-weight: 600;
+}
+
+.control-bordered:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* The same control in a dense row: 20px tall, no side padding. A size, not a
+   colour, so a row badge and a drawer button cannot drift apart. */
+.control-bordered.control-sm {
+  min-height: 20px;
+  padding: 0 4px;
+  font-size: 10px;
+}
+
+/* The one standing action that may read as primary, same geometry as the rest. */
+.control-bordered.is-primary {
+  border-color: var(--control-active-border);
+  background: var(--control-active-border);
+  color: var(--control-on-primary);
+  font-weight: 600;
+}
+
+.control-bordered.is-primary:hover:not(:disabled) {
+  border-color: var(--control-active-border);
+  background: var(--control-active-border);
+  color: var(--control-on-primary);
+  filter: brightness(1.1);
+}
+
+/* One track, joined segments, no double hairlines. The selected segment takes
+   the accent, so a set of options reads as one control with a position. */
+.control-segmented {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-sm);
+  background: var(--control-bg);
+  overflow: hidden;
+}
+
+.control-segmented > .control-segment {
+  min-height: 26px;
+  padding: 0 10px;
+  border: none;
+  border-right: 1px solid var(--control-border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--control-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.control-segmented > .control-segment:last-child {
+  border-right: none;
+}
+
+.control-segmented > .control-segment:hover:not(:disabled) {
+  background: var(--control-hover-bg);
+  color: var(--control-text-hover);
+}
+
+.control-segmented > .control-segment.active,
+.control-segmented > .control-segment[aria-selected='true'] {
+  background: var(--control-active-bg);
+  color: var(--control-text-active);
+  font-weight: 600;
+}
+
+.control-segmented > .control-segment:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.control-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 10px;
+  border: 1px solid var(--chip-border);
+  border-radius: var(--radius-pill);
+  background: var(--chip-bg);
+  color: var(--chip-text);
+  font-size: 11px;
+  line-height: 1.6;
 }

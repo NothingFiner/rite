@@ -6,14 +6,14 @@
         <div class="drawer-label">Margins</div>
         <div class="zoom-row">
           <button
-            class="zoom-btn"
+            class="zoom-btn control-bordered"
             :class="{ active: theme.editorMargin === 'compact' }"
             @click="theme.setMargin('compact')"
           >
             Compact
           </button>
           <button
-            class="zoom-btn"
+            class="zoom-btn control-bordered"
             :class="{ active: theme.editorMargin === 'manuscript' }"
             @click="theme.setMargin('manuscript')"
           >
@@ -25,7 +25,7 @@
           <button
             v-for="z in [12, 16, 20]"
             :key="z"
-            class="zoom-btn"
+            class="zoom-btn control-bordered"
             :class="{ active: theme.editorZoom === z }"
             @click="theme.setZoom(z)"
           >
@@ -252,28 +252,10 @@ const palette = []
   gap: 6px;
 }
 
+/* Each button takes an equal share of the row. The kind supplies the rest. */
 .zoom-btn {
   flex: 1;
   height: 32px;
-  border-radius: 6px;
-  border: 1px solid var(--bg-glass-border);
-  background: transparent;
-  color: var(--text-secondary);
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
-}
-
-.zoom-btn:hover {
-  background: var(--hover-bg-strong);
-  color: var(--text-primary);
-}
-
-.zoom-btn.active {
-  background: var(--accent-bg);
-  border-color: var(--accent);
-  color: var(--accent);
-  font-weight: 600;
 }
 
 .font-select {

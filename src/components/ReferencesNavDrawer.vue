@@ -6,12 +6,12 @@
          The shell owns the switch, the same split as the row clicks. The
          head speaks the tab roles. aria-selected spells false on unselected
          tabs too, so exactly one tab is explicitly selected. -->
-    <div class="surface-tabs" role="tablist">
+    <div class="surface-tabs control-segmented" role="tablist">
       <button
         v-for="tab in surfaceTabs"
         :key="tab.id"
         type="button"
-        class="surface-tab"
+        class="surface-tab control-segment"
         :class="{ selected: tab.id === surface }"
         :data-surface="tab.id"
         role="tab"
@@ -38,7 +38,7 @@
       <div class="reference-add">
         <button
           type="button"
-          class="reference-add-option"
+          class="reference-add-option control-bordered"
           :data-add-kind="addKind"
           @click="emit('add-entry', addKind)"
         >New {{ addKind }}</button>
@@ -148,70 +148,35 @@ function selectEntry(id) {
 </script>
 
 <style scoped>
-/* The add options wear the same ghost chrome as the surface tabs, so the
-   panel's actions read as one family. */
 .reference-add {
   display: flex;
   gap: 4px;
   margin-top: 8px;
 }
 
+/* One add control fills the panel width beneath the rows. */
 .reference-add-option {
   flex: 1;
   min-width: 0;
-  font: inherit;
   font-size: 11px;
-  color: var(--note-text-muted, var(--note-text));
-  opacity: 0.75;
-  background: none;
-  border: 1px solid var(--note-border, currentColor);
-  border-radius: var(--radius-sm);
-  padding: 4px 8px;
-  cursor: pointer;
   white-space: nowrap;
 }
 
-.reference-add-option:hover {
-  color: var(--note-text);
-  opacity: 1;
-  background: var(--note-hover-bg, transparent);
-}
-
-/* Surface tabs reuse the add-option chrome. The selected tab takes the
-   accent family like .notes-entry.selected, so the active surface reads. */
+/* The three surfaces are one segmented control: one track, joined segments,
+   the selected surface on the accent. Chrome comes from .control-segmented,
+   and this page republishes those tokens from its own paper (S-120). */
 .surface-tabs {
   display: flex;
-  gap: 4px;
+  width: 100%;
   margin-bottom: 8px;
 }
 
 .surface-tab {
   flex: 1;
   min-width: 0;
-  font: inherit;
+  padding: 0 6px;
   font-size: 11px;
-  color: var(--note-text-muted, var(--note-text));
-  opacity: 0.75;
-  background: none;
-  border: 1px solid var(--note-border, currentColor);
-  border-radius: var(--radius-sm);
-  padding: 4px 8px;
-  cursor: pointer;
   white-space: nowrap;
-}
-
-.surface-tab:hover {
-  color: var(--note-text);
-  opacity: 1;
-  background: var(--note-hover-bg, transparent);
-}
-
-.surface-tab.selected {
-  opacity: 1;
-  color: var(--note-accent, currentColor);
-  background: var(--note-accent-bg, transparent);
-  border-color: var(--note-accent, currentColor);
-  box-shadow: inset 2px 0 0 var(--note-accent, currentColor);
 }
 
 /* The reference rows keep the outline rows' chrome, selected highlight included. */
