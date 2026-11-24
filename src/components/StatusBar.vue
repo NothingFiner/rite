@@ -46,7 +46,7 @@ defineProps({
   font-size: 13px;
   border-top: 1px solid var(--bg-glass-border);
   border-bottom: none;
-  background: var(--glass-bg, rgba(20, 20, 25, 0.78));
+  background: var(--glass-bg);
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
 }

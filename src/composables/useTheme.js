@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue'
 import { THEMES } from '../constants/themes.js'
+import { CHROME_PALETTE } from '../constants/palette.js'
 
 function hexToRgba(hex, alpha) {
   const r = parseInt(hex.slice(1, 3), 16)
@@ -119,15 +120,15 @@ export function useTheme(viewModeRef) {
     applyColourChoice(editorAccent, hex)
   }
 
-  const uiTextPrimary = computed(() => viewModeRef.value === 'editor' ? currentTheme.value.text : '#f0f0f5')
-  const uiTextSecondary = computed(() => viewModeRef.value === 'editor' ? currentTheme.value.text + '99' : '#a0a0b099')
-  const uiAccent = computed(() => viewModeRef.value === 'editor' ? currentTheme.value.accent : '#4f8ef7')
-  const uiAccentBg = computed(() => viewModeRef.value === 'editor' ? currentTheme.value.accentBg : 'rgba(79, 142, 247, 0.25)')
-  const uiAccentHover = computed(() => viewModeRef.value === 'editor' ? currentTheme.value.accentHover : '#3a7de0')
-  const uiGlassBg = computed(() => {
-    if (viewModeRef.value !== 'editor') return 'rgba(20, 20, 25, 0.78)'
-    return hexToRgba(currentTheme.value.bg, 0.78)
-  })
+  // Outside the editor the chrome paints from the published palette, so the
+  // stylesheet's first paint and the runtime values cannot drift (S-117).
+  const chrome = (token) => (viewModeRef.value === 'editor' ? null : CHROME_PALETTE[token])
+  const uiTextPrimary = computed(() => chrome('--text-primary') ?? currentTheme.value.text)
+  const uiTextSecondary = computed(() => chrome('--text-secondary') ?? currentTheme.value.text + '99')
+  const uiAccent = computed(() => chrome('--accent') ?? currentTheme.value.accent)
+  const uiAccentBg = computed(() => chrome('--accent-bg') ?? currentTheme.value.accentBg)
+  const uiAccentHover = computed(() => chrome('--accent-hover') ?? currentTheme.value.accentHover)
+  const uiGlassBg = computed(() => chrome('--glass-bg') ?? hexToRgba(currentTheme.value.bg, 0.78))
   const uiScrollBg = computed(() => {
     if (viewModeRef.value !== 'editor') return 'var(--bg-base)'
     // The editor scroll layer sits behind the editor sheet, which paints the
@@ -137,11 +138,11 @@ export function useTheme(viewModeRef) {
     // black void showing through when the content is shorter than the viewport.
     return currentTheme.value.bg
   })
-  const uiGlassBorder = computed(() => viewModeRef.value === 'editor' ? currentTheme.value.text + '33' : 'rgba(255, 255, 255, 0.1)')
-  const uiHoverBg = computed(() => viewModeRef.value === 'editor' ? currentTheme.value.text + '11' : 'rgba(255, 255, 255, 0.06)')
-  const uiHoverBgStrong = computed(() => viewModeRef.value === 'editor' ? currentTheme.value.text + '22' : 'rgba(255, 255, 255, 0.12)')
-  const uiInputBg = computed(() => viewModeRef.value === 'editor' ? currentTheme.value.text + '22' : 'rgba(0, 0, 0, 0.25)')
-  const uiPopupBg = computed(() => viewModeRef.value === 'editor' ? currentTheme.value.bg : '#0f0f11')
+  const uiGlassBorder = computed(() => chrome('--bg-glass-border') ?? currentTheme.value.text + '33')
+  const uiHoverBg = computed(() => chrome('--hover-bg') ?? currentTheme.value.text + '11')
+  const uiHoverBgStrong = computed(() => chrome('--hover-bg-strong') ?? currentTheme.value.text + '22')
+  const uiInputBg = computed(() => chrome('--input-bg') ?? currentTheme.value.text + '22')
+  const uiPopupBg = computed(() => chrome('--popup-bg') ?? currentTheme.value.bg)
 
   function loadPrefs() {
     try {

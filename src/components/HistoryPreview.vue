@@ -68,8 +68,8 @@ const renderedHtml = computed(() => {
   font-family: var(--editor-font, Georgia, serif);
   font-size: 16px;
   line-height: 1.7;
-  color: var(--text-primary, #f0f0f5);
-  background: var(--bg-base, rgba(255, 255, 255, 0.02));
+  color: var(--text-primary);
+  background: var(--bg-base);
   border-radius: 6px;
   padding: 48px 56px;
 }

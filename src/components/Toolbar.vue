@@ -122,10 +122,10 @@ function onViewTabsKeydown(event) {
   justify-content: space-between;
   padding: 0 12px 0 86px;
   z-index: 20;
-  background: var(--glass-bg, rgba(20, 20, 25, 0.78));
+  background: var(--glass-bg);
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
-  border-bottom: 1px solid var(--bg-glass-border, rgba(255, 255, 255, 0.1));
+  border-bottom: 1px solid var(--bg-glass-border);
   user-select: none;
   -webkit-user-select: none;
   app-region: drag;
@@ -149,7 +149,7 @@ function onViewTabsKeydown(event) {
   font-family: 'Turret Road', -apple-system, sans-serif;
   font-size: 18px;
   font-weight: 700;
-  color: var(--text-primary, #f0f0f5);
+  color: var(--text-primary);
   letter-spacing: 2px;
   text-transform: lowercase;
   opacity: 0.9;
@@ -167,7 +167,7 @@ function onViewTabsKeydown(event) {
   border-radius: 4px;
   border: 1px solid transparent;
   background: transparent;
-  color: var(--text-secondary, #a0a0b0);
+  color: var(--text-secondary);
   font-size: 12px;
   cursor: pointer;
   display: flex;
@@ -181,32 +181,32 @@ function onViewTabsKeydown(event) {
 }
 
 .tool-btn:hover {
-  background: var(--hover-bg-strong, rgba(255, 255, 255, 0.12));
-  color: var(--text-primary, #f0f0f5);
+  background: var(--hover-bg-strong);
+  color: var(--text-primary);
 }
 
 .tool-btn.active {
-  background: var(--accent-bg, rgba(79, 142, 247, 0.25));
-  color: var(--accent, #4f8ef7);
-  border-color: var(--accent, #4f8ef7);
+  background: var(--accent-bg);
+  color: var(--accent);
+  border-color: var(--accent);
   font-weight: 600;
 }
 
 .drawer-toggle {
   width: 26px;
   padding: 0;
-  color: var(--text-secondary, #a0a0b0);
+  color: var(--text-secondary);
 }
 
 .drawer-toggle.active {
-  background: var(--accent-bg, rgba(79, 142, 247, 0.25));
-  color: var(--accent, #4f8ef7);
+  background: var(--accent-bg);
+  color: var(--accent);
 }
 
 .divider {
   width: 1px;
   height: 16px;
-  background: var(--bg-glass-border, rgba(255, 255, 255, 0.1));
+  background: var(--bg-glass-border);
   margin: 0 4px;
 }
 
@@ -218,7 +218,7 @@ function onViewTabsKeydown(event) {
 .view-tabs {
   display: flex;
   align-items: center;
-  border: 1px solid var(--bg-glass-border, rgba(255, 255, 255, 0.1));
+  border: 1px solid var(--bg-glass-border);
   border-radius: 6px;
   overflow: hidden;
   margin-right: 4px;
@@ -227,7 +227,7 @@ function onViewTabsKeydown(event) {
 .view-tab {
   border-radius: 0;
   border: none;
-  border-right: 1px solid var(--bg-glass-border, rgba(255, 255, 255, 0.1));
+  border-right: 1px solid var(--bg-glass-border);
   /* override the generic .tool-btn top padding so tabs fill the group height */
   height: 26px;
 }
@@ -237,7 +237,7 @@ function onViewTabsKeydown(event) {
 }
 
 .view-tab:hover {
-  background: var(--hover-bg, rgba(255, 255, 255, 0.06));
+  background: var(--hover-bg);
 }
 
 .view-tab.active {
@@ -245,9 +245,9 @@ function onViewTabsKeydown(event) {
      view. Keep the inner divider at the group border color so dividers stay
      consistent across active/inactive tabs (override .tool-btn.active, which
      would tint the divider accent). */
-  background: var(--accent-bg, rgba(79, 142, 247, 0.25));
-  color: var(--accent, #4f8ef7);
-  border-color: var(--bg-glass-border, rgba(255, 255, 255, 0.1));
+  background: var(--accent-bg);
+  color: var(--accent);
+  border-color: var(--bg-glass-border);
   font-weight: 600;
 }
 

@@ -211,18 +211,18 @@ function onDiff() {
   padding: 6px 8px;
   border-radius: 5px;
   cursor: pointer;
-  color: var(--text-secondary, #a0a0b0);
+  color: var(--text-secondary);
   transition: background 0.12s, color 0.12s;
 }
 
 .history-row:hover {
-  background: var(--hover-bg-strong, rgba(255, 255, 255, 0.08));
-  color: var(--text-primary, #f0f0f5);
+  background: var(--hover-bg-strong);
+  color: var(--text-primary);
 }
 
 .history-row.active {
-  background: var(--accent-bg, rgba(79, 142, 247, 0.18));
-  color: var(--text-primary, #f0f0f5);
+  background: var(--accent-bg);
+  color: var(--text-primary);
 }
 
 .history-kind {
@@ -235,17 +235,17 @@ function onDiff() {
   font-size: 11px;
   font-weight: 700;
   flex-shrink: 0;
-  border: 1px solid var(--bg-glass-border, rgba(255, 255, 255, 0.15));
+  border: 1px solid var(--bg-glass-border);
 }
 
 .history-kind.snapshot {
-  background: var(--accent-bg, rgba(79, 142, 247, 0.2));
-  color: var(--accent, #4f8ef7);
+  background: var(--accent-bg);
+  color: var(--accent);
 }
 
 .history-kind.delta {
   background: rgba(255, 255, 255, 0.06);
-  color: var(--text-secondary, #a0a0b0);
+  color: var(--text-secondary);
 }
 
 .history-label {
@@ -256,7 +256,7 @@ function onDiff() {
 .history-empty,
 .drawer-empty p {
   font-size: 12px;
-  color: var(--text-secondary, #a0a0b0);
+  color: var(--text-secondary);
   opacity: 0.7;
   padding: 8px;
   line-height: 1.5;
@@ -271,7 +271,7 @@ function onDiff() {
 .drawer-footer {
   flex-shrink: 0;
   padding-top: 12px;
-  border-top: 1px solid var(--bg-glass-border, rgba(255, 255, 255, 0.1));
+  border-top: 1px solid var(--bg-glass-border);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -280,9 +280,9 @@ function onDiff() {
 .history-action {
   height: 30px;
   border-radius: 5px;
-  border: 1px solid var(--accent, #4f8ef7);
-  background: var(--accent-bg, rgba(79, 142, 247, 0.15));
-  color: var(--accent, #4f8ef7);
+  border: 1px solid var(--accent);
+  background: var(--accent-bg);
+  color: var(--accent);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -290,7 +290,7 @@ function onDiff() {
 }
 
 .history-action:hover:not(:disabled) {
-  background: var(--accent-bg, rgba(79, 142, 247, 0.28));
+  background: var(--accent-bg);
 }
 
 .history-action:disabled {
@@ -299,19 +299,19 @@ function onDiff() {
 }
 
 .history-action.secondary {
-  border-color: var(--bg-glass-border, rgba(255, 255, 255, 0.2));
+  border-color: var(--bg-glass-border);
   background: transparent;
-  color: var(--text-secondary, #a0a0b0);
+  color: var(--text-secondary);
 }
 
 .history-action.secondary:hover:not(:disabled) {
-  background: var(--hover-bg-strong, rgba(255, 255, 255, 0.08));
-  color: var(--text-primary, #f0f0f5);
+  background: var(--hover-bg-strong);
+  color: var(--text-primary);
 }
 
 .history-restore-hint {
   font-size: 11px;
-  color: var(--text-secondary, #a0a0b0);
+  color: var(--text-secondary);
   opacity: 0.65;
   line-height: 1.4;
   margin: 0;

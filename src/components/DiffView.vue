@@ -284,14 +284,14 @@ function paragraphHTML(pd, side) {
   font-family: var(--editor-font, Georgia, serif);
   font-size: 15px;
   line-height: 1.6;
-  color: var(--text-primary, #f0f0f5);
+  color: var(--text-primary);
   padding-bottom: 96px;
 }
 
 .diff-header {
   display: flex;
-  border-bottom: 1px solid var(--bg-glass-border, rgba(255, 255, 255, 0.1));
-  background: var(--glass-bg, rgba(20, 20, 25, 0.5));
+  border-bottom: 1px solid var(--bg-glass-border);
+  background: var(--glass-bg);
 }
 
 .diff-header-cell {
@@ -301,17 +301,17 @@ function paragraphHTML(pd, side) {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: var(--text-secondary, #a0a0b0);
+  color: var(--text-secondary);
 }
 
 .diff-header-cell.diff-left {
-  border-right: 1px solid var(--bg-glass-border, rgba(255, 255, 255, 0.1));
+  border-right: 1px solid var(--bg-glass-border);
 }
 
 .diff-title-row {
   display: flex;
   align-items: stretch;
-  border-bottom: 1px solid var(--bg-glass-border, rgba(255, 255, 255, 0.06));
+  border-bottom: 1px solid var(--bg-glass-border);
 }
 
 .diff-title-cell {
@@ -322,13 +322,13 @@ function paragraphHTML(pd, side) {
 }
 
 .diff-title-cell.diff-left {
-  border-right: 1px solid var(--bg-glass-border, rgba(255, 255, 255, 0.1));
+  border-right: 1px solid var(--bg-glass-border);
 }
 
 .diff-row {
   display: flex;
   align-items: stretch;
-  border-bottom: 1px solid var(--bg-glass-border, rgba(255, 255, 255, 0.06));
+  border-bottom: 1px solid var(--bg-glass-border);
 }
 
 .diff-cell {
@@ -339,7 +339,7 @@ function paragraphHTML(pd, side) {
 }
 
 .diff-cell.diff-left {
-  border-right: 1px solid var(--bg-glass-border, rgba(255, 255, 255, 0.1));
+  border-right: 1px solid var(--bg-glass-border);
 }
 
 .diff-tint-removed {
@@ -366,8 +366,8 @@ function paragraphHTML(pd, side) {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: var(--text-secondary, #a0a0b0);
-  border: 1px solid var(--bg-glass-border, rgba(255, 255, 255, 0.15));
+  color: var(--text-secondary);
+  border: 1px solid var(--bg-glass-border);
   border-radius: 3px;
   padding: 1px 5px;
   flex-shrink: 0;

@@ -119,7 +119,7 @@ function confirm() {
   margin-bottom: 16px;
   font-size: 14px;
   color: var(--text-primary);
-  background: var(--input-bg, rgba(0, 0, 0, 0.2));
+  background: var(--input-bg);
   border: 1px solid var(--bg-glass-border);
   border-radius: var(--radius-sm, 6px);
   outline: none;

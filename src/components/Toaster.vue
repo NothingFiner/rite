@@ -46,7 +46,7 @@ function dismiss(id) {
   font-size: 13px;
   line-height: 1.4;
   color: var(--text-primary);
-  background: var(--glass-bg, rgba(20, 20, 25, 0.78));
+  background: var(--glass-bg);
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   border: 1px solid var(--bg-glass-border);

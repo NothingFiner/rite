@@ -98,8 +98,8 @@ defineEmits(['back', 'toggle-versions'])
   align-items: center;
   gap: 16px;
   padding: 8px 16px;
-  border-bottom: 1px solid var(--bg-glass-border, rgba(255, 255, 255, 0.1));
-  background: var(--glass-bg, rgba(20, 20, 25, 0.5));
+  border-bottom: 1px solid var(--bg-glass-border);
+  background: var(--glass-bg);
 }
 
 .history-back {
@@ -109,22 +109,22 @@ defineEmits(['back', 'toggle-versions'])
   height: 26px;
   padding: 0 10px;
   border-radius: 5px;
-  border: 1px solid var(--bg-glass-border, rgba(255, 255, 255, 0.15));
+  border: 1px solid var(--bg-glass-border);
   background: transparent;
-  color: var(--text-secondary, #a0a0b0);
+  color: var(--text-secondary);
   font-size: 12px;
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
 
 .history-back:hover {
-  background: var(--hover-bg-strong, rgba(255, 255, 255, 0.1));
-  color: var(--text-primary, #f0f0f5);
+  background: var(--hover-bg-strong);
+  color: var(--text-primary);
 }
 
 .history-view-title {
   font-size: 13px;
-  color: var(--text-secondary, #a0a0b0);
+  color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
 }
 
@@ -139,23 +139,23 @@ defineEmits(['back', 'toggle-versions'])
   margin-left: auto;
   padding: 0 10px;
   border-radius: 5px;
-  border: 1px solid var(--bg-glass-border, rgba(255, 255, 255, 0.15));
+  border: 1px solid var(--bg-glass-border);
   background: transparent;
-  color: var(--text-secondary, #a0a0b0);
+  color: var(--text-secondary);
   font-size: 12px;
   cursor: pointer;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 
 .history-versions-toggle:hover {
-  background: var(--hover-bg-strong, rgba(255, 255, 255, 0.1));
-  color: var(--text-primary, #f0f0f5);
+  background: var(--hover-bg-strong);
+  color: var(--text-primary);
 }
 
 .history-versions-toggle.active {
-  background: var(--accent-bg, rgba(79, 142, 247, 0.25));
-  color: var(--accent, #4f8ef7);
-  border-color: var(--accent, #4f8ef7);
+  background: var(--accent-bg);
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 .history-view-canvas {
@@ -169,7 +169,7 @@ defineEmits(['back', 'toggle-versions'])
   max-width: 420px;
   text-align: center;
   font-size: 14px;
-  color: var(--text-secondary, #a0a0b0);
+  color: var(--text-secondary);
   opacity: 0.7;
   line-height: 1.6;
 }
