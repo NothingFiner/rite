@@ -29,6 +29,7 @@
         :mentions="entryMentions"
         :merge-targets="mergeTargets"
         :sections="sections"
+        :references="references"
         @save-definition="emit('save-definition', $event)"
         @add-alias="emit('add-alias', $event)"
         @remove-alias="emit('remove-alias', $event)"
@@ -37,6 +38,7 @@
         @remove-mention="emit('remove-mention', $event)"
         @include-section="emit('include-section', $event)"
         @jump="forwardJump"
+        @open-reference="emit('open-reference', $event)"
       />
       <!-- A reference surface with no selection waits for a row click, which
            the panel reports. It never falls back to the notes page, so the
@@ -52,7 +54,9 @@
         :recaps="recaps"
         :summaries="summaries"
         :settings="settings"
+        :references="references"
         @jump="forwardJump"
+        @open-reference="emit('open-reference', $event)"
       />
     </div>
   </div>
@@ -107,6 +111,9 @@ const emit = defineEmits([
   'update:surface',
   'add-entry',
   'select-entry',
+  // Notes and definition links report their entry id up to the shell, which
+  // owns the view, surface and selection the page follows.
+  'open-reference',
 ])
 
 // Binds the same style object NotesView.vue's notesStyles binds. The bg and

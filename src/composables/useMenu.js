@@ -3,7 +3,8 @@
 // The Rust side emits one window event named `menu` whose payload is the item
 // id (`new`, `open`, `save`, `save_as`, `import`, `export_plain_text`,
 // `export_markdown`, `export_docx`, `export_epub`, `undo`, `redo`, plus the
-// word menu's `thesaurus` — documented in its own seam, `useThesaurus.js`).
+// word menu's own routes: `thesaurus`, and the lookup ids that name their
+// entry (`look_up_reference:<entry id>`).
 // This module maps those ids to the app's existing actions.
 
 import { listen } from '@tauri-apps/api/event'
@@ -11,6 +12,15 @@ import { onMounted, onUnmounted } from 'vue'
 
 /** The window event the Rust menu emits (`MENU_EVENT_NAME` in `src-tauri/src/menu.rs`). */
 export const MENU_EVENT = 'menu'
+
+/**
+ * The prefix a reference lookup id carries.
+ *
+ * Rust builds one item per matching entry, so the id names the entry rather
+ * than a route (SPEC.md revision 6, S-104). Must match `LOOK_UP_REFERENCE_ITEM_ID`
+ * and `lookup_item_id` in `src-tauri/src/menu.rs`.
+ */
+export const LOOKUP_ID_PREFIX = 'look_up_reference:'
 
 /**
  * The ids this app owns: the File items plus undo/redo. Must match the
@@ -57,6 +67,10 @@ export function createMenuActions(deps) {
     // this entry stays a lazy arrow: `deps.thesaurus` is only touched when the
     // action actually runs.
     thesaurus: () => deps.thesaurus.openCurrent(),
+    // A lookup id names its entry, so the action receives one: the menu
+    // already decided which entries the word belongs to (S-110). Nothing is
+    // looked up again here, and a bare prefix never reaches this map.
+    look_up_reference: (entryId) => deps.referenceLookup.openEntry(entryId),
   }
 }
 
@@ -67,6 +81,14 @@ export function createMenuActions(deps) {
  */
 export function runMenuAction(id, actions) {
   if (typeof id !== 'string' || !actions) return false
+  if (id.startsWith(LOOKUP_ID_PREFIX)) {
+    const entryId = id.slice(LOOKUP_ID_PREFIX.length)
+    const action = actions.look_up_reference
+    // A prefix with no entry behind it names no entry, so it is not an action.
+    if (entryId === '' || typeof action !== 'function') return false
+    action(entryId)
+    return true
+  }
   if (!Object.prototype.hasOwnProperty.call(actions, id)) return false
   const action = actions[id]
   if (typeof action !== 'function') return false

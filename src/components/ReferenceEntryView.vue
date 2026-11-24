@@ -54,7 +54,11 @@
       <button type="button" class="reference-edit-cancel" @click="cancelDefinitionEdit">Cancel</button>
     </template>
     <template v-else-if="hasDefinition">
-      <div class="reference-definition" v-html="renderedDefinition"></div>
+      <div
+        class="reference-definition"
+        @click="openClickedReference"
+        v-html="renderedDefinition"
+      ></div>
       <button type="button" class="reference-definition-edit" @click="openDefinitionEdit">Edit definition</button>
     </template>
     <template v-else>
@@ -229,7 +233,7 @@
 // rows and the merge offer are the derived parts. Props and emits are the
 // tests' contract, and the markup is the implementation's job.
 import { computed, ref, watch, nextTick } from 'vue'
-import { renderMarkdown } from '../composables/useMarkdown.js'
+import { renderReferenceMarkdown } from '../composables/useMarkdown.js'
 import { entryDisplayName } from '../composables/useReferences.js'
 
 const props = defineProps({
@@ -253,6 +257,9 @@ const props = defineProps({
   // turns the flag off for an entry it selected rather than added, so an
   // existing untitled record still offers Edit name (S-062, S-037).
   autoNameEdit: { type: Boolean, default: true },
+  // The same record NotesView resolves against, so one entry can point at
+  // another (S-093).
+  references: { type: Object, default: () => ({ entries: [] }) },
 })
 
 const emit = defineEmits([
@@ -270,6 +277,7 @@ const emit = defineEmits([
   'remove-tag',
   'add-fact',
   'remove-fact',
+  'open-reference',
 ])
 
 const hasDefinition = computed(() => (props.entry.definition || '').trim().length > 0)
@@ -295,7 +303,17 @@ const addableSections = computed(() => {
 const mentionHeading = computed(() => (props.entry.kind === 'character' ? 'Appears in' : 'Used in'))
 
 // One shared renderer, so the definition matches the note preview's markdown.
-const renderedDefinition = computed(() => renderMarkdown(props.entry.definition))
+const renderedDefinition = computed(() =>
+  renderReferenceMarkdown(props.entry.definition, props.references),
+)
+
+// v-html carries the anchor, so the container delegates its clicks. The
+// delegation mirrors openClickedReference in NotesView.vue and reports the
+// payload id to the shell.
+function openClickedReference(event) {
+  const link = event.target.closest('.reference-link')
+  if (link) emit('open-reference', link.dataset.entryId)
+}
 
 // Alpha bytes layered under the theme ink (S-054). 14 softens the field
 // surface, 59 keeps its border a hairline and 1f is the faint hover wash.

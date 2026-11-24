@@ -50,7 +50,10 @@ use export_text::export_text;
 use llm::{
     delete_role, list_roles, llm_cancel, llm_chat, llm_chat_stream, llm_list_models, save_role,
 };
-use menu::{app_menu, menu_event, prime_spell_document_tag, show_word_menu, MENU_EVENT_NAME};
+use menu::{
+    app_menu, lookup_entry_id, menu_event, prime_spell_document_tag, show_word_menu,
+    MENU_EVENT_NAME,
+};
 use retrieval::{embed_texts, reembed_document, retrieve_passages};
 use state::AppState;
 use structure::structural_signals;
@@ -159,9 +162,10 @@ pub fn run() {
         .on_menu_event(|app, event| {
             // Only app-owned items reach the frontend; native items (quit,
             // hide, clipboard, window actions) and separators act outside it.
-            // v2 hands the event to the app, not to a window.
+            // v2 hands the event to the app, not to a window. A lookup item's
+            // id names its entry, so it has no fixed id for `menu_event`.
             let id = event.id().0.clone();
-            if menu_event(&id).is_some() {
+            if menu_event(&id).is_some() || lookup_entry_id(&id).is_some() {
                 let _ = app.emit_to("main", MENU_EVENT_NAME, id);
             }
         })

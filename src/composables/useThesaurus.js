@@ -154,7 +154,8 @@ export function placePopover({
  *
  * Returns `{ state, openCurrent, apply, close }`; see SPEC.md for the field
  * list. `openCurrent` runs on the `thesaurus` menu event, `apply` writes the
- * replacement into the sheet and closes, `close` only closes.
+ * replacement into the sheet and closes, `close` only closes. The reference
+ * lookup needs nothing from here: its menu id names the entry it opens.
  */
 export function useThesaurus() {
   const state = reactive({

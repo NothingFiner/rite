@@ -135,6 +135,7 @@
           @update:surface="onReferenceSurface"
           @add-entry="onReferenceAdd"
           @select-entry="onReferenceEntrySelect"
+          @open-reference="onReferenceLinkOpen"
         />
         <DocumentRenderer
           ref="editorRef"
@@ -240,6 +241,7 @@ import {
   renameEntry, excludeSection, includeSection,
   addAlias, removeAlias,
   sectionsWithChapterIndex, mentionTitle,
+  surfaceForKind,
 } from './composables/useReferences.js'
 import { useThesaurus } from './composables/useThesaurus.js'
 import { useNewDocument } from './composables/useNewDocument.js'
@@ -386,15 +388,19 @@ const newDocument = reactive(useNewDocument({ fileIO, store }))
 // whose payload is the item id and this map runs the matching action. Called
 // in setup so the `listen` registration lands during app load.
 // Thesaurus (5.11): the document-level contextmenu listener decides whether a
-// right-click belongs to the app; if it does, Rust pops the one-item word menu
-// and its activation arrives through the same `menu` event as every other item.
+// right-click belongs to the app; if it does, Rust pops the word menu and its
+// activation arrives through the same `menu` event as every other item.
 const thesaurus = reactive(useThesaurus())
+// The word menu's lookup route (SPEC.md revision 6). Its id names the entry,
+// so opening one is the shell move a reference link already makes.
+const referenceLookup = { openEntry: onReferenceLinkOpen }
 const menuActions = createMenuActions({
   store,
   fileIO,
   exports: exportComposable,
   newDocument,
   thesaurus,
+  referenceLookup,
   // Undo/redo consult the note draft before the store (useNotes.js, S-026).
   notesDraft: noteDraftUndo,
 })
@@ -685,6 +691,18 @@ function onReferenceSurface(surface) {
   referencesTab.value = surface
   refNameAutoEdit.value = false
   if (surface !== 'characters' && surface !== 'glossary') referenceEntryId.value = ''
+}
+
+// A note or definition link opens the entry's own page (SPEC.md revision 5,
+// S-091). The writer can arrive from the editor, so the switch to References
+// is part of the selection rule a row click never carries.
+function onReferenceLinkOpen(entryId) {
+  const entry = (store.references?.entries ?? []).find((item) => item.id === entryId)
+  if (!entry) return
+  viewMode.value = 'references'
+  referencesTab.value = surfaceForKind(entry.kind)
+  refNameAutoEdit.value = false
+  referenceEntryId.value = entry.id
 }
 
 // Adding an entry selects it unnamed, so the empty definition editor opens
