@@ -235,6 +235,7 @@ export function useTheme(viewModeRef) {
     uiAccent,
     uiAccentBg,
     uiAccentHover,
+    uiAccentActive,
     uiGlassBg,
     uiScrollBg,
     uiGlassBorder,

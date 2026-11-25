@@ -387,6 +387,16 @@ test('S-139: paints the open circle in the accent’s active step, not the hover
   expect(open.active).not.toBe(open.hover)
   expect(open.fill).not.toBe(toRgb(open.hover))
 
+  // A foreign token lands here too: the chrome blue is not a darker step of a
+  // warm accent. Every channel of the open fill must sit at or below the
+  // accent's. A token read from this same element cannot prove that: an
+  // unpublished property inherits the root's first paint.
+  const channels = (value) => [...value.match(/\d+/g)].slice(0, 3).map(Number)
+  const openChannels = channels(open.fill)
+  const accentChannels = channels(toRgb(open.accent))
+  openChannels.forEach((value, index) => expect(value).toBeLessThanOrEqual(accentChannels[index]))
+  expect(openChannels).not.toEqual(accentChannels)
+
   // Positive control: closing the options gives the resting accent back, so the
   // assertion above is not reading one colour that never changes.
   await page.click('.drawer.left.open .add-btn')
