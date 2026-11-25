@@ -478,3 +478,36 @@ test('S-141: clears 2.5:1 between the ring and the option fill it cuts out', asy
   // therefore 2.5, not the 3:1 that S-135 sets for a control against a surface.
   expect(contrastRatio(ringColour, option)).toBeGreaterThanOrEqual(2.5)
 })
+
+test('S-144: draws one separator between the two add options', async ({ page }) => {
+  await openApp(page)
+
+  await page.click('button[title="Sections"]')
+  await expect(page.locator('.drawer.left.open .add-btn')).toBeVisible({ timeout: 5000 })
+  await page.click('.drawer.left.open .add-btn')
+  await expect(page.locator('.drawer.left.open .add-confirm').first()).toBeVisible()
+  await page.mouse.move(0, 0)
+
+  const edges = () =>
+    page.evaluate(() => {
+      const options = [...document.querySelectorAll('.drawer.left.open .add-confirm')]
+      const style = (node) => getComputedStyle(node)
+      return {
+        floor: style(document.querySelector('.app-container')).getPropertyValue('--bg-base').trim(),
+        colour: options.map((node) => style(node).borderLeftColor),
+        width: options.map((node) => style(node).borderLeftWidth),
+      }
+    })
+
+  // The divider is the floor colour, the same cut the ring makes. A hairline on
+  // the accent would read as a border, not as two actions.
+  await expect.poll(async () => {
+    const edge = await edges()
+    return edge.colour[1] === toRgb(edge.floor) && edge.width[1] === '1px'
+  }, { timeout: 3000 }).toBe(true)
+
+  // Only the shared edge is cut: the outer edge keeps the option's own border,
+  // so the row still closes on the left.
+  const edge = await edges()
+  expect(edge.colour[0]).not.toBe(toRgb(edge.floor))
+})

@@ -966,6 +966,11 @@ S-141 asks for 2.5:1 rather than S-135's 3:1. A surface-coloured ring cannot
 reach 3:1 on Sky or Mist; a higher bar needs the filled option row to become a
 bordered one, which is a different design.
 
+The two options are separate actions, so a 1px line of `--bg-base` divides them:
+the same cut the ring makes. The + came off the labels because the row is already
+a pair of actions, and the symbol doubled the mark the circle already carries.
+Each option keeps its meaning in an `aria-label`.
+
 ### Sentences
 
 | ID | Layer | Sentence |
@@ -980,6 +985,9 @@ bordered one, which is a different design.
 | S-139 | e2e | it should paint the open circle in the accent's active colour, a step past the hover, for as long as its options are open |
 | S-140 | e2e | it should ring the open circle in the floor colour, at least 2px wide, and not while the circle is closed |
 | S-141 | e2e | it should clear 2.5:1 between the ring and the option fill it cuts the circle out of |
+| S-142 | unit | it should name the two add options "Add new chapter" and "Add new section" for assistive technology |
+| S-143 | unit | it should show the two add options as "Chapter" and "Section", with no + prefix |
+| S-144 | e2e | it should draw one separator between the two add options, in the floor colour |
 
 ### Traps
 

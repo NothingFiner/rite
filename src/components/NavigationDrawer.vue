@@ -101,8 +101,8 @@
           </button>
           <transition name="slide-fade">
             <div v-if="props.expanded" class="add-options">
-              <button class="add-confirm control-bordered is-primary" @click="addChapter">+ Chapter</button>
-              <button class="add-confirm control-bordered is-primary" @click="addSection">+ Section</button>
+              <button class="add-confirm control-bordered is-primary" aria-label="Add new chapter" @click="addChapter">Chapter</button>
+              <button class="add-confirm control-bordered is-primary" aria-label="Add new section" @click="addSection">Section</button>
             </div>
           </transition>
         </div>
@@ -818,6 +818,9 @@ watch(sections, () => {
 
 .add-control .add-confirm + .add-confirm {
   padding-left: 8px;
+  /* The two options are separate actions, so the floor colour that rings the
+     circle divides them (S-144). */
+  border-left: 1px solid var(--bg-base);
 }
 
 .add-control .add-confirm:last-child {

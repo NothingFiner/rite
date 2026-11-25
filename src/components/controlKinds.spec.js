@@ -26,6 +26,15 @@ const drawerItem = (wrapper, label) =>
 const formatButton = (wrapper, label) =>
   wrapper.findAll('.activity-format .activity-icon').find((b) => b.attributes('aria-label') === label)
 
+const mountAddCluster = () =>
+  mount(NavigationDrawer, {
+    props: {
+      open: true,
+      expanded: true,
+      tocItems: [{ id: 'c1', title: 'Chapter One', kind: 'chapter', sectionType: 'chapter' }],
+    },
+  })
+
 describe('segmented sets', () => {
   it('S-123: draws the four views as one segmented control', () => {
     const wrapper = mount(Toolbar, { props: { mode: 'editor' } })
@@ -262,13 +271,7 @@ describe('chips', () => {
 
 describe('the add cluster', () => {
   it('S-129: draws the two add options as bordered primary controls', () => {
-    const wrapper = mount(NavigationDrawer, {
-      props: {
-        open: true,
-        expanded: true,
-        tocItems: [{ id: 'c1', title: 'Chapter One', kind: 'chapter', sectionType: 'chapter' }],
-      },
-    })
+    const wrapper = mountAddCluster()
 
     const options = wrapper.findAll('.add-options .add-confirm')
     expect(options).toHaveLength(2)
@@ -280,5 +283,23 @@ describe('the add cluster', () => {
     // The circle they grow out of is the same control in a round shape.
     expect(wrapper.find('.add-btn').exists()).toBe(true)
     expect(wrapper.find('.add-btn').text()).toBe('')
+  })
+
+  it('S-142: names each add option for assistive technology', () => {
+    const labels = mountAddCluster()
+      .findAll('.add-options .add-confirm')
+      .map((option) => option.attributes('aria-label'))
+
+    // A visible "Chapter" reads as a heading in a list of controls. The name
+    // has to carry the action, because the label does not.
+    expect(labels).toEqual(['Add new chapter', 'Add new section'])
+  })
+
+  it('S-143: shows the option labels without a + prefix', () => {
+    const labels = mountAddCluster()
+      .findAll('.add-options .add-confirm')
+      .map((option) => option.text())
+
+    expect(labels).toEqual(['Chapter', 'Section'])
   })
 })
