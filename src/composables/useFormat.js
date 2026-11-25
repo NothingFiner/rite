@@ -1,4 +1,4 @@
-import { ref, reactive } from 'vue'
+import { getCurrentInstance, onBeforeUnmount, ref, reactive } from 'vue'
 import { useDocumentStore } from '../stores/document.js'
 
 export const fontOptions = [
@@ -16,6 +16,9 @@ export const fontOptions = [
 
 export function useFormat(editorRef, markModified) {
   const formats = reactive({ bold: false, italic: false, underline: false })
+  // SPEC.md revision 9, S-126. True while the caret is in the editor, which is
+  // what tells the format buttons whether there is anything to apply to.
+  const cursorActive = ref(false)
   const selectedWordCount = ref(0)
   const editorFont = ref(fontOptions[0].family)
 
@@ -31,6 +34,10 @@ export function useFormat(editorRef, markModified) {
     if (!sheet) return false
     const active = document.activeElement
     return active === sheet || sheet.contains(active)
+  }
+
+  function syncCursorActive() {
+    cursorActive.value = isFocusInEditor()
   }
 
   function getActiveParagraph() {
@@ -191,6 +198,20 @@ export function useFormat(editorRef, markModified) {
     selectedWordCount.value = text.trim().split(/\s+/).filter(Boolean).length
   }
 
+  // Focus can leave the sheet without a selection change (a click on a rail
+  // button), so both focus moves are watched as well. The listeners are
+  // registered on every call. Only the cleanup needs a component instance.
+  document.addEventListener('focusin', syncCursorActive)
+  document.addEventListener('focusout', syncCursorActive)
+  document.addEventListener('selectionchange', syncCursorActive)
+  if (getCurrentInstance()) {
+    onBeforeUnmount(() => {
+      document.removeEventListener('focusin', syncCursorActive)
+      document.removeEventListener('focusout', syncCursorActive)
+      document.removeEventListener('selectionchange', syncCursorActive)
+    })
+  }
+
   function loadPrefs() {
     try {
       const f = localStorage.getItem('rite-font')
@@ -216,12 +237,14 @@ export function useFormat(editorRef, markModified) {
 
   return {
     formats,
+    cursorActive,
     selectedWordCount,
     editorFont,
     fontOptions,
     getActiveParagraph,
     getSelectionModelOffsets,
     syncFormatState,
+    syncCursorActive,
     toggleFormat,
     updateSelectedWordCount,
     loadPrefs,

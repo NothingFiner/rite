@@ -5,7 +5,7 @@
         v-for="item in items"
         :key="item.id"
         :ref="el => setIconRef(item.id, el)"
-        class="activity-icon"
+        class="activity-icon control-borderless"
         :class="{ active: activeId === item.id && drawerOpen }"
         :title="item.label"
         :aria-label="item.label"
@@ -21,8 +21,9 @@
     <TransitionGroup name="format-slide" tag="div" class="activity-format" v-if="viewMode === 'editor'">
       <button
         key="bold"
-        class="activity-icon format-btn"
+        class="activity-icon format-btn control-bordered"
         :class="{ active: formats?.bold }"
+        :disabled="!cursorActive"
         title="Bold (Cmd+B)"
         aria-label="Bold"
         :aria-pressed="formats?.bold ? 'true' : 'false'"
@@ -34,8 +35,9 @@
       </button>
       <button
         key="italic"
-        class="activity-icon format-btn"
+        class="activity-icon format-btn control-bordered"
         :class="{ active: formats?.italic }"
+        :disabled="!cursorActive"
         title="Italic (Cmd+I)"
         aria-label="Italic"
         :aria-pressed="formats?.italic ? 'true' : 'false'"
@@ -47,8 +49,9 @@
       </button>
       <button
         key="underline"
-        class="activity-icon format-btn"
+        class="activity-icon format-btn control-bordered"
         :class="{ active: formats?.underline }"
+        :disabled="!cursorActive"
         title="Underline (Cmd+U)"
         aria-label="Underline"
         :aria-pressed="formats?.underline ? 'true' : 'false'"
@@ -71,6 +74,11 @@ const props = defineProps({
   drawerOpen: { type: Boolean, default: false },
   viewMode: { type: String, default: 'editor' },
   formats: { type: Object, default: () => ({}) },
+  // Whether the caret is in the editor (SPEC.md revision 9, S-126). A format
+  // command with no caret has nothing to apply to, so the three buttons are
+  // disabled rather than silently inert. Defaults true so a bare mount in a
+  // test is not disabled by omission.
+  cursorActive: { type: Boolean, default: true },
 })
 
 const emit = defineEmits(['select', 'toggleFormat'])
@@ -212,40 +220,22 @@ defineExpose({ focusItem })
   gap: 4px;
 }
 
+/* Geometry only. The wash, the pressed state and the disabled state are
+   .control-borderless (style.css), which every rail and format button carries. */
 .activity-icon {
   width: 36px;
   height: 36px;
-  border-radius: 6px;
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
+  padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.15s, color 0.15s;
   position: relative;
 }
 
-.activity-icon:hover {
-  background: var(--hover-bg-strong);
-  color: var(--text-primary);
-}
-
+/* The pressed rail item takes the accent in the icon itself. The 2px bar it
+   used to draw to the left read as a selection edge on a 48px rail. */
 .activity-icon.active {
-  color: var(--text-primary);
-}
-
-.activity-icon.active::before {
-  content: '';
-  position: absolute;
-  left: -8px;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 2px;
-  height: 20px;
-  background: var(--accent);
-  border-radius: 0 2px 2px 0;
+  color: var(--accent);
 }
 
 .activity-divider {
@@ -261,24 +251,11 @@ defineExpose({ focusItem })
   gap: 4px;
 }
 
+/* The toggles are square, with no side padding, so B / I / U sit in a column. */
 .format-btn {
-  border: 1px solid var(--bg-glass-border);
-  background: var(--input-bg);
-}
-
-.format-btn:hover {
-  background: var(--hover-bg);
-  border-color: var(--bg-glass-border);
-}
-
-.format-btn.active {
-  background: var(--accent-bg);
-  border-color: var(--accent);
-  color: var(--text-primary);
-}
-
-.format-btn.active::before {
-  display: none;
+  width: 36px;
+  min-height: 28px;
+  padding: 0;
 }
 
 /* Format button animations */

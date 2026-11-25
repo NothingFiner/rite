@@ -7,12 +7,14 @@
       '--accent': theme.uiAccent,
       '--accent-bg': theme.uiAccentBg,
       '--accent-hover': theme.uiAccentHover,
+      '--accent-active': theme.uiAccentActive,
       '--bg-glass-border': theme.uiGlassBorder,
       '--glass-bg': theme.uiGlassBg,
       '--hover-bg': theme.uiHoverBg,
       '--hover-bg-strong': theme.uiHoverBgStrong,
       '--input-bg': theme.uiInputBg,
       '--popup-bg': theme.uiPopupBg,
+      '--bg-base': theme.uiBase,
       '--editor-font': format.editorFont,
     }"
   >
@@ -28,6 +30,7 @@
       :drawer-open="leftDrawerOpen"
       :view-mode="viewMode"
       :formats="format.formats"
+      :cursor-active="format.cursorActive"
       @select="onActivitySelect"
       @toggle-format="format.toggleFormat($event)"
     />

@@ -5,9 +5,9 @@
       <span class="brand-text">rite</span>
     </div>
     <div class="toolbar-group">
-      <div class="view-tabs" role="tablist" aria-label="View" @keydown="onViewTabsKeydown">
+      <div class="view-tabs control-segmented" role="tablist" aria-label="View" @keydown="onViewTabsKeydown">
         <button
-          class="tool-btn view-tab"
+          class="tool-btn view-tab control-segment"
           role="tab"
           :aria-selected="mode === 'editor'"
           :tabindex="mode === 'editor' ? '0' : '-1'"
@@ -17,7 +17,7 @@
           Editor
         </button>
         <button
-          class="tool-btn view-tab"
+          class="tool-btn view-tab control-segment"
           role="tab"
           :aria-selected="mode === 'manuscript'"
           :tabindex="mode === 'manuscript' ? '0' : '-1'"
@@ -27,7 +27,7 @@
           Manuscript
         </button>
         <button
-          class="tool-btn view-tab"
+          class="tool-btn view-tab control-segment"
           role="tab"
           :aria-selected="mode === 'references'"
           :tabindex="mode === 'references' ? '0' : '-1'"
@@ -38,7 +38,7 @@
           References
         </button>
         <button
-          class="tool-btn view-tab"
+          class="tool-btn view-tab control-segment"
           role="tab"
           :aria-selected="mode === 'history'"
           :tabindex="mode === 'history' ? '0' : '-1'"
@@ -210,45 +210,16 @@ function onViewTabsKeydown(event) {
   margin: 0 4px;
 }
 
-/* View-switch tabs: a connected, segmented tab group so the buttons read as
-   view navigation rather than generic toolbar buttons. The group container
-   supplies the shared border + outer rounding. Inner dividers separate tabs.
-   Active tab is accent-filled, inactive tabs are muted. Both states reuse
-   theme tokens so the look follows the active editor theme (light or dark). */
+/* The four views are one segmented control (SPEC.md revision 9). The track,
+   the joined hairlines and the selected segment's accent are
+   .control-segmented / .control-segment in style.css; this block only sets
+   the spacing the top bar needs. */
 .view-tabs {
-  display: flex;
-  align-items: center;
-  border: 1px solid var(--bg-glass-border);
-  border-radius: 6px;
-  overflow: hidden;
   margin-right: 4px;
 }
 
 .view-tab {
-  border-radius: 0;
-  border: none;
-  border-right: 1px solid var(--bg-glass-border);
-  /* override the generic .tool-btn top padding so tabs fill the group height */
   height: 26px;
-}
-
-.view-tab:last-child {
-  border-right: none;
-}
-
-.view-tab:hover {
-  background: var(--hover-bg);
-}
-
-.view-tab.active {
-  /* The group container draws the outline. The accent fill marks the selected
-     view. Keep the inner divider at the group border color so dividers stay
-     consistent across active/inactive tabs (override .tool-btn.active, which
-     would tint the divider accent). */
-  background: var(--accent-bg);
-  color: var(--accent);
-  border-color: var(--bg-glass-border);
-  font-weight: 600;
 }
 
 </style>

@@ -68,16 +68,18 @@
               @click.stop="onDelete(item.id)"
             >&#10005;</button>
             <button
-              class="nav-type-toggle"
+              class="nav-type-toggle control-bordered control-sm"
               :class="{ chapter: item.sectionType === 'chapter' }"
+              :aria-pressed="item.sectionType === 'chapter' ? 'true' : 'false'"
               @click.stop="toggleType(item)"
               :title="item.sectionType === 'chapter'
                 ? 'Chapter (auto-numbered). Click to make a freeform Section.'
                 : 'Section (freeform title). Click to make an auto-numbered Chapter.'"
             >{{ item.sectionType === 'chapter' ? 'Ch' : '§' }}</button>
             <button
-              class="nav-hidden-toggle"
+              class="nav-hidden-toggle control-bordered control-sm"
               :class="{ hidden: item.hidden }"
+              :aria-pressed="item.hidden ? 'true' : 'false'"
               @click.stop="toggleHidden(item)"
               :title="item.hidden
                 ? 'Hidden: no heading in the manuscript or its TOC (body still renders, own page). Click to show the heading.'
@@ -99,8 +101,9 @@
           </button>
           <transition name="slide-fade">
             <div v-if="props.expanded" class="add-options">
-              <button class="add-confirm" @click="addChapter">+ Chapter</button>
-              <button class="add-confirm" @click="addSection">+ Section</button>
+              <button class="add-confirm control-bordered is-primary" aria-label="Add Chapter" @click="addChapter">Add Chapter</button>
+              <span class="add-divider" aria-hidden="true"></span>
+              <button class="add-confirm control-bordered is-primary" aria-label="Add Section" @click="addSection">Add Section</button>
             </div>
           </transition>
         </div>
@@ -622,32 +625,17 @@ watch(sections, () => {
 }
 
 /* Chapter/Section type toggle badge. */
+/* The row badges are bordered controls at the small size. Colour, hover and
+   pressed ink come from .control-bordered. The .chapter class is a behaviour
+   hook the specs click; aria-pressed is what paints. */
 .nav-type-toggle {
   flex-shrink: 0;
   width: 20px;
-  height: 20px;
-  border-radius: 4px;
-  border: 1px solid var(--bg-glass-border);
-  background: var(--input-bg);
-  color: var(--text-secondary);
-  font-size: 10px;
   font-weight: 700;
-  cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   margin-left: 6px;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
-}
-
-.nav-type-toggle:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-.nav-type-toggle.chapter {
-  border-color: var(--accent);
-  color: var(--accent);
 }
 
 /* Hidden-section toggle badge (5.10) — same chrome as the type toggle. The
@@ -656,30 +644,16 @@ watch(sections, () => {
 .nav-hidden-toggle {
   flex-shrink: 0;
   width: 20px;
-  height: 20px;
-  border-radius: 4px;
-  border: 1px solid var(--bg-glass-border);
-  background: var(--input-bg);
-  color: var(--text-secondary);
   font-size: 10px;
-  cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   margin-left: 4px;
   opacity: 0.55;
-  transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
 }
 
-.nav-hidden-toggle:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-  opacity: 1;
-}
-
+.nav-hidden-toggle:hover,
 .nav-hidden-toggle.hidden {
-  border-color: var(--accent);
-  color: var(--accent);
   opacity: 1;
 }
 
@@ -774,16 +748,20 @@ watch(sections, () => {
 .add-control {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 0;
 }
 
+/* The circle is painted over the options, so the join has no seam: the first
+   option runs underneath it and emerges from its silhouette (S-136). */
 .add-btn {
+  position: relative;
+  z-index: 1;
   width: 32px;
   height: 32px;
   border-radius: 50%;
   border: none;
   background: var(--accent);
-  color: #fff;
+  color: var(--control-on-primary);
   font-size: 18px;
   cursor: pointer;
   display: flex;
@@ -806,28 +784,52 @@ watch(sections, () => {
   transform: scale(1.05);
 }
 
+/* An open circle is its own control, not the head of the row. It is held down,
+   so it paints the active step, and the floor colour cuts it out of the options
+   it overlaps (SPEC.md S-139, S-140). */
+.add-control.expanded .add-btn {
+  background: var(--accent-active);
+  box-shadow: 0 0 0 2px var(--bg-base);
+}
+
+/* The two options grow out of the circle: one 32px row, running under it, the
+   far end rounded. Same height as the button they came from (S-129, S-136). */
 .add-options {
   display: flex;
-  gap: 8px;
+  gap: 0;
   flex: 1;
+  min-width: 0;
+  margin-left: -20px;
 }
 
 .add-confirm {
   flex: 1;
-  background: var(--accent);
-  border: none;
-  border-radius: 6px;
-  color: #fff;
+  height: 32px;
+  min-width: 0;
+  padding: 0 8px;
   font-size: 12px;
-  font-weight: 600;
-  padding: 5px 8px;
-  cursor: pointer;
-  transition: background 0.15s;
   white-space: nowrap;
 }
 
-.add-confirm:hover {
-  background: var(--accent-hover);
+.add-control .add-confirm {
+  border-radius: 0;
+  /* The circle covers the first 20px of the row, so the label starts clear. */
+  padding-left: 28px;
+}
+
+/* The two options are separate actions, so a line of the floor colour divides
+   them. A border would be repainted by the option's own hover rule, and the
+   cut would vanish under the pointer (S-144, S-145). */
+.add-divider {
+  flex: 0 0 1px;
+  align-self: stretch;
+  background: var(--bg-base);
+}
+
+.add-control .add-confirm:last-child {
+  padding-left: 8px;
+  border-top-right-radius: var(--radius-sm);
+  border-bottom-right-radius: var(--radius-sm);
 }
 
 .slide-fade-enter-active,

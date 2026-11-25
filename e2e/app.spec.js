@@ -129,7 +129,7 @@ test.describe('Rite App', () => {
     // The drawer slides open (250ms transform) — settle before clicking in it.
     await page.waitForTimeout(350)
     await page.click('.drawer.left.open .add-btn')
-    await page.click('.drawer.left.open .add-confirm:has-text("+ Chapter")')
+    await page.click('.drawer.left.open .add-confirm[aria-label="Add Chapter"]')
 
     // Fresh: the heading is editable with the empty subtitle span (the
     // inline type-a-subtitle affordance).

@@ -787,3 +787,261 @@ painting `.glass` before the token loaded.
    before mount, not the editor's paper.
 3. **Do not delete `CHROME_BASE`.** `--bg-base`, `--bg-editor` and `--bg-glass`
    are stylesheet-only, and `--bg-base` is what the scroll layer stands on.
+
+## Revision 9 — the control layer
+
+### Context
+
+The design inventory found 51 flat components and no shared layer under them.
+The same kind of action was drawn five ways: the rail icon, the toolbar tab,
+the zoom button, the assistant's Send and the reference add option. Radii, font
+sizes and hover states differed by a pixel or two, and each file owned its own
+copy of the colour.
+
+Revision 8 gave every chrome colour one owner. This revision gives the controls
+one owner too: four kinds, one geometry each, every colour read from a token.
+The four kinds and where each one is right:
+
+| Kind | Where it is right | Shipped examples |
+|---|---|---|
+| borderless | an action on a surface, icon or word | rail icons, Edit name, Edit definition |
+| bordered | a standing action that needs a field edge | zoom buttons, Send, Clear, New term, Save |
+| chip | a label, never an action | aliases, tags |
+| segmented | one choice out of a set | view tabs, reference surfaces, term/place |
+
+### One rule set, two surfaces
+
+The rules live in `src/style.css` and name only `--control-*` and `--chip-*`.
+`:root` maps those names onto the chrome tokens, so the rail and the drawers
+keep the look they had.
+
+A page painted with the writer's theme republishes the same names from
+`paperPalette.js`. That is what the indirection buys: a bordered control on the
+References page takes the writer's ink and accent, and can never reach the
+near-white chrome that caused revision 7's bug. `--control-on-primary` is the
+one token that flips meaning: white on a chrome accent fill, the paper colour on
+a page's.
+
+### Geometry
+
+| Kind | Height | Radius | Padding |
+|---|---|---|---|
+| borderless | 32px | `--radius-sm` | none |
+| bordered | 32px | `--radius-sm` | 0 10px |
+| bordered, small (`.control-sm`) | 20px | `--radius-sm` | 0 4px |
+| chip | content | `--radius-pill` | 2px 10px |
+| segmented segment | 26px | square inside the track | 0 10px |
+
+The small bordered size exists for the two row badges in the navigation drawer.
+A 32px badge would set the row height and pull the outline apart.
+
+A segment is 26px because it only ever sits in the 38px top bar or a drawer
+head. The track draws the outer border and the outer rounding. Each segment
+draws one right hairline and none on the last, so no edge is drawn twice.
+
+### What counts as observable
+
+jsdom cannot resolve a scoped `<style>` block, so a unit test can only see the
+class a component publishes. That is enough for adoption: the class is the
+contract, and the colour it resolves to is the stylesheet's job. The two
+computed-style questions (is the active segment the accent, is the page control
+the theme ink) belong to the e2e layer, where a real browser answers them.
+
+S-121 and S-122 read `src/style.css` directly. A control that hardcodes a colour
+would still pass a class-presence test, so the stylesheet has its own guard.
+
+### Sentences
+
+| ID | Layer | Sentence |
+|---|---|---|
+| S-120 | unit | it should publish the control tokens from the page's theme, so a control on a painted page takes the writer's ink and accent |
+| S-121 | unit | it should take every control colour from a control or chip token, and declare each of those names before use |
+| S-122 | unit | it should declare each of the four control kinds once, with the segmented kind's track and segment as two rules |
+| S-123 | unit | it should draw the four views and the three reference surfaces as one segmented control each, keeping the toolbar's arrow-key navigation |
+| S-124 | unit | it should make each rail button a borderless control, with the pressed one marked active and no bar drawn beside it |
+| S-125 | unit | it should report whether the caret is in the editor and follow it as focus moves in and out |
+| S-126 | unit | it should disable the three format buttons exactly when the caret is not in the editor |
+| S-127 | unit | it should draw the standing drawer and panel actions as bordered controls, with Send as the one primary |
+| S-128 | unit | it should draw aliases and tags as chips, never as bordered buttons |
+| S-129 | e2e | it should open the two add options at the circle's height, joined to it |
+| S-130 | e2e | it should paint only the chosen segment in the accent, on the toolbar and in the reference panel |
+| S-131 | e2e | it should paint a control on the References page in the theme ink, not the chrome white |
+
+### Traps
+
+1. **Do not put a colour in a control rule.** The kind is a shape and a state;
+   the surface supplies the colour through the tokens. A literal here is what
+   revision 7 and revision 8 both had to undo.
+2. **Do not give a page its own control classes.** The four kinds in
+   `style.css` are the whole set. A page that needs different chrome needs a
+   token, not a rule.
+3. **Do not drop a class an existing test selects.** The kinds are added beside
+   the existing hooks (`.view-tab`, `.zoom-btn`, `.surface-tab`), so the 18
+   spec files that select them keep working.
+4. **Do not read `aria-pressed` and `.active` as two states.** Both mean
+   pressed, and the segmented kind also reads `aria-selected`, because a tab is
+   selected rather than pressed.
+5. **Do not make the row badges 32px.** `.control-sm` exists because the
+   outline row is 28px tall; a full-size badge would set the row height.
+
+### Out of scope
+
+- The accordion in General Options (exclusive open, first open, height
+  animation, hover on the trigger, and the chapter preview that reads as an
+  input field).
+- One navigable row primitive for the outline, the reference panel and the
+  notes list.
+- Theme-tinted glass on the non-manuscript menus, and which surfaces stay dark.
+- Stats staying visible in History, which needs a definition of the document
+  text a history session shows.
+- The entry page's padding rhythm.
+
+## Revision 10 — the control ink resolves where the theme is published
+
+### Context
+
+Revision 9 put the control aliases in `:root`:
+
+```css
+:root { --control-text: var(--text-secondary); ... }
+```
+
+`App.vue` publishes the theme tokens on `.app-container`, not on the document
+root. A `var()` inside a custom property is substituted on the element that
+declares it, so `--control-text` froze to the root's dark-chrome value and every
+control inherited that frozen value. The editor view then drew chrome near-white
+on its own light glass.
+
+| Measured on the editor view | Value |
+|---|---|
+| `--text-secondary` on `.app-container` | `#51535999` (Mist ink) |
+| `--control-text` reaching the rail | `#a0a0b099` (chrome) |
+| Rail icon colour | `rgba(160, 160, 176, 0.6)` |
+| Format button hairline | `rgba(255, 255, 255, 0.1)` |
+| Contrast of the painted icon on the rail | **1.38:1** |
+
+Before revision 9 those buttons named `var(--text-secondary)` directly, so they
+resolved on `.app-container` and took the theme. The indirection is correct. Its
+placement was not.
+
+Correcting the placement alone lands on the theme's 60% secondary, which is
+**2.44:1** on Mist. A control is an affordance, not prose: it takes the primary
+ink and clears 4.5:1 on the page. Muted ink stays for prose and for chips.
+
+### The rule
+
+1. A token that aliases another is declared on the element that publishes the
+   aliased token. Never at the root while its source lives lower down.
+2. A control's ink is the primary ink of its surface: `--text-primary` on the
+   chrome, the theme's ink on a painted page.
+3. A chip is a label, so it keeps the muted ink. That is the difference between
+   the two kinds, and it is the only one.
+
+### The open circle is its own control
+
+An open circle is not merely pointed at; it is held down. It therefore takes
+its own active step — `accentActive`, 0.6 of the accent — one step past the
+hover at 0.75. Reusing `accent-hover` made an open circle look exactly like a
+pointer crossing a closed one, which is two states wearing one paint.
+
+The token is derived from the chosen accent the way `accentHover` is, so a
+custom accent gets it without an entry per theme, and the chrome palette
+publishes its own value outside the editor. It is declared on `.app-container`
+with the other chrome tokens and republished on the same element at runtime.
+
+S-140 cuts the circle out of the row with a 2px ring of `--bg-base`, the floor
+under the chrome that S-138 publishes. The ring is exact in the editor view,
+where the drawer paints the theme paper at 78% over a floor of the same paper,
+and within 1.07:1 of the composited chrome surface everywhere else.
+
+The ring's contrast against the option fill is the measure of the cut:
+
+| Theme | `--bg-base` | `--accent` | Contrast |
+|---|---|---|---|
+| Sky | `#DBE1F1` | `#A68A3C` | 2.54:1 |
+| Mist | `#D8D3D6` | `#B5651D` | 2.93:1 |
+| Midnight | `#030027` | `#C4A87C` | 8.94:1 |
+
+S-141 asks for 2.5:1 rather than S-135's 3:1. A surface-coloured ring cannot
+reach 3:1 on Sky or Mist; a higher bar needs the filled option row to become a
+bordered one, which is a different design.
+
+The two options are separate actions, so a 1px line of `--bg-base` divides them:
+the same cut the ring makes. The + came off the labels because the row is already
+a pair of actions, and the symbol doubled the mark the circle already carries.
+Each option keeps its meaning in an `aria-label`, which matches its visible text.
+
+The line is its own element, not a border on either option. An option's hover
+rule repaints its borders, so a border divider disappeared under the pointer.
+
+### Sentences
+
+| ID | Layer | Sentence |
+|---|---|---|
+| S-132 | unit | it should declare a token that aliases another where the aliased token is published, not at the document root |
+| S-133 | unit | it should publish a control's ink as the theme's full ink on a painted page, keeping muted ink for prose and chips |
+| S-134 | e2e | it should paint the rail and format controls in the writer's ink on the editor view, never the chrome white |
+| S-135 | e2e | it should clear 3:1 between every unselected control and the surface behind it |
+| S-136 | e2e | it should tuck both options' left edge under the circle, with no gap and behind it in paint order |
+| S-137 | e2e | it should keep a chosen control's ink when the pointer is over it |
+| S-138 | unit | it should publish the writer's paper as the floor under the chrome in the editor view, and the dark base everywhere else |
+| S-139 | e2e | it should paint the open circle in the accent's active colour, a step past the hover, for as long as its options are open |
+| S-140 | e2e | it should ring the open circle in the floor colour, at least 2px wide, and not while the circle is closed |
+| S-141 | e2e | it should clear 2.5:1 between the ring and the option fill it cuts the circle out of |
+| S-142 | unit | it should name the two add options "Add Chapter" and "Add Section" for assistive technology |
+| S-143 | unit | it should show the two add options as "Add Chapter" and "Add Section", with no + prefix |
+| S-144 | e2e | it should draw one separator between the two add options, in the floor colour |
+| S-145 | e2e | it should keep the separator while the pointer is over either add option |
+
+### Traps
+
+1. **Do not put the alias back in `:root` "so it exists early".** A frozen wrong
+   value is worse than a missing one: it paints confidently and cannot inherit.
+2. **Do not reach for `--text-secondary` to fix faintness.** That is the muted
+   prose colour. Controls take the primary ink.
+3. **Do not test the class and call the colour done.** Revision 9's tests all
+   passed while this shipped. The observable is the computed colour.
+4. **Do not sample a control mid-transition.** Every kind transitions its colour
+   over 120ms, so a measurement taken right after a click reads a blend of the
+   two states and reports a colour no token ever held.
+5. **Do not tuck the add options under the circle with a negative `z-index`.**
+   The circle is painted over the options, not the other way round, so the
+   separation has to be the circle's own (`box-shadow` ring, S-140), not a panel
+   drawn behind it and not a gap the layout opens.
+
+### Open item: the toolbar is glass over the app base
+
+Fixing the ink exposed a surface problem underneath it. The top bar paints
+`--glass-bg`, which is the theme's paper at 78%. Behind it is the app base, not
+the paper, so in the editor and manuscript views the bar resolves to a mid grey
+around `rgb(160, 157, 160)`:
+
+| Pair on that bar | Contrast |
+|---|---|
+| theme ink `#515359` on `rgb(160, 157, 160)` | 2.53:1 |
+| theme accent `#B5651D` on its own 25% wash | 1.42:1 |
+| white on the theme accent | 4.34:1 |
+
+S-138 fixes it: the app container's own floor is the writer's paper in the
+editor view, so the glass is tinted by paper instead of greyed by the near-black
+base. Every glass surface in that view — rail, top bar, drawers — lightens with
+it, and every other view keeps the dark base.
+
+Two chosen-state pairs still sit under the floor, and both are design decisions
+rather than defects to sweep up here:
+
+| Pair | Contrast |
+|---|---|
+| accent ink on its own 25% wash (the chosen segment) | 2.29:1 |
+| accent ink on the paper-light rail (the chosen rail item) | 2.93:1 |
+| primary ink on that same wash | 4.05:1 |
+
+The last row is the cheap way out: keep the accent wash and the accent edge,
+paint the chosen label in the primary ink. The alternative is a filled accent
+segment with an on-primary label, which needs a per-theme choice of that label
+(white on Mist's accent is 4.34:1, the paper on it only 2.93:1). S-135 therefore
+guards the resting state, which is the state that regressed, and leaves the
+chosen state to a decision.
+
+S-137 is separate from this and already fixed: a chosen control used to repaint
+its ink as plain text as soon as the pointer crossed it.

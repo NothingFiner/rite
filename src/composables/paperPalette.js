@@ -147,5 +147,29 @@ export function paperPalette(theme) {
   const accent = parseInk(theme.accent)
   if (accent) styles['--note-accent-bg'] = `rgba(${accent.r}, ${accent.g}, ${accent.b}, 0.25)`
 
+  // The control layer (revision 9). A page reuses the control classes, so it
+  // republishes their names here. Without this a page control would resolve to
+  // the dark chrome tokens on light paper.
+  // SPEC.md S-133. The 60% secondary is for prose. An action reads at the ink
+  // the writer chose, and the chip name stays faint two lines down.
+  styles['--control-text'] = theme.text
+  styles['--control-text-hover'] = theme.text
+  styles['--control-text-active'] = theme.accent
+  styles['--control-border-hover'] = theme.accent
+  styles['--control-active-border'] = theme.accent
+  styles['--control-on-primary'] = theme.bg
+  // Reuse the wash computed above, so a selected control and a selected row
+  // cannot drift apart.
+  styles['--control-active-bg'] = styles['--note-accent-bg'] ?? theme.accentBg ?? theme.accent
+  if (ink) {
+    const hex = inkHex(ink)
+    styles['--control-bg'] = `${hex}${INK_ALPHAS.fieldBg}`
+    styles['--control-border'] = `${hex}${INK_ALPHAS.border}`
+    styles['--control-hover-bg'] = `${hex}${INK_ALPHAS.hoverBg}`
+    styles['--chip-bg'] = `${hex}${INK_ALPHAS.fieldBg}`
+  }
+  if (muted) styles['--chip-text'] = muted
+  styles['--chip-border'] = 'transparent'
+
   return styles
 }

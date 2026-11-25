@@ -72,6 +72,8 @@ describe('chrome palette', () => {
     expect(references.uiTextPrimary.value).toBe(CHROME_PALETTE['--text-primary'])
     expect(references.uiTextSecondary.value).toBe(CHROME_PALETTE['--text-secondary'])
     expect(references.uiAccent.value).toBe(CHROME_PALETTE['--accent'])
+    expect(references.uiAccentActive).toBeDefined()
+    expect(references.uiAccentActive.value).toBe(CHROME_PALETTE['--accent-active'])
     expect(references.uiGlassBg.value).toBe(CHROME_PALETTE['--glass-bg'])
 
     // Positive control: inside the editor the same computed reads the theme,
@@ -79,5 +81,10 @@ describe('chrome palette', () => {
     const editor = useTheme(ref('editor'))
     expect(editor.uiTextPrimary.value).toBe(editor.currentTheme.value.text)
     expect(references.uiTextPrimary.value).not.toBe(editor.uiTextPrimary.value)
+
+    // A computed that never reaches the return object binds undefined, and the
+    // element inherits the root's first-paint blue instead (S-132's trap).
+    expect(editor.uiAccentActive.value).toBe(editor.currentTheme.value.accentActive)
+    expect(editor.uiAccentActive.value).not.toBe(CHROME_PALETTE['--accent-active'])
   })
 })

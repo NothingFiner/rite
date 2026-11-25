@@ -1,6 +1,6 @@
 import { ref, computed } from 'vue'
 import { THEMES } from '../constants/themes.js'
-import { CHROME_PALETTE } from '../constants/palette.js'
+import { CHROME_BASE, CHROME_PALETTE } from '../constants/palette.js'
 
 function hexToRgba(hex, alpha) {
   const r = parseInt(hex.slice(1, 3), 16)
@@ -23,6 +23,10 @@ function darkenHex(hex, factor) {
 // 0.75: the hover reads a step darker than the accent but stays well above
 // black.
 const ACCENT_HOVER_FACTOR = 0.75
+
+// An open circle is held down, not pointed at, so its fill takes a second step
+// past the hover instead of borrowing it (SPEC.md S-139).
+const ACCENT_ACTIVE_FACTOR = 0.6
 
 // Only full 6-digit forms count as a colour here. The rgba and darken helpers
 // read fixed slice offsets, so anything shorter yields NaN channels.
@@ -84,6 +88,7 @@ export function useTheme(viewModeRef) {
     accent: editorAccent.value,
     accentBg: hexToRgba(editorAccent.value, 0.25),
     accentHover: darkenHex(editorAccent.value, ACCENT_HOVER_FACTOR),
+    accentActive: darkenHex(editorAccent.value, ACCENT_ACTIVE_FACTOR),
   }))
 
   // A combination no preset repeats has no entry in the themes list, so
@@ -128,6 +133,7 @@ export function useTheme(viewModeRef) {
   const uiAccent = computed(() => chrome('--accent') ?? currentTheme.value.accent)
   const uiAccentBg = computed(() => chrome('--accent-bg') ?? currentTheme.value.accentBg)
   const uiAccentHover = computed(() => chrome('--accent-hover') ?? currentTheme.value.accentHover)
+  const uiAccentActive = computed(() => chrome('--accent-active') ?? currentTheme.value.accentActive)
   const uiGlassBg = computed(() => chrome('--glass-bg') ?? hexToRgba(currentTheme.value.bg, 0.78))
   const uiScrollBg = computed(() => {
     if (viewModeRef.value !== 'editor') return 'var(--bg-base)'
@@ -143,6 +149,12 @@ export function useTheme(viewModeRef) {
   const uiHoverBgStrong = computed(() => chrome('--hover-bg-strong') ?? currentTheme.value.text + '22')
   const uiInputBg = computed(() => chrome('--input-bg') ?? currentTheme.value.text + '22')
   const uiPopupBg = computed(() => chrome('--popup-bg') ?? currentTheme.value.bg)
+  // SPEC.md S-138. The editor's 78% glass needs paper underneath it. Without
+  // that the top rail and the top bar resolve to a mid grey, where no ink in
+  // the theme reaches 3:1.
+  const uiBase = computed(() => (
+    viewModeRef.value === 'editor' ? currentTheme.value.bg : CHROME_BASE['--bg-base']
+  ))
 
   function loadPrefs() {
     try {
@@ -223,6 +235,7 @@ export function useTheme(viewModeRef) {
     uiAccent,
     uiAccentBg,
     uiAccentHover,
+    uiAccentActive,
     uiGlassBg,
     uiScrollBg,
     uiGlassBorder,
@@ -230,6 +243,7 @@ export function useTheme(viewModeRef) {
     uiHoverBgStrong,
     uiInputBg,
     uiPopupBg,
+    uiBase,
     loadPrefs,
     savePrefs,
     selectTheme,
