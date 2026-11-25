@@ -101,8 +101,9 @@
           </button>
           <transition name="slide-fade">
             <div v-if="props.expanded" class="add-options">
-              <button class="add-confirm control-bordered is-primary" aria-label="Add new chapter" @click="addChapter">Chapter</button>
-              <button class="add-confirm control-bordered is-primary" aria-label="Add new section" @click="addSection">Section</button>
+              <button class="add-confirm control-bordered is-primary" aria-label="Add Chapter" @click="addChapter">Add Chapter</button>
+              <span class="add-divider" aria-hidden="true"></span>
+              <button class="add-confirm control-bordered is-primary" aria-label="Add Section" @click="addSection">Add Section</button>
             </div>
           </transition>
         </div>
@@ -816,14 +817,17 @@ watch(sections, () => {
   padding-left: 28px;
 }
 
-.add-control .add-confirm + .add-confirm {
-  padding-left: 8px;
-  /* The two options are separate actions, so the floor colour that rings the
-     circle divides them (S-144). */
-  border-left: 1px solid var(--bg-base);
+/* The two options are separate actions, so a line of the floor colour divides
+   them. A border would be repainted by the option's own hover rule, and the
+   cut would vanish under the pointer (S-144, S-145). */
+.add-divider {
+  flex: 0 0 1px;
+  align-self: stretch;
+  background: var(--bg-base);
 }
 
 .add-control .add-confirm:last-child {
+  padding-left: 8px;
   border-top-right-radius: var(--radius-sm);
   border-bottom-right-radius: var(--radius-sm);
 }

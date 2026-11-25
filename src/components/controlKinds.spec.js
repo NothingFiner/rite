@@ -290,9 +290,9 @@ describe('the add cluster', () => {
       .findAll('.add-options .add-confirm')
       .map((option) => option.attributes('aria-label'))
 
-    // A visible "Chapter" reads as a heading in a list of controls. The name
-    // has to carry the action, because the label does not.
-    expect(labels).toEqual(['Add new chapter', 'Add new section'])
+    // The visible text and the accessible name have to agree, or the button
+    // answers to one name and shows another (Label in Name).
+    expect(labels).toEqual(['Add Chapter', 'Add Section'])
   })
 
   it('S-143: shows the option labels without a + prefix', () => {
@@ -300,6 +300,6 @@ describe('the add cluster', () => {
       .findAll('.add-options .add-confirm')
       .map((option) => option.text())
 
-    expect(labels).toEqual(['Chapter', 'Section'])
+    expect(labels).toEqual(['Add Chapter', 'Add Section'])
   })
 })

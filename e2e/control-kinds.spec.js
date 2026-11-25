@@ -488,26 +488,72 @@ test('S-144: draws one separator between the two add options', async ({ page }) 
   await expect(page.locator('.drawer.left.open .add-confirm').first()).toBeVisible()
   await page.mouse.move(0, 0)
 
-  const edges = () =>
+  const separator = () =>
     page.evaluate(() => {
       const options = [...document.querySelectorAll('.drawer.left.open .add-confirm')]
-      const style = (node) => getComputedStyle(node)
+      const divider = document.querySelector('.drawer.left.open .add-divider')
+      if (!divider || options.length !== 2) return null
+      const box = divider.getBoundingClientRect()
+      const first = options[0].getBoundingClientRect()
+      const second = options[1].getBoundingClientRect()
       return {
-        floor: style(document.querySelector('.app-container')).getPropertyValue('--bg-base').trim(),
-        colour: options.map((node) => style(node).borderLeftColor),
-        width: options.map((node) => style(node).borderLeftWidth),
+        floor: getComputedStyle(document.querySelector('.app-container'))
+          .getPropertyValue('--bg-base').trim(),
+        background: getComputedStyle(divider).backgroundColor,
+        width: box.width,
+        between: box.left >= first.right - 1 && box.right <= second.left + 1,
+        hidden: divider.getAttribute('aria-hidden'),
       }
     })
 
-  // The divider is the floor colour, the same cut the ring makes. A hairline on
-  // the accent would read as a border, not as two actions.
+  // The one line between the pair, in the floor colour the ring already uses.
   await expect.poll(async () => {
-    const edge = await edges()
-    return edge.colour[1] === toRgb(edge.floor) && edge.width[1] === '1px'
+    const paint = await separator()
+    return paint !== null && paint.background === toRgb(paint.floor)
   }, { timeout: 3000 }).toBe(true)
 
-  // Only the shared edge is cut: the outer edge keeps the option's own border,
-  // so the row still closes on the left.
-  const edge = await edges()
-  expect(edge.colour[0]).not.toBe(toRgb(edge.floor))
+  const paint = await separator()
+  expect(paint.width).toBeGreaterThanOrEqual(1)
+  expect(paint.width).toBeLessThanOrEqual(2)
+  expect(paint.between).toBe(true)
+  // Decoration, so a screen reader does not announce a list separator.
+  expect(paint.hidden).toBe('true')
+})
+
+test('S-145: keeps the separator while the pointer is over either add option', async ({ page }) => {
+  await openApp(page)
+
+  await page.click('button[title="Sections"]')
+  await expect(page.locator('.drawer.left.open .add-btn')).toBeVisible({ timeout: 5000 })
+  await page.click('.drawer.left.open .add-btn')
+  await expect(page.locator('.drawer.left.open .add-confirm').first()).toBeVisible()
+
+  // Sampled across the option's 120ms hover transition, because a divider drawn
+  // with a border is repainted part-way through it.
+  const seen = () =>
+    page.evaluate(async () => {
+      const divider = document.querySelector('.drawer.left.open .add-divider')
+      if (!divider) return null
+      const floor = getComputedStyle(document.querySelector('.app-container'))
+        .getPropertyValue('--bg-base').trim()
+      const colours = []
+      for (let step = 0; step < 8; step += 1) {
+        colours.push(getComputedStyle(divider).backgroundColor)
+        await new Promise((resolve) => setTimeout(resolve, 40))
+      }
+      return { floor, colours }
+    })
+
+  for (const index of [0, 1]) {
+    await page.locator('.drawer.left.open .add-confirm').nth(index).hover()
+    const sample = await seen()
+
+    expect(sample).not.toBeNull()
+    expect(sample.colours.length).toBeGreaterThan(0)
+    // Every sample, not just the settled one: a repaint mid-transition is the
+    // failure being guarded.
+    for (const colour of sample.colours) {
+      expect(colour).toBe(toRgb(sample.floor))
+    }
+  }
 })

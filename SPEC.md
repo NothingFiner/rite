@@ -969,7 +969,10 @@ bordered one, which is a different design.
 The two options are separate actions, so a 1px line of `--bg-base` divides them:
 the same cut the ring makes. The + came off the labels because the row is already
 a pair of actions, and the symbol doubled the mark the circle already carries.
-Each option keeps its meaning in an `aria-label`.
+Each option keeps its meaning in an `aria-label`, which matches its visible text.
+
+The line is its own element, not a border on either option. An option's hover
+rule repaints its borders, so a border divider disappeared under the pointer.
 
 ### Sentences
 
@@ -985,9 +988,10 @@ Each option keeps its meaning in an `aria-label`.
 | S-139 | e2e | it should paint the open circle in the accent's active colour, a step past the hover, for as long as its options are open |
 | S-140 | e2e | it should ring the open circle in the floor colour, at least 2px wide, and not while the circle is closed |
 | S-141 | e2e | it should clear 2.5:1 between the ring and the option fill it cuts the circle out of |
-| S-142 | unit | it should name the two add options "Add new chapter" and "Add new section" for assistive technology |
-| S-143 | unit | it should show the two add options as "Chapter" and "Section", with no + prefix |
+| S-142 | unit | it should name the two add options "Add Chapter" and "Add Section" for assistive technology |
+| S-143 | unit | it should show the two add options as "Add Chapter" and "Add Section", with no + prefix |
 | S-144 | e2e | it should draw one separator between the two add options, in the floor colour |
+| S-145 | e2e | it should keep the separator while the pointer is over either add option |
 
 ### Traps
 
